@@ -4,9 +4,344 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>FPB Marketing AI</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=DM+Sans:wght@300;400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
     <style>
+      :root {
+        --ink-0: #080b14;
+        --ink-1: #0d1120;
+        --ink-2: #111829;
+        --ink-3: #182035;
+        --ink-4: #1e2840;
+        --ink-5: #253050;
+        --rim:    rgba(255,255,255,0.06);
+        --rim-md: rgba(255,255,255,0.10);
+        --rim-hi: rgba(255,255,255,0.16);
+        --gold:     #c9a84c;
+        --gold-lt:  #e4c270;
+        --gold-dk:  #8a6d28;
+        --gold-glow: rgba(201,168,76,0.18);
+        --ice:   #e8eeff;
+        --ice-2: #a8b8d8;
+        --ice-3: #6272a0;
+        --ice-4: #384060;
+        --emerald: #10b981;
+        --sapphire: #3b82f6;
+        --amber: #f59e0b;
+        --rose: #f43f5e;
+        --violet: #8b5cf6;
+        --teal: #06b6d4;
+      }
+
       *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-      body { background: #0a0e1a; }
+      html, body { height: 100%; }
+
+      body {
+        background: var(--ink-0);
+        color: var(--ice);
+        font-family: 'DM Sans', system-ui, sans-serif;
+        position: relative;
+        overflow-x: hidden;
+      }
+
+      body::before {
+        content: '';
+        position: fixed;
+        inset: 0;
+        background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='1'/%3E%3C/svg%3E");
+        opacity: 0.028;
+        pointer-events: none;
+        z-index: 0;
+      }
+
+      body::after {
+        content: '';
+        position: fixed;
+        top: -30vh;
+        left: 50%;
+        transform: translateX(-50%);
+        width: 900px;
+        height: 500px;
+        background: radial-gradient(ellipse, rgba(201,168,76,0.06) 0%, transparent 70%);
+        pointer-events: none;
+        z-index: 0;
+      }
+
+      #root { position: relative; z-index: 1; }
+
+      /* Scrollbar */
+      ::-webkit-scrollbar { width: 4px; height: 4px; }
+      ::-webkit-scrollbar-track { background: transparent; }
+      ::-webkit-scrollbar-thumb { background: var(--ink-5); border-radius: 2px; }
+      ::-webkit-scrollbar-thumb:hover { background: var(--ice-4); }
+
+      /* Animations */
+      @keyframes pip-pulse {
+        0%, 100% { opacity: 1; box-shadow: 0 0 8px var(--emerald); }
+        50%       { opacity: 0.5; box-shadow: 0 0 4px var(--emerald); }
+      }
+      @keyframes spin  { to { transform: rotate(360deg); } }
+      @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+      @keyframes panel-in {
+        from { opacity: 0; transform: translateY(10px); }
+        to   { opacity: 1; transform: translateY(0); }
+      }
+
+      /* ── Header ── */
+      .app-header {
+        position: relative;
+        height: 64px;
+        background: var(--ink-1);
+        border-bottom: 1px solid var(--rim);
+        padding: 0 24px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        z-index: 10;
+      }
+      .app-header::before {
+        content: '';
+        position: absolute;
+        top: 0; left: 0; right: 0;
+        height: 1px;
+        background: linear-gradient(90deg, transparent 0%, #c9a84c 30%, #e4c270 50%, #c9a84c 70%, transparent 100%);
+        opacity: 0.6;
+      }
+
+      /* ── Logo box ── */
+      .logo-box {
+        width: 38px; height: 38px;
+        background: linear-gradient(145deg, #1a2040, #0d1428);
+        border: 1px solid #8a6d28;
+        border-radius: 10px;
+        box-shadow: 0 0 20px rgba(201,168,76,0.15), inset 0 1px 0 rgba(255,255,255,0.08);
+        display: flex; align-items: center; justify-content: center;
+        flex-shrink: 0;
+      }
+
+      /* ── Live pip ── */
+      .pip {
+        width: 5px; height: 5px;
+        border-radius: 50%;
+        background: var(--emerald);
+        animation: pip-pulse 2.4s infinite;
+        flex-shrink: 0;
+        display: inline-block;
+      }
+
+      /* ── Nav tabs ── */
+      .nav-tab {
+        display: flex; align-items: center; gap: 6px;
+        padding: 12px 16px;
+        border: none; cursor: pointer;
+        background: transparent;
+        color: var(--ice-3);
+        border-bottom: 2px solid transparent;
+        font-family: 'DM Sans', sans-serif;
+        font-size: 12px; font-weight: 500;
+        transition: all 0.2s ease;
+        white-space: nowrap;
+      }
+      .nav-tab:hover:not(.active) { color: var(--ice-2); }
+      .nav-tab.active {
+        background: rgba(201,168,76,0.06);
+        color: var(--gold-lt);
+        border-bottom-color: var(--gold);
+      }
+
+      /* ── Section labels ── */
+      .section-label {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-family: 'DM Mono', monospace;
+        font-size: 9.5px;
+        text-transform: uppercase;
+        letter-spacing: 2px;
+        color: var(--ice-4);
+        margin-bottom: 12px;
+      }
+      .section-label::after {
+        content: '';
+        flex: 1;
+        height: 1px;
+        background: linear-gradient(90deg, var(--rim-md), transparent);
+      }
+
+      /* ── Metric cards ── */
+      .metric-card {
+        background: var(--ink-2);
+        border: 1px solid var(--rim);
+        border-radius: 10px;
+        padding: 16px;
+        position: relative;
+        overflow: hidden;
+        transition: transform 0.2s ease, border-color 0.2s ease;
+      }
+      .metric-card::before {
+        content: '';
+        position: absolute;
+        top: 0; left: 0; right: 0;
+        height: 2px;
+        background: var(--accent, var(--gold));
+        opacity: 0.8;
+      }
+      .metric-card:hover {
+        transform: translateY(-1px);
+        border-color: var(--rim-md);
+      }
+
+      /* ── Data / action cards ── */
+      .data-card {
+        background: var(--ink-2);
+        border: 1px solid var(--rim);
+        border-radius: 10px;
+        padding: 16px;
+        position: relative;
+        overflow: hidden;
+        transition: transform 0.2s ease, box-shadow 0.2s ease;
+      }
+      .data-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+      }
+      .data-card::before {
+        content: '';
+        position: absolute;
+        bottom: 0; left: 0; right: 0;
+        height: 1px;
+        background: linear-gradient(90deg, transparent, #8a6d28, transparent);
+        opacity: 0;
+        transition: opacity 0.2s ease;
+      }
+      .data-card:hover::before { opacity: 1; }
+
+      /* ── Activity log ── */
+      .activity-wrap {
+        border-radius: 10px;
+        overflow: hidden;
+        border: 1px solid var(--rim);
+      }
+      .activity-row {
+        padding: 11px 18px;
+        border-bottom: 1px solid var(--rim);
+        transition: background 0.15s ease;
+      }
+      .activity-row:last-child { border-bottom: none; }
+      .activity-row:hover { background: rgba(255,255,255,0.02); }
+
+      /* ── Status badges ── */
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 2px 10px;
+        border-radius: 99px;
+        font-size: 10px;
+        font-weight: 600;
+        font-family: 'DM Mono', monospace;
+        letter-spacing: 0.03em;
+        white-space: nowrap;
+      }
+      .badge-complete, .badge-approved, .badge-scheduled {
+        background: rgba(16,185,129,0.1); color: var(--emerald);
+        border: 1px solid rgba(16,185,129,0.2);
+      }
+      .badge-waiting, .badge-pending, .badge-review {
+        background: rgba(245,158,11,0.1); color: var(--amber);
+        border: 1px solid rgba(245,158,11,0.2);
+      }
+      .badge-rejected {
+        background: rgba(244,63,94,0.1); color: var(--rose);
+        border: 1px solid rgba(244,63,94,0.2);
+      }
+      .badge-draft {
+        background: rgba(59,130,246,0.1); color: var(--sapphire);
+        border: 1px solid rgba(59,130,246,0.2);
+      }
+
+      /* ── Keyword chips ── */
+      .kw-chip {
+        padding: 2px 8px;
+        border-radius: 4px;
+        font-size: 10px;
+        font-family: 'DM Mono', monospace;
+        background: var(--ink-3);
+        color: var(--ice-3);
+        border: 1px solid var(--rim);
+        transition: all 0.15s ease;
+        cursor: default;
+      }
+      .kw-chip:hover {
+        border-color: rgba(201,168,76,0.3);
+        color: var(--gold-lt);
+        background: var(--ink-4);
+      }
+
+      /* ── Buttons ── */
+      .btn-approve {
+        background: rgba(16,185,129,0.1);
+        border: 1px solid rgba(16,185,129,0.3);
+        color: var(--emerald);
+        padding: 4px 12px; border-radius: 6px;
+        font-size: 11px; cursor: pointer;
+        font-family: 'DM Sans', sans-serif;
+        transition: background 0.15s ease;
+      }
+      .btn-approve:hover { background: rgba(16,185,129,0.18); }
+
+      .btn-reject {
+        background: var(--ink-3);
+        border: 1px solid var(--rim);
+        color: var(--ice-3);
+        padding: 4px 12px; border-radius: 6px;
+        font-size: 11px; cursor: pointer;
+        font-family: 'DM Sans', sans-serif;
+        transition: background 0.15s ease;
+      }
+      .btn-reject:hover { background: var(--ink-4); }
+
+      .btn-approve-all {
+        background: linear-gradient(135deg, #8a6d28 0%, #c9a84c 60%, #e4c270 100%);
+        border: none; color: #080b14;
+        padding: 8px 20px; border-radius: 8px;
+        font-size: 12px; font-weight: 700; cursor: pointer;
+        font-family: 'DM Sans', sans-serif;
+        position: relative; overflow: hidden;
+        transition: opacity 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
+      }
+      .btn-approve-all::before {
+        content: '';
+        position: absolute; inset: 0;
+        background: linear-gradient(135deg, rgba(255,255,255,0.15), transparent);
+        border-radius: inherit; pointer-events: none;
+      }
+      .btn-approve-all:hover {
+        opacity: 0.92;
+        transform: translateY(-1px);
+        box-shadow: 0 6px 20px rgba(201,168,76,0.35);
+      }
+
+      /* ── View-all link ── */
+      .view-all-btn {
+        background: none; border: none;
+        color: var(--gold);
+        font-size: 11px; cursor: pointer;
+        font-family: 'DM Mono', monospace;
+        display: flex; align-items: center; gap: 4px;
+        transition: color 0.15s ease;
+      }
+      .view-all-btn:hover { color: var(--gold-lt); }
+
+      /* ── Setup step icon ── */
+      .step-icon {
+        width: 32px; height: 32px;
+        border-radius: 8px; flex-shrink: 0;
+        display: flex; align-items: center; justify-content: center;
+        font-size: 13px; font-weight: 700;
+        font-family: 'DM Mono', monospace;
+      }
     </style>
   </head>
   <body>
