@@ -2,17 +2,300 @@ import { useState, useEffect, useReducer } from "react";
 
 // ── Design tokens ──
 const C = {
-  ink0:"#080b14", ink1:"#0d1120", ink2:"#111829", ink3:"#182035", ink4:"#1e2840", ink5:"#253050",
-  rim:"rgba(255,255,255,0.06)", rimMd:"rgba(255,255,255,0.10)", rimHi:"rgba(255,255,255,0.16)",
-  gold:"#c9a84c", goldLt:"#e4c270", goldDk:"#8a6d28", goldGlow:"rgba(201,168,76,0.18)",
-  ice:"#e8eeff", ice2:"#a8b8d8", ice3:"#6272a0", ice4:"#384060",
-  emerald:"#10b981", sapphire:"#3b82f6", amber:"#f59e0b", rose:"#f43f5e", violet:"#8b5cf6", teal:"#06b6d4",
+  bgBase:    "#161c2d",
+  bgSurface: "#1e2640",
+  bgRaised:  "#242c4a",
+  bgOverlay: "#2a3356",
+  bgInput:   "#1a2038",
+
+  borderDim: "rgba(255,255,255,0.07)",
+  borderMed: "rgba(255,255,255,0.12)",
+  borderHi:  "rgba(255,255,255,0.20)",
+
+  gold:     "#d4a843",
+  goldLt:   "#f0c865",
+  goldDk:   "#9a7428",
+  goldGlow: "rgba(212,168,67,0.20)",
+
+  textPrimary:   "#eef1fa",
+  textSecondary: "#8fa0c8",
+  textMuted:     "#4f6090",
+  textDim:       "#2d3d68",
+
+  emerald: "#22d472",
+  sapphire: "#4d8ef0",
+  amber:   "#f4a732",
+  rose:    "#f25c7a",
+  violet:  "#9d6ff5",
+  teal:    "#22d4c8",
 };
 const F = {
   serif: "'Playfair Display', Georgia, serif",
   sans:  "'DM Sans', system-ui, sans-serif",
   mono:  "'DM Mono', monospace",
 };
+
+// ── Injected global styles ──
+const GLOBAL_CSS = `
+  @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=DM+Sans:wght@300;400;500;600;700&family=DM+Mono:wght@400;500&display=swap');
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+
+  body {
+    background: radial-gradient(ellipse at 20% 0%, #1e2a4a 0%, #161c2d 50%, #111728 100%);
+    min-height: 100vh;
+    font-family: 'DM Sans', system-ui, sans-serif;
+    color: #eef1fa;
+    position: relative;
+    overflow-x: hidden;
+  }
+  body::before {
+    content: '';
+    position: fixed; inset: 0;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='1'/%3E%3C/svg%3E");
+    opacity: 0.032; pointer-events: none; z-index: 0;
+  }
+  body::after {
+    content: '';
+    position: fixed; top: -20vh; left: 50%; transform: translateX(-50%);
+    width: 700px; height: 400px;
+    background: radial-gradient(ellipse, rgba(212,168,67,0.07) 0%, transparent 70%);
+    pointer-events: none; z-index: 0;
+  }
+  #root { position: relative; z-index: 1; }
+
+  ::-webkit-scrollbar { width: 4px; height: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #242c4a; border-radius: 4px; }
+  ::-webkit-scrollbar-thumb:hover { background: #2a3356; }
+
+  @keyframes pipPulse {
+    0%,100% { opacity:1; box-shadow: 0 0 8px #22d472; }
+    50%      { opacity:0.5; box-shadow: 0 0 3px #22d472; }
+  }
+  @keyframes panelIn {
+    from { opacity:0; transform:translateY(10px); }
+    to   { opacity:1; transform:translateY(0); }
+  }
+  @keyframes spin { to { transform:rotate(360deg); } }
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
+
+  .pip {
+    display: inline-block;
+    width: 5px; height: 5px; border-radius: 50%;
+    background: #22d472;
+    animation: pipPulse 2.4s infinite;
+    flex-shrink: 0;
+  }
+
+  .app-header {
+    position: relative;
+    height: 64px;
+    background: rgba(22,28,45,0.95);
+    backdrop-filter: blur(28px);
+    border-bottom: 1px solid rgba(255,255,255,0.07);
+    padding: 0 24px;
+    display: flex; align-items: center; justify-content: space-between;
+    z-index: 10;
+  }
+  .app-header::before {
+    content: '';
+    position: absolute; top: 0; left: 0; right: 0; height: 1px;
+    background: linear-gradient(90deg, transparent, #d4a843 30%, #f0c865 50%, #d4a843 70%, transparent);
+    opacity: 0.5;
+  }
+
+  .logo-box {
+    width: 38px; height: 38px;
+    background: linear-gradient(145deg, #242c4a, #161c2d);
+    border: 1px solid #9a7428;
+    border-radius: 10px;
+    box-shadow: 0 0 24px rgba(212,168,67,0.18), inset 0 1px 0 rgba(255,255,255,0.10);
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+  }
+
+  .nav-tab {
+    display: flex; align-items: center; gap: 6px;
+    padding: 12px 16px;
+    border: none; cursor: pointer;
+    background: transparent; color: #8fa0c8;
+    border-bottom: 2px solid transparent;
+    font-family: 'DM Sans', sans-serif;
+    font-size: 12px; font-weight: 500;
+    transition: all 0.18s ease;
+    white-space: nowrap;
+  }
+  .nav-tab:hover:not(.active) { color: #eef1fa; background: rgba(255,255,255,0.04); }
+  .nav-tab.active {
+    color: #f0c865;
+    border-bottom-color: #d4a843;
+    background: rgba(212,168,67,0.06);
+  }
+
+  .metric-card {
+    background: linear-gradient(145deg, #242c4a 0%, #1e2640 100%);
+    border: 1px solid rgba(255,255,255,0.10);
+    border-radius: 16px;
+    padding: 20px 22px;
+    position: relative; overflow: hidden;
+    box-shadow: 0 4px 24px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.06);
+    transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+  }
+  .metric-card:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 12px 40px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.08);
+    border-color: rgba(255,255,255,0.18);
+  }
+  .metric-card .card-top-bar {
+    position: absolute; top: 0; left: 0; right: 0; height: 2px;
+  }
+  .metric-card .card-glow {
+    position: absolute; top: -20px; right: -20px;
+    width: 80px; height: 80px;
+    border-radius: 50%; opacity: 0.08;
+    pointer-events: none;
+  }
+  .metric-card .card-corner {
+    position: absolute; top: 0; right: 0;
+    width: 60px; height: 60px;
+    background: linear-gradient(225deg, rgba(255,255,255,0.04), transparent);
+    border-bottom-left-radius: 60px;
+    pointer-events: none;
+  }
+
+  .data-card {
+    background: linear-gradient(145deg, #242c4a, #1e2640);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 12px; padding: 16px;
+    position: relative; overflow: hidden;
+    transition: transform 0.16s ease, box-shadow 0.16s ease, border-color 0.16s ease;
+  }
+  .data-card:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 10px 32px rgba(0,0,0,0.35);
+    border-color: rgba(255,255,255,0.16);
+  }
+  .data-card::after {
+    content: '';
+    position: absolute; bottom: 0; left: 0; right: 0; height: 1px;
+    background: linear-gradient(90deg, transparent, #9a7428, transparent);
+    opacity: 0;
+    transition: opacity 0.16s ease;
+  }
+  .data-card:hover::after { opacity: 1; }
+
+  .section-label {
+    display: flex; align-items: center; gap: 10px;
+    font-family: 'DM Mono', monospace;
+    font-size: 9.5px; text-transform: uppercase; letter-spacing: 2px;
+    color: #2d3d68; margin-bottom: 12px;
+  }
+  .section-label::after {
+    content: ''; flex: 1; height: 1px;
+    background: linear-gradient(90deg, rgba(255,255,255,0.08), transparent);
+  }
+
+  .activity-row {
+    padding: 11px 18px;
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+    transition: background 0.12s ease;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .activity-row:last-child { border-bottom: none; }
+  .activity-row:hover { background: rgba(255,255,255,0.025); }
+
+  .badge {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 3px 9px; border-radius: 10px;
+    font-family: 'DM Mono', monospace;
+    font-size: 9px; font-weight: 500; letter-spacing: 0.5px;
+    white-space: nowrap;
+  }
+  .badge-complete, .badge-approved, .badge-scheduled {
+    background: rgba(34,212,114,0.10); color: #22d472;
+    border: 1px solid rgba(34,212,114,0.22);
+  }
+  .badge-pending, .badge-waiting, .badge-review {
+    background: rgba(244,167,50,0.10); color: #f4a732;
+    border: 1px solid rgba(244,167,50,0.22);
+  }
+  .badge-rejected {
+    background: rgba(242,92,122,0.10); color: #f25c7a;
+    border: 1px solid rgba(242,92,122,0.22);
+  }
+  .badge-draft {
+    background: rgba(77,142,240,0.10); color: #4d8ef0;
+    border: 1px solid rgba(77,142,240,0.22);
+  }
+
+  .kw-chip {
+    padding: 3px 9px; border-radius: 6px;
+    font-family: 'DM Mono', monospace; font-size: 10px;
+    background: rgba(255,255,255,0.05); color: #8fa0c8;
+    border: 1px solid rgba(255,255,255,0.08);
+    transition: all 0.14s ease; cursor: default;
+  }
+  .kw-chip:hover {
+    border-color: rgba(212,168,67,0.32);
+    color: #f0c865; background: rgba(212,168,67,0.07);
+  }
+
+  .btn-approve {
+    background: rgba(34,212,114,0.10); border: 1px solid rgba(34,212,114,0.28);
+    color: #22d472; padding: 5px 13px; border-radius: 8px;
+    font-size: 11px; cursor: pointer; font-family: 'DM Sans', sans-serif;
+    font-weight: 600; transition: background 0.14s ease;
+  }
+  .btn-approve:hover { background: rgba(34,212,114,0.18); }
+
+  .btn-reject {
+    background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.10);
+    color: #4f6090; padding: 5px 13px; border-radius: 8px;
+    font-size: 11px; cursor: pointer; font-family: 'DM Sans', sans-serif;
+    transition: all 0.14s ease;
+  }
+  .btn-reject:hover { background: rgba(255,255,255,0.08); color: #8fa0c8; }
+
+  .btn-approve-all {
+    background: linear-gradient(135deg, #9a7428 0%, #d4a843 55%, #f0c865 100%);
+    border: none; color: #111728;
+    padding: 10px 22px; border-radius: 12px;
+    font-size: 12px; font-weight: 700; cursor: pointer;
+    font-family: 'DM Sans', sans-serif;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.20);
+    transition: transform 0.16s ease, box-shadow 0.16s ease, opacity 0.16s ease;
+  }
+  .btn-approve-all:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 6px 20px rgba(212,168,67,0.40), inset 0 1px 0 rgba(255,255,255,0.20);
+    opacity: 0.94;
+  }
+
+  .view-all-btn {
+    background: none; border: none; color: #d4a843;
+    font-size: 11px; cursor: pointer;
+    font-family: 'DM Mono', monospace;
+    display: flex; align-items: center; gap: 4px;
+    transition: color 0.14s ease;
+  }
+  .view-all-btn:hover { color: #f0c865; }
+
+  .step-icon {
+    width: 32px; height: 32px; border-radius: 8px; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 13px; font-weight: 700; font-family: 'DM Mono', monospace;
+  }
+
+  .stat-chip {
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 20px; padding: 5px 13px;
+    font-family: 'DM Mono', monospace; font-size: 11px; color: #8fa0c8;
+    display: flex; align-items: center; gap: 6px;
+  }
+`;
 
 // ── Icon components ──
 const Icons = {
@@ -188,7 +471,7 @@ function reducer(state, action) {
 }
 
 // ── Sparkline component ──
-function Sparkline({ data, color = "#10b981", width = 80, height = 24 }) {
+function Sparkline({ data, color = "#22d472", width = 80, height = 24 }) {
   const max = Math.max(...data);
   const min = Math.min(...data);
   const range = max - min || 1;
@@ -199,13 +482,13 @@ function Sparkline({ data, color = "#10b981", width = 80, height = 24 }) {
   }).join(" ");
   return (
     <svg width={width} height={height} style={{ overflow: "visible" }}>
-      <polyline points={points} fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+      <polyline points={points} fill="none" stroke={color} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }
 
 // ── Mini bar chart ──
-function MiniBar({ values, labels, color = "#c9a84c", height = 120 }) {
+function MiniBar({ values, labels, color = "#d4a843", height = 120 }) {
   const max = Math.max(...values);
   return (
     <div style={{ display: "flex", alignItems: "flex-end", gap: 6, height, padding: "0 4px" }}>
@@ -219,7 +502,7 @@ function MiniBar({ values, labels, color = "#c9a84c", height = 120 }) {
             minHeight: 4,
             transition: "height 0.5s ease",
           }} />
-          <span style={{ fontSize: 9, color: C.ice4, fontFamily: F.mono, whiteSpace: "nowrap" }}>{labels[i]}</span>
+          <span style={{ fontSize: 9, color: C.textDim, fontFamily: F.mono, whiteSpace: "nowrap" }}>{labels[i]}</span>
         </div>
       ))}
     </div>
@@ -243,12 +526,13 @@ function StatusBadge({ status }) {
 
 // ── Priority indicator ──
 function PriorityDot({ priority }) {
-  const colors = { high: C.rose, medium: C.amber, low: C.ice4 };
+  const colors = { high: C.rose, medium: C.amber, low: C.textDim };
   return (
     <span style={{
-      width: 8, height: 8, borderRadius: "50%",
+      width: 7, height: 7, borderRadius: "50%",
       background: colors[priority] || colors.low,
       display: "inline-block", flexShrink: 0,
+      boxShadow: priority === "high" ? `0 0 6px ${C.rose}` : "none",
     }} />
   );
 }
@@ -268,61 +552,66 @@ export default function MarketingBotDashboard() {
   const pendingCount = state.actionQueue.filter(a => a.status === "pending").length;
 
   const tabs = [
-    { id: "overview", label: "Overview",              icon: <Icons.BarChart /> },
+    { id: "overview", label: "Overview",                  icon: <Icons.BarChart /> },
     { id: "actions",  label: `Actions (${pendingCount})`, icon: <Icons.Zap /> },
-    { id: "channels", label: "Channels",              icon: <Icons.Globe /> },
-    { id: "content",  label: "Content",               icon: <Icons.Edit /> },
-    { id: "intel",    label: "Intel",                 icon: <Icons.Eye /> },
-    { id: "setup",    label: "Setup Guide",           icon: <Icons.Settings /> },
+    { id: "channels", label: "Channels",                  icon: <Icons.Globe /> },
+    { id: "content",  label: "Content",                   icon: <Icons.Edit /> },
+    { id: "intel",    label: "Intel",                     icon: <Icons.Eye /> },
+    { id: "setup",    label: "Setup Guide",               icon: <Icons.Settings /> },
   ];
 
   return (
-    <div style={{ fontFamily: F.sans, background: C.ink0, color: C.ice, minHeight: "100vh" }}>
+    <div style={{ fontFamily: F.sans, minHeight: "100vh" }}>
+      <style>{GLOBAL_CSS}</style>
 
       {/* ── HEADER ── */}
       <div className="app-header">
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <div className="logo-box">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+            <svg viewBox="0 0 24 24" fill="none" width="20" height="20">
+              <path d="M13 3L4 14h8l-1 7 9-11h-8l1-7z" fill="url(#g1)" stroke="url(#g1)" strokeWidth="0.5" strokeLinejoin="round"/>
               <defs>
-                <linearGradient id="bolt-grad" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#e4c270" />
-                  <stop offset="100%" stopColor="#8a6d28" />
+                <linearGradient id="g1" x1="4" y1="3" x2="17" y2="21" gradientUnits="userSpaceOnUse">
+                  <stop offset="0%" stopColor="#f0c865"/>
+                  <stop offset="100%" stopColor="#9a7428"/>
                 </linearGradient>
               </defs>
-              <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" fill="url(#bolt-grad)" />
             </svg>
           </div>
           <div>
-            <div style={{ fontFamily: F.serif, fontSize: 15, fontWeight: 700, letterSpacing: "-0.01em", lineHeight: 1.2 }}>
-              <span style={{ color: C.ice }}>FPB</span><span style={{ color: C.gold }}>AI</span>
+            <div style={{ fontFamily: F.serif, fontSize: 16, fontWeight: 700, letterSpacing: "-0.01em", lineHeight: 1.15 }}>
+              <span style={{ color: C.textPrimary }}>FPB</span>
+              <span style={{ color: C.gold }}>AI</span>
             </div>
-            <div style={{ fontFamily: F.mono, fontSize: 9, letterSpacing: "2.5px", color: C.ice3, display: "flex", alignItems: "center", gap: 5, marginTop: 2 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 5, marginTop: 2 }}>
               <span className="pip" />
-              MARKETING AGENT
+              <span style={{ fontFamily: F.mono, fontSize: 9, letterSpacing: "2.5px", color: C.textMuted, textTransform: "uppercase" }}>
+                Marketing Agent
+              </span>
             </div>
           </div>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-          <div style={{
-            display: "flex", alignItems: "center", gap: 6,
-            padding: "4px 12px", borderRadius: 99,
-            background: "rgba(16,185,129,0.06)", border: "1px solid rgba(16,185,129,0.15)",
-          }}>
-            <span className="pip" />
-            <span style={{ fontSize: 11, color: C.emerald, fontWeight: 600, fontFamily: F.mono }}>LIVE</span>
+
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div className="stat-chip">
+            <span style={{ width: 6, height: 6, borderRadius: "50%", background: C.emerald, boxShadow: `0 0 7px ${C.emerald}`, display: "inline-block" }} />
+            LIVE
           </div>
-          <span style={{ fontSize: 11, color: C.ice4, fontFamily: F.mono }}>
+          <div className="stat-chip">
+            <span style={{ width: 6, height: 6, borderRadius: "50%", background: C.amber, boxShadow: `0 0 7px ${C.amber}`, display: "inline-block" }} />
+            {pendingCount} pending
+          </div>
+          <div className="stat-chip">
             {now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-          </span>
+          </div>
         </div>
       </div>
 
       {/* ── TABS ── */}
       <div style={{
         display: "flex", gap: 2, padding: "0 24px",
-        background: C.ink1, borderBottom: `1px solid ${C.rim}`,
-        overflowX: "auto",
+        background: "rgba(22,28,45,0.80)", borderBottom: `1px solid ${C.borderDim}`,
+        overflowX: "auto", backdropFilter: "blur(16px)",
       }}>
         {tabs.map(tab => (
           <button
@@ -341,37 +630,42 @@ export default function MarketingBotDashboard() {
 
         {/* OVERVIEW TAB */}
         {state.activeTab === "overview" && (
-          <div style={{ animation: "panel-in 0.3s ease" }}>
+          <div key="overview" style={{ animation: "panelIn 0.22s ease" }}>
 
             {/* KPI Row */}
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 12, marginBottom: 24 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(175px, 1fr))", gap: 14, marginBottom: 24 }}>
               {[
-                { label: "TOTAL SPEND",  value: `$${state.metrics.totalSpend.toLocaleString()}`,    sub: "This month",      color: C.amber,   spark: [1200, 1800, 2100, 2400, 3100, 3800, 4280] },
-                { label: "REVENUE",      value: `$${state.metrics.totalRevenue.toLocaleString()}`,  sub: "Attributed",      color: C.emerald, spark: [4200, 6800, 9400, 11200, 14500, 16800, 18940] },
-                { label: "ROAS",         value: `${state.metrics.overallROAS}x`,                   sub: "Overall",         color: C.violet,  spark: [3.1, 3.4, 3.8, 4.0, 4.1, 4.3, 4.42] },
-                { label: "LEADS",        value: state.metrics.leadsThisWeek,                        sub: "This week",       color: C.rose,    spark: [42, 58, 71, 89, 95, 112, 127] },
-                { label: "CVR",          value: `${state.metrics.conversionRate}%`,                 sub: "Avg conversion",  color: C.teal,    spark: [2.8, 3.0, 3.2, 3.1, 3.5, 3.6, 3.8] },
-                { label: "ORGANIC",      value: state.metrics.organicTraffic.toLocaleString(),      sub: "Monthly visits",  color: C.sapphire,spark: [7200, 8100, 9200, 10100, 10800, 11600, 12400] },
+                { label: "Total Spend",    value: `$${state.metrics.totalSpend.toLocaleString()}`,   sub: "+12% vs last month", color: C.violet,   spark: [1200,1800,2100,2400,3100,3800,4280]  },
+                { label: "Revenue",        value: `$${state.metrics.totalRevenue.toLocaleString()}`, sub: "Attributed",         color: C.emerald,  spark: [4200,6800,9400,11200,14500,16800,18940] },
+                { label: "ROAS",           value: `${state.metrics.overallROAS}x`,                  sub: "Overall blended",    color: C.amber,    spark: [3.1,3.4,3.8,4.0,4.1,4.3,4.42] },
+                { label: "Leads",          value: state.metrics.leadsThisWeek,                       sub: "This week",          color: C.teal,     spark: [42,58,71,89,95,112,127] },
+                { label: "Conv. Rate",     value: `${state.metrics.conversionRate}%`,                sub: "Avg across channels", color: C.sapphire, spark: [2.8,3.0,3.2,3.1,3.5,3.6,3.8] },
+                { label: "Organic Traffic",value: state.metrics.organicTraffic.toLocaleString(),     sub: "Monthly visits",     color: C.rose,     spark: [7200,8100,9200,10100,10800,11600,12400] },
               ].map((kpi, i) => (
-                <div key={i} className="metric-card" style={{ "--accent": kpi.color }}>
-                  <div style={{ fontFamily: F.mono, fontSize: 9.5, fontWeight: 500, color: C.ice4, letterSpacing: "1.5px", textTransform: "uppercase", marginBottom: 8 }}>{kpi.label}</div>
-                  <div style={{ fontFamily: F.serif, fontSize: 28, fontWeight: 700, color: kpi.color, marginBottom: 2 }}>{kpi.value}</div>
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                    <span style={{ fontSize: 10, color: C.ice3, fontFamily: F.sans }}>{kpi.sub}</span>
-                    <Sparkline data={kpi.spark} color={kpi.color} />
+                <div key={i} className="metric-card">
+                  <div className="card-top-bar" style={{ background: kpi.color }} />
+                  <div className="card-glow" style={{ background: `radial-gradient(circle, ${kpi.color} 0%, transparent 70%)` }} />
+                  <div className="card-corner" />
+                  <div style={{ position: "relative", zIndex: 1 }}>
+                    <div style={{ fontFamily: F.mono, fontSize: 10, textTransform: "uppercase", letterSpacing: "1.5px", color: C.textMuted, marginBottom: 10 }}>{kpi.label}</div>
+                    <div style={{ fontFamily: F.serif, fontSize: 30, fontWeight: 700, color: C.textPrimary, letterSpacing: "-0.5px", lineHeight: 1, marginBottom: 8 }}>{kpi.value}</div>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                      <span style={{ fontFamily: F.mono, fontSize: 10, color: kpi.color }}>{kpi.sub}</span>
+                      <Sparkline data={kpi.spark} color={kpi.color} />
+                    </div>
                   </div>
                 </div>
               ))}
             </div>
 
-            {/* Action queue preview + Automation log */}
+            {/* Two-column: action queue + automation log */}
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
 
-              <div style={{ background: C.ink2, border: `1px solid ${C.rim}`, borderRadius: 10, padding: 16 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-                  <span className="section-label" style={{ marginBottom: 0, color: C.amber }}>
-                    {pendingCount} ACTIONS PENDING
-                  </span>
+              <div style={{ background: `linear-gradient(145deg, ${C.bgRaised}, ${C.bgSurface})`, border: `1px solid ${C.borderDim}`, borderRadius: 12, padding: 16 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+                  <div className="section-label" style={{ marginBottom: 0, color: C.amber }}>
+                    {pendingCount} Actions Pending
+                  </div>
                   <button onClick={() => dispatch({ type: "SET_TAB", payload: "actions" })} className="view-all-btn">
                     View all <Icons.ChevRight />
                   </button>
@@ -379,26 +673,26 @@ export default function MarketingBotDashboard() {
                 {state.actionQueue.filter(a => a.status === "pending").slice(0, 3).map(a => (
                   <div key={a.id} style={{
                     display: "flex", alignItems: "center", gap: 8,
-                    padding: "8px 0", borderBottom: `1px solid ${C.rim}`,
-                    fontSize: 11,
+                    padding: "9px 0", borderBottom: `1px solid ${C.borderDim}`,
                   }}>
                     <PriorityDot priority={a.priority} />
-                    <span style={{ color: C.ice2, flex: 1, fontFamily: F.sans }}>{a.action}</span>
-                    <span style={{ color: C.ice4, fontSize: 10, fontFamily: F.mono }}>{a.channel}</span>
+                    <span style={{ color: C.textSecondary, flex: 1, fontFamily: F.sans, fontSize: 12 }}>{a.action}</span>
+                    <span style={{ color: C.textDim, fontSize: 10, fontFamily: F.mono, whiteSpace: "nowrap" }}>{a.channel}</span>
                   </div>
                 ))}
               </div>
 
-              <div style={{ background: C.ink2, border: `1px solid ${C.rim}`, borderRadius: 10, overflow: "hidden" }}>
-                <div style={{ padding: "16px 16px 12px" }}>
-                  <div className="section-label">AUTOMATION LOG — TODAY</div>
+              <div style={{ background: `linear-gradient(145deg, ${C.bgRaised}, ${C.bgSurface})`, border: `1px solid ${C.borderDim}`, borderRadius: 12, overflow: "hidden" }}>
+                <div style={{ padding: "16px 18px 10px" }}>
+                  <div className="section-label">Automation Log — Today</div>
                 </div>
-                <div style={{ maxHeight: 180, overflow: "auto" }}>
+                <div style={{ maxHeight: 196, overflow: "auto" }}>
                   {state.automationLog.map((log, i) => (
-                    <div key={i} className="activity-row" style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11 }}>
-                      <span style={{ fontFamily: F.mono, fontSize: 10.5, color: C.ice4, width: 60, flexShrink: 0 }}>{log.time}</span>
+                    <div key={i} className="activity-row">
+                      <span style={{ width: 6, height: 6, borderRadius: "50%", background: log.status === "waiting" ? C.amber : C.emerald, boxShadow: `0 0 7px ${log.status === "waiting" ? C.amber : C.emerald}`, display: "inline-block", flexShrink: 0 }} />
+                      <span style={{ fontFamily: F.mono, fontSize: 10.5, color: C.textDim, width: 64, flexShrink: 0 }}>{log.time}</span>
                       <StatusBadge status={log.status} />
-                      <span style={{ color: C.ice2, fontFamily: F.sans }}>{log.action}</span>
+                      <span style={{ color: C.textSecondary, fontFamily: F.sans, fontSize: 12, flex: 1 }}>{log.action}</span>
                     </div>
                   ))}
                 </div>
@@ -406,18 +700,18 @@ export default function MarketingBotDashboard() {
 
             </div>
 
-            {/* Channel performance bars */}
-            <div style={{ marginTop: 16, background: C.ink2, border: `1px solid ${C.rim}`, borderRadius: 10, padding: 16 }}>
-              <div className="section-label">CHANNEL SPEND VS REVENUE</div>
+            {/* Channel spend vs revenue */}
+            <div style={{ marginTop: 16, background: `linear-gradient(145deg, ${C.bgRaised}, ${C.bgSurface})`, border: `1px solid ${C.borderDim}`, borderRadius: 12, padding: 20 }}>
+              <div className="section-label">Channel Spend vs Revenue</div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
-                <MiniBar values={[2100, 1680, 0, 0, 500]}       labels={["Google", "Meta", "SEO", "Blog", "Local"]} color={C.rose}    height={100} />
-                <MiniBar values={[7980, 7056, 2200, 890, 814]}  labels={["Google", "Meta", "SEO", "Blog", "Local"]} color={C.emerald} height={100} />
+                <MiniBar values={[2100,1680,0,0,500]}      labels={["Google","Meta","SEO","Blog","Local"]} color={C.rose}    height={100} />
+                <MiniBar values={[7980,7056,2200,890,814]} labels={["Google","Meta","SEO","Blog","Local"]} color={C.emerald} height={100} />
               </div>
-              <div style={{ display: "flex", gap: 24, marginTop: 8, justifyContent: "center" }}>
-                <span style={{ fontSize: 10, color: C.rose,    fontFamily: F.mono, display: "flex", alignItems: "center", gap: 4 }}>
+              <div style={{ display: "flex", gap: 24, marginTop: 10, justifyContent: "center" }}>
+                <span style={{ fontSize: 10, color: C.rose,    fontFamily: F.mono, display: "flex", alignItems: "center", gap: 5 }}>
                   <span style={{ width: 8, height: 8, borderRadius: 2, background: C.rose,    display: "inline-block" }} /> Spend
                 </span>
-                <span style={{ fontSize: 10, color: C.emerald, fontFamily: F.mono, display: "flex", alignItems: "center", gap: 4 }}>
+                <span style={{ fontSize: 10, color: C.emerald, fontFamily: F.mono, display: "flex", alignItems: "center", gap: 5 }}>
                   <span style={{ width: 8, height: 8, borderRadius: 2, background: C.emerald, display: "inline-block" }} /> Revenue
                 </span>
               </div>
@@ -427,11 +721,11 @@ export default function MarketingBotDashboard() {
 
         {/* ACTIONS TAB */}
         {state.activeTab === "actions" && (
-          <div style={{ animation: "panel-in 0.3s ease" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+          <div key="actions" style={{ animation: "panelIn 0.22s ease" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
               <div>
-                <div style={{ fontFamily: F.serif, fontSize: 22, fontWeight: 700, marginBottom: 4 }}>Action Queue</div>
-                <div style={{ fontSize: 13, color: C.ice3, fontFamily: F.sans }}>Claude analyzed your campaigns and recommends these actions</div>
+                <div style={{ fontFamily: F.serif, fontSize: 22, fontWeight: 700, color: C.textPrimary, marginBottom: 4 }}>Action Queue</div>
+                <div style={{ fontSize: 13, color: C.textSecondary, fontFamily: F.sans }}>Claude analyzed your campaigns and recommends these actions</div>
               </div>
               {pendingCount > 0 && (
                 <button onClick={() => dispatch({ type: "APPROVE_ALL" })} className="btn-approve-all">
@@ -442,15 +736,15 @@ export default function MarketingBotDashboard() {
 
             {state.actionQueue.map(a => (
               <div key={a.id} className="data-card" style={{
-                marginBottom: 8,
+                marginBottom: 10,
                 display: "flex", alignItems: "center", gap: 12,
-                opacity: a.status === "rejected" ? 0.4 : 1,
+                opacity: a.status === "rejected" ? 0.38 : 1,
                 transition: "opacity 0.3s",
               }}>
                 <PriorityDot priority={a.priority} />
                 <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 12, fontWeight: 500, marginBottom: 4, fontFamily: F.sans, color: C.ice }}>{a.action}</div>
-                  <div style={{ fontSize: 10, color: C.ice4, fontFamily: F.mono }}>{a.channel}</div>
+                  <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 4, fontFamily: F.sans, color: C.textPrimary }}>{a.action}</div>
+                  <div style={{ fontSize: 10, color: C.textMuted, fontFamily: F.mono }}>{a.channel}</div>
                 </div>
                 <StatusBadge status={a.status} />
                 {a.status === "pending" && (
@@ -466,7 +760,7 @@ export default function MarketingBotDashboard() {
 
         {/* CHANNELS TAB */}
         {state.activeTab === "channels" && (
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, animation: "panel-in 0.3s ease" }}>
+          <div key="channels" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, animation: "panelIn 0.22s ease" }}>
             {[
               {
                 name: "Google Ads", icon: <Icons.Google />, color: C.amber,
@@ -477,7 +771,7 @@ export default function MarketingBotDashboard() {
                   { l: "CPA",         v: `$${state.channels.googleAds.cpa}` },
                   { l: "ROAS",        v: `${state.channels.googleAds.roas}x` },
                 ],
-                spark: [1200, 1400, 1650, 1800, 1950, 2000, 2100],
+                spark: [1200,1400,1650,1800,1950,2000,2100],
               },
               {
                 name: "Facebook Ads", icon: <Icons.Facebook />, color: C.sapphire,
@@ -488,17 +782,17 @@ export default function MarketingBotDashboard() {
                   { l: "CPA",         v: `$${state.channels.facebookAds.cpa}` },
                   { l: "ROAS",        v: `${state.channels.facebookAds.roas}x` },
                 ],
-                spark: [900, 1100, 1250, 1400, 1500, 1600, 1680],
+                spark: [900,1100,1250,1400,1500,1600,1680],
               },
               {
                 name: "SEO", icon: <Icons.Search />, color: C.emerald,
                 stats: [
-                  { l: "Organic Visits",    v: state.channels.seo.organicVisits.toLocaleString() },
-                  { l: "Keywords Tracked",  v: state.channels.seo.keywords },
-                  { l: "Top 10 Rankings",   v: state.channels.seo.top10 },
-                  { l: "Avg Position",      v: state.channels.seo.avgPosition },
+                  { l: "Organic Visits",   v: state.channels.seo.organicVisits.toLocaleString() },
+                  { l: "Keywords Tracked", v: state.channels.seo.keywords },
+                  { l: "Top 10 Rankings",  v: state.channels.seo.top10 },
+                  { l: "Avg Position",     v: state.channels.seo.avgPosition },
                 ],
-                spark: [7200, 8100, 9200, 10100, 10800, 11600, 12400],
+                spark: [7200,8100,9200,10100,10800,11600,12400],
               },
               {
                 name: "Blog / Content", icon: <Icons.Edit />, color: C.violet,
@@ -508,7 +802,7 @@ export default function MarketingBotDashboard() {
                   { l: "Avg Time on Page",  v: state.channels.blog.avgTimeOnPage },
                   { l: "Top Post",          v: state.channels.blog.topPost },
                 ],
-                spark: [4200, 5100, 5800, 6400, 7200, 8000, 8900],
+                spark: [4200,5100,5800,6400,7200,8000,8900],
               },
               {
                 name: "GEO / Local SEO", icon: <Icons.Globe />, color: C.teal,
@@ -518,13 +812,13 @@ export default function MarketingBotDashboard() {
                   { l: "Directions",      v: state.channels.geo.directions },
                   { l: "Review Score",    v: `${state.channels.geo.reviews} ★` },
                 ],
-                spark: [3200, 3600, 4100, 4500, 4900, 5200, 5600],
+                spark: [3200,3600,4100,4500,4900,5200,5600],
               },
             ].map((ch, i) => (
               <div key={i} className="data-card">
-                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
-                  <div style={{ color: ch.color }}>{ch.icon}</div>
-                  <span style={{ fontFamily: F.serif, fontSize: 15, fontWeight: 700, color: C.ice }}>{ch.name}</span>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
+                  <div style={{ color: ch.color, display: "flex" }}>{ch.icon}</div>
+                  <span style={{ fontFamily: F.serif, fontSize: 15, fontWeight: 700, color: C.textPrimary }}>{ch.name}</span>
                   <div style={{ marginLeft: "auto" }}>
                     <Sparkline data={ch.spark} color={ch.color} width={60} height={20} />
                   </div>
@@ -532,11 +826,10 @@ export default function MarketingBotDashboard() {
                 {ch.stats.map((s, j) => (
                   <div key={j} style={{
                     display: "flex", justifyContent: "space-between",
-                    padding: "5px 0", borderBottom: j < ch.stats.length - 1 ? `1px solid ${C.rim}` : "none",
-                    fontSize: 11,
+                    padding: "5px 0", borderBottom: j < ch.stats.length - 1 ? `1px solid ${C.borderDim}` : "none",
                   }}>
-                    <span style={{ color: C.ice3, fontFamily: F.sans }}>{s.l}</span>
-                    <span style={{ fontWeight: 600, fontFamily: F.mono, color: C.ice2 }}>{s.v}</span>
+                    <span style={{ color: C.textSecondary, fontFamily: F.sans, fontSize: 12 }}>{s.l}</span>
+                    <span style={{ fontWeight: 600, fontFamily: F.mono, fontSize: 12, color: C.textPrimary }}>{s.v}</span>
                   </div>
                 ))}
               </div>
@@ -546,21 +839,21 @@ export default function MarketingBotDashboard() {
 
         {/* CONTENT TAB */}
         {state.activeTab === "content" && (
-          <div style={{ animation: "panel-in 0.3s ease" }}>
-            <div style={{ fontFamily: F.serif, fontSize: 22, fontWeight: 700, marginBottom: 4 }}>Content Pipeline</div>
-            <div style={{ fontSize: 13, color: C.ice3, fontFamily: F.sans, marginBottom: 16 }}>Claude identifies keyword opportunities and drafts optimized content</div>
+          <div key="content" style={{ animation: "panelIn 0.22s ease" }}>
+            <div style={{ fontFamily: F.serif, fontSize: 22, fontWeight: 700, color: C.textPrimary, marginBottom: 4 }}>Content Pipeline</div>
+            <div style={{ fontSize: 13, color: C.textSecondary, fontFamily: F.sans, marginBottom: 20 }}>Claude identifies keyword opportunities and drafts optimized content</div>
             {state.blogQueue.map((post, i) => (
-              <div key={i} className="data-card" style={{ marginBottom: 8 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
-                  <div style={{ fontSize: 13, fontWeight: 600, fontFamily: F.sans, color: C.ice }}>{post.title}</div>
+              <div key={i} className="data-card" style={{ marginBottom: 10 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10 }}>
+                  <div style={{ fontSize: 14, fontWeight: 600, fontFamily: F.sans, color: C.textPrimary, flex: 1, marginRight: 12 }}>{post.title}</div>
                   <StatusBadge status={post.status} />
                 </div>
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
                   {post.keywords.map((kw, j) => (
                     <span key={j} className="kw-chip">{kw}</span>
                   ))}
                 </div>
-                <div style={{ fontSize: 10, color: C.ice3, fontFamily: F.mono }}>
+                <div style={{ fontSize: 11, color: C.textMuted, fontFamily: F.mono }}>
                   Est. monthly traffic: <span style={{ color: C.emerald, fontWeight: 600 }}>{post.estTraffic.toLocaleString()}</span>
                 </div>
               </div>
@@ -570,24 +863,25 @@ export default function MarketingBotDashboard() {
 
         {/* INTEL TAB */}
         {state.activeTab === "intel" && (
-          <div style={{ animation: "panel-in 0.3s ease" }}>
-            <div style={{ fontFamily: F.serif, fontSize: 22, fontWeight: 700, marginBottom: 4 }}>Competitor Intelligence</div>
-            <div style={{ fontSize: 13, color: C.ice3, fontFamily: F.sans, marginBottom: 16 }}>Claude monitors competitor activity and surfaces actionable alerts</div>
+          <div key="intel" style={{ animation: "panelIn 0.22s ease" }}>
+            <div style={{ fontFamily: F.serif, fontSize: 22, fontWeight: 700, color: C.textPrimary, marginBottom: 4 }}>Competitor Intelligence</div>
+            <div style={{ fontSize: 13, color: C.textSecondary, fontFamily: F.sans, marginBottom: 20 }}>Claude monitors competitor activity and surfaces actionable alerts</div>
             {state.competitorAlerts.map((alert, i) => (
-              <div key={i} className="data-card" style={{ marginBottom: 8, display: "flex", alignItems: "center", gap: 12 }}>
+              <div key={i} className="data-card" style={{ marginBottom: 10, display: "flex", alignItems: "center", gap: 14 }}>
                 <div style={{
-                  width: 36, height: 36, borderRadius: 8, flexShrink: 0,
-                  background: C.ink3, border: `1px solid ${C.rim}`,
+                  width: 38, height: 38, borderRadius: 10, flexShrink: 0,
+                  background: `linear-gradient(145deg, ${C.bgOverlay}, ${C.bgRaised})`,
+                  border: `1px solid ${C.borderMed}`,
                   display: "flex", alignItems: "center", justifyContent: "center",
-                  fontSize: 14, fontWeight: 700, color: C.gold, fontFamily: F.serif,
+                  fontSize: 15, fontWeight: 700, color: C.gold, fontFamily: F.serif,
                 }}>
                   {alert.competitor[0]}
                 </div>
                 <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 2, fontFamily: F.sans, color: C.ice }}>{alert.competitor}</div>
-                  <div style={{ fontSize: 11, color: C.ice2, fontFamily: F.sans }}>{alert.alert}</div>
+                  <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 3, fontFamily: F.sans, color: C.textPrimary }}>{alert.competitor}</div>
+                  <div style={{ fontSize: 12, color: C.textSecondary, fontFamily: F.sans }}>{alert.alert}</div>
                 </div>
-                <span style={{ fontSize: 10, color: C.ice4, whiteSpace: "nowrap", fontFamily: F.mono }}>{alert.time}</span>
+                <span style={{ fontSize: 10, color: C.textDim, whiteSpace: "nowrap", fontFamily: F.mono }}>{alert.time}</span>
               </div>
             ))}
           </div>
@@ -595,40 +889,42 @@ export default function MarketingBotDashboard() {
 
         {/* SETUP GUIDE TAB */}
         {state.activeTab === "setup" && (
-          <div style={{ animation: "panel-in 0.3s ease" }}>
-            <div style={{ fontFamily: F.serif, fontSize: 22, fontWeight: 700, marginBottom: 4 }}>Setup Guide</div>
-            <div style={{ fontSize: 13, color: C.ice3, fontFamily: F.sans, marginBottom: 20 }}>Follow these steps to connect all your marketing channels</div>
+          <div key="setup" style={{ animation: "panelIn 0.22s ease" }}>
+            <div style={{ fontFamily: F.serif, fontSize: 22, fontWeight: 700, color: C.textPrimary, marginBottom: 4 }}>Setup Guide</div>
+            <div style={{ fontSize: 13, color: C.textSecondary, fontFamily: F.sans, marginBottom: 24 }}>Follow these steps to connect all your marketing channels</div>
 
             {[
-              { step: 1,  title: "Get Claude Pro/Team Plan",         status: "required",    description: "You need Claude Pro ($20/mo) or Team plan to access Cowork. Go to claude.ai → Settings → Subscription." },
-              { step: 2,  title: "Enable Cowork (Desktop)",          status: "required",    description: "Download Claude Desktop app → Settings → Enable Cowork. This lets Claude automate tasks on your computer." },
-              { step: 3,  title: "Connect Google Ads API",           status: "integration", description: "Create a Google Ads API developer token at ads.google.com/aw/apicenter. You'll need your Customer ID and a refresh token via OAuth2." },
-              { step: 4,  title: "Connect Meta Marketing API",       status: "integration", description: "Go to developers.facebook.com → Create App → Marketing API. Generate a long-lived access token. Note your Ad Account ID." },
-              { step: 5,  title: "Connect Google Search Console",    status: "integration", description: "Enable Search Console API in Google Cloud Console. Create service account credentials. Verify your site in Search Console." },
-              { step: 6,  title: "Connect Your CMS",                 status: "integration", description: "For WordPress: install the REST API plugin and generate an application password. For Webflow: get your API token from Account Settings." },
-              { step: 7,  title: "Set Up MCP Servers",               status: "config",      description: "Configure MCP servers in Claude Desktop's config file to give Claude access to all your marketing APIs." },
-              { step: 8,  title: "Create Brand Voice Document",      status: "config",      description: "Write a document with your brand tone, key messaging, target audience, and competitors. Upload to Claude as context." },
-              { step: 9,  title: "Configure Automation Schedule",    status: "config",      description: "Set up daily/weekly automation prompts in Cowork: morning performance pull, weekly competitor scan, monthly content calendar." },
-              { step: 10, title: "Test with Read-Only First",        status: "important",   description: "Start with read-only access. Let Claude analyze and recommend. Only enable write access (ad changes, publishing) after you trust the recommendations." },
+              { step: 1,  title: "Get Claude Pro/Team Plan",       status: "required",    description: "You need Claude Pro ($20/mo) or Team plan to access Cowork. Go to claude.ai → Settings → Subscription." },
+              { step: 2,  title: "Enable Cowork (Desktop)",        status: "required",    description: "Download Claude Desktop app → Settings → Enable Cowork. This lets Claude automate tasks on your computer." },
+              { step: 3,  title: "Connect Google Ads API",         status: "integration", description: "Create a Google Ads API developer token at ads.google.com/aw/apicenter. You'll need your Customer ID and a refresh token via OAuth2." },
+              { step: 4,  title: "Connect Meta Marketing API",     status: "integration", description: "Go to developers.facebook.com → Create App → Marketing API. Generate a long-lived access token. Note your Ad Account ID." },
+              { step: 5,  title: "Connect Google Search Console",  status: "integration", description: "Enable Search Console API in Google Cloud Console. Create service account credentials. Verify your site in Search Console." },
+              { step: 6,  title: "Connect Your CMS",               status: "integration", description: "For WordPress: install the REST API plugin and generate an application password. For Webflow: get your API token from Account Settings." },
+              { step: 7,  title: "Set Up MCP Servers",             status: "config",      description: "Configure MCP servers in Claude Desktop's config file to give Claude access to all your marketing APIs." },
+              { step: 8,  title: "Create Brand Voice Document",    status: "config",      description: "Write a document with your brand tone, key messaging, target audience, and competitors. Upload to Claude as context." },
+              { step: 9,  title: "Configure Automation Schedule",  status: "config",      description: "Set up daily/weekly automation prompts in Cowork: morning performance pull, weekly competitor scan, monthly content calendar." },
+              { step: 10, title: "Test with Read-Only First",      status: "important",   description: "Start with read-only access. Let Claude analyze and recommend. Only enable write access (ad changes, publishing) after you trust the recommendations." },
             ].map((item, i) => (
               <div key={i} style={{
-                background: C.ink2, border: `1px solid ${C.rim}`, borderRadius: 10,
-                padding: 16, marginBottom: 8,
-                display: "flex", gap: 12,
+                background: `linear-gradient(145deg, ${C.bgRaised}, ${C.bgSurface})`,
+                border: `1px solid ${C.borderDim}`, borderRadius: 12,
+                padding: 16, marginBottom: 10, display: "flex", gap: 14,
               }}>
                 <div className="step-icon" style={{
-                  background: item.status === "required"  ? "rgba(201,168,76,0.08)"  :
-                              item.status === "important" ? "rgba(244,63,94,0.08)"   : C.ink3,
+                  background: item.status === "required"  ? "rgba(212,168,67,0.10)" :
+                              item.status === "important" ? "rgba(242,92,122,0.10)" :
+                              "rgba(255,255,255,0.04)",
                   border: `1px solid ${
-                    item.status === "required"  ? "rgba(201,168,76,0.25)"  :
-                    item.status === "important" ? "rgba(244,63,94,0.25)"   : C.rim
+                    item.status === "required"  ? "rgba(212,168,67,0.28)" :
+                    item.status === "important" ? "rgba(242,92,122,0.28)" :
+                    C.borderDim
                   }`,
-                  color: item.status === "required"  ? C.gold  :
-                         item.status === "important" ? C.rose  : C.ice3,
+                  color: item.status === "required"  ? C.gold :
+                         item.status === "important" ? C.rose : C.textSecondary,
                 }}>{item.step}</div>
                 <div>
-                  <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4, fontFamily: F.sans, color: C.ice }}>{item.title}</div>
-                  <div style={{ fontSize: 11, color: C.ice2, lineHeight: 1.6, fontFamily: F.sans }}>{item.description}</div>
+                  <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 5, fontFamily: F.sans, color: C.textPrimary }}>{item.title}</div>
+                  <div style={{ fontSize: 12, color: C.textSecondary, lineHeight: 1.6, fontFamily: F.sans }}>{item.description}</div>
                 </div>
               </div>
             ))}
