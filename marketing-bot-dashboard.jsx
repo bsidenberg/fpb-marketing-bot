@@ -918,27 +918,55 @@ export default function MarketingBotDashboard() {
             {googleData && (
               <div style={{ marginBottom: 20 }}>
                 <div className="section-label" style={{ color: C.amber }}>Google Ads — Last 30 Days</div>
-                <div className="live-card">
-                  <div className="card-top-bar" style={{ background: C.amber }} />
-                  <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16, paddingTop: 4 }}>
-                    <div style={{ color: C.amber }}><Icons.Google /></div>
-                    <span style={{ fontFamily: F.serif, fontSize: 16, fontWeight: 700, color: C.textPrimary }}>Google Ads</span>
-                    <span className="badge badge-approved" style={{ marginLeft: "auto" }}>Live</span>
+                {googleData.success === false ? (
+                  <div style={{
+                    background: "rgba(244,167,50,0.06)",
+                    border: "1px solid rgba(244,167,50,0.28)",
+                    borderRadius: 12, padding: "20px 22px",
+                  }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+                      <div style={{ color: C.amber }}><Icons.Google /></div>
+                      <span style={{ fontFamily: F.serif, fontSize: 16, fontWeight: 700, color: C.textPrimary }}>Google Ads — Connection Issue</span>
+                    </div>
+                    <div style={{ fontFamily: F.mono, fontSize: 12, color: C.amber, marginBottom: 8 }}>
+                      {googleData.error}
+                    </div>
+                    {googleData.detail && (
+                      <div style={{
+                        background: "rgba(0,0,0,0.25)", borderRadius: 8, padding: "10px 12px", marginBottom: 12,
+                        fontFamily: F.mono, fontSize: 11, color: C.textMuted, wordBreak: "break-all",
+                      }}>
+                        {googleData.detail}
+                      </div>
+                    )}
+                    <div style={{ fontFamily: F.sans, fontSize: 12, color: C.textSecondary, lineHeight: 1.6 }}>
+                      Your developer token may still be in test mode. Apply for production access at{" "}
+                      <span style={{ color: C.gold }}>ads.google.com → Tools → API Center</span>
+                    </div>
                   </div>
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 10, marginBottom: 20 }}>
-                    <LiveMetric label="Total Spend"   value={`$${googleData.summary.totalSpend}`}                      color={C.amber} />
-                    <LiveMetric label="Clicks"        value={Number(googleData.summary.totalClicks).toLocaleString()}   color={C.sapphire} />
-                    <LiveMetric label="Conversions"   value={googleData.summary.totalConversions}                       color={C.emerald} />
-                    <LiveMetric label="ROAS"          value={`${googleData.summary.roas}x`}                            color={C.gold} />
-                    <LiveMetric label="Cost / Lead"   value={`$${googleData.summary.cpl}`}                             color={C.violet} />
+                ) : (
+                  <div className="live-card">
+                    <div className="card-top-bar" style={{ background: C.amber }} />
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16, paddingTop: 4 }}>
+                      <div style={{ color: C.amber }}><Icons.Google /></div>
+                      <span style={{ fontFamily: F.serif, fontSize: 16, fontWeight: 700, color: C.textPrimary }}>Google Ads</span>
+                      <span className="badge badge-approved" style={{ marginLeft: "auto" }}>Live</span>
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 10, marginBottom: 20 }}>
+                      <LiveMetric label="Total Spend"   value={`$${googleData.summary.totalSpend}`}                      color={C.amber} />
+                      <LiveMetric label="Clicks"        value={Number(googleData.summary.totalClicks).toLocaleString()}   color={C.sapphire} />
+                      <LiveMetric label="Conversions"   value={googleData.summary.totalConversions}                       color={C.emerald} />
+                      <LiveMetric label="ROAS"          value={`${googleData.summary.roas}x`}                            color={C.gold} />
+                      <LiveMetric label="Cost / Lead"   value={`$${googleData.summary.cpl}`}                             color={C.violet} />
+                    </div>
+                    {googleData.campaigns && googleData.campaigns.length > 0 && (
+                      <>
+                        <div className="section-label">Campaigns</div>
+                        <CampaignsTable campaigns={googleData.campaigns} />
+                      </>
+                    )}
                   </div>
-                  {googleData.campaigns && googleData.campaigns.length > 0 && (
-                    <>
-                      <div className="section-label">Campaigns</div>
-                      <CampaignsTable campaigns={googleData.campaigns} />
-                    </>
-                  )}
-                </div>
+                )}
               </div>
             )}
 

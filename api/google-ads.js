@@ -40,19 +40,46 @@ export default async function handler(req, res) {
     `;
 
     const adsResponse = await fetch(
-      `https://googleads.googleapis.com/v17/customers/${customerId}/googleAds:searchStream`,
+      `https://googleads.googleapis.com/v16/customers/${customerId}/googleAds:searchStream`,
       {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${access_token}`,
           'developer-token': process.env.GOOGLE_ADS_DEVELOPER_TOKEN,
+          'login-customer-id': process.env.GOOGLE_ADS_CUSTOMER_ID.replace(/-/g, ''),
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({ query }),
       }
     );
 
-    const data = await adsResponse.json();
+    const rawText = await adsResponse.text();
+
+    console.log('Google Ads API status:', adsResponse.status);
+    console.log('Google Ads raw response:', rawText.substring(0, 500));
+
+    if (!adsResponse.ok) {
+      return res.status(200).json({
+        success: false,
+        error: `Google Ads API error: ${adsResponse.status}`,
+        detail: rawText.substring(0, 300),
+        summary: { totalSpend: 0, totalClicks: 0, totalImpressions: 0, totalConversions: 0, roas: 0, cpl: 0, ctr: 0 },
+        campaigns: [],
+      });
+    }
+
+    let data;
+    try {
+      data = JSON.parse(rawText);
+    } catch (e) {
+      // searchStream returns newline-delimited JSON
+      data = rawText.split('\n')
+        .filter(line => line.trim())
+        .map(line => { try { return JSON.parse(line); } catch (e) { return null; } })
+        .filter(Boolean);
+    }
+
+    if (!Array.isArray(data)) data = [data];
 
     // Step 3: Parse and aggregate metrics
     let totalSpend = 0, totalClicks = 0, totalImpressions = 0, totalConversions = 0;

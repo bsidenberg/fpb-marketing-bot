@@ -15,8 +15,8 @@ export default async function handler(req, res) {
     const insightsData = await insightsRes.json();
     const insights = insightsData.data?.[0] || {};
 
-    // Fetch active campaigns
-    const campaignsUrl = `${baseUrl}/act_${adAccountId}/campaigns?fields=id,name,status,objective,daily_budget,lifetime_budget&effective_status=["ACTIVE","PAUSED"]&access_token=${accessToken}`;
+    // Fetch active campaigns with per-campaign insights
+    const campaignsUrl = `${baseUrl}/act_${adAccountId}/campaigns?fields=id,name,status,objective,daily_budget,lifetime_budget,insights.date_preset(last_30d){spend,clicks,actions,impressions}&effective_status=["ACTIVE","PAUSED","DELETED","ARCHIVED"]&access_token=${accessToken}&limit=25`;
     const campaignsRes = await fetch(campaignsUrl);
     const campaignsData = await campaignsRes.json();
 
@@ -29,6 +29,26 @@ export default async function handler(req, res) {
     const spend = parseFloat(insights.spend || 0);
     const roas = spend > 0 ? (conversions * 150 / spend).toFixed(2) : 0;
     const cpl = conversions > 0 ? (spend / conversions).toFixed(2) : 0;
+
+    const campaigns = (campaignsData.data || []).map(campaign => {
+      const cInsights = campaign.insights?.data?.[0] || {};
+      const cActions = cInsights.actions || [];
+      const cConversions = cActions
+        .filter(a => ['lead', 'purchase', 'complete_registration'].includes(a.action_type))
+        .reduce((sum, a) => sum + parseFloat(a.value || 0), 0);
+      return {
+        id: campaign.id,
+        name: campaign.name,
+        status: campaign.status,
+        objective: campaign.objective,
+        spend: parseFloat(cInsights.spend || 0).toFixed(2),
+        clicks: cInsights.clicks || 0,
+        impressions: cInsights.impressions || 0,
+        conversions: Math.round(cConversions),
+        dailyBudget: campaign.daily_budget ? (campaign.daily_budget / 100).toFixed(2) : null,
+        lifetimeBudget: campaign.lifetime_budget ? (campaign.lifetime_budget / 100).toFixed(2) : null,
+      };
+    });
 
     res.status(200).json({
       success: true,
@@ -43,7 +63,7 @@ export default async function handler(req, res) {
         ctr: parseFloat(insights.ctr || 0).toFixed(2),
         cpc: parseFloat(insights.cpc || 0).toFixed(2),
       },
-      campaigns: campaignsData.data || [],
+      campaigns,
     });
 
   } catch (error) {
