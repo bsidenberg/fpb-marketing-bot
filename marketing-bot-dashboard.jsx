@@ -186,6 +186,16 @@ const GLOBAL_CSS = `
   }
   .data-card:hover::after { opacity: 1; }
 
+  .live-card {
+    background: linear-gradient(145deg, #242c4a, #1e2640);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 12px; padding: 18px 20px;
+    position: relative; overflow: hidden;
+  }
+  .live-card .card-top-bar {
+    position: absolute; top: 0; left: 0; right: 0; height: 2px;
+  }
+
   .section-label {
     display: flex; align-items: center; gap: 10px;
     font-family: 'DM Mono', monospace;
@@ -272,6 +282,65 @@ const GLOBAL_CSS = `
     box-shadow: 0 6px 20px rgba(212,168,67,0.40), inset 0 1px 0 rgba(255,255,255,0.20);
     opacity: 0.94;
   }
+
+  .btn-sync {
+    background: linear-gradient(135deg, #9a7428 0%, #d4a843 55%, #f0c865 100%);
+    border: none; color: #111728;
+    padding: 9px 20px; border-radius: 10px;
+    font-size: 12px; font-weight: 700; cursor: pointer;
+    font-family: 'DM Sans', sans-serif;
+    display: flex; align-items: center; gap: 7px;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.20);
+    transition: transform 0.16s ease, box-shadow 0.16s ease, opacity 0.16s ease;
+  }
+  .btn-sync:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 6px 20px rgba(212,168,67,0.40), inset 0 1px 0 rgba(255,255,255,0.20);
+    opacity: 0.94;
+  }
+  .btn-sync:disabled { opacity: 0.55; cursor: not-allowed; transform: none; }
+
+  .btn-view-live {
+    background: rgba(212,168,67,0.08);
+    border: 1px solid rgba(212,168,67,0.22);
+    color: #d4a843; padding: 6px 14px; border-radius: 8px;
+    font-size: 11px; font-weight: 600; cursor: pointer;
+    font-family: 'DM Sans', sans-serif;
+    display: inline-flex; align-items: center; gap: 6px;
+    transition: all 0.14s ease;
+  }
+  .btn-view-live:hover {
+    background: rgba(212,168,67,0.14);
+    color: #f0c865;
+    border-color: rgba(212,168,67,0.38);
+  }
+
+  .spinner {
+    width: 14px; height: 14px;
+    border: 2px solid rgba(17,23,40,0.3);
+    border-top-color: #111728;
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+    flex-shrink: 0;
+  }
+
+  .campaigns-table {
+    width: 100%; border-collapse: collapse; margin-top: 12px;
+  }
+  .campaigns-table th {
+    font-family: 'DM Mono', monospace; font-size: 9px; font-weight: 500;
+    text-transform: uppercase; letter-spacing: 1.5px; color: #2d3d68;
+    padding: 8px 12px; text-align: left;
+    border-bottom: 1px solid rgba(255,255,255,0.07);
+  }
+  .campaigns-table td {
+    font-family: 'DM Mono', monospace; font-size: 11px; color: #8fa0c8;
+    padding: 9px 12px;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+  }
+  .campaigns-table tr:last-child td { border-bottom: none; }
+  .campaigns-table tr:hover td { background: rgba(255,255,255,0.02); }
+  .campaigns-table td:first-child { color: #eef1fa; font-family: 'DM Sans', sans-serif; font-size: 12px; font-weight: 500; }
 
   .view-all-btn {
     background: none; border: none; color: #d4a843;
@@ -387,7 +456,7 @@ const Icons = {
     </svg>
   ),
   Refresh: () => (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
     </svg>
   ),
@@ -498,8 +567,7 @@ function MiniBar({ values, labels, color = "#d4a843", height = 120 }) {
             width: "100%",
             height: `${(v / max) * 100}%`,
             background: `linear-gradient(to top, ${color}, ${color}aa)`,
-            borderRadius: 4,
-            minHeight: 4,
+            borderRadius: 4, minHeight: 4,
             transition: "height 0.5s ease",
           }} />
           <span style={{ fontSize: 9, color: C.textDim, fontFamily: F.mono, whiteSpace: "nowrap" }}>{labels[i]}</span>
@@ -537,11 +605,67 @@ function PriorityDot({ priority }) {
   );
 }
 
+// ── Live metric mini card ──
+function LiveMetric({ label, value, color }) {
+  return (
+    <div style={{
+      background: "rgba(255,255,255,0.03)",
+      border: `1px solid rgba(255,255,255,0.07)`,
+      borderRadius: 10, padding: "12px 14px",
+    }}>
+      <div style={{ fontFamily: F.mono, fontSize: 9, textTransform: "uppercase", letterSpacing: "1.5px", color: C.textMuted, marginBottom: 6 }}>{label}</div>
+      <div style={{ fontFamily: F.serif, fontSize: 22, fontWeight: 700, color: color || C.textPrimary, lineHeight: 1 }}>{value}</div>
+    </div>
+  );
+}
+
+// ── Campaigns table ──
+function CampaignsTable({ campaigns }) {
+  if (!campaigns || campaigns.length === 0) return (
+    <div style={{ fontFamily: F.mono, fontSize: 11, color: C.textMuted, padding: "12px 0" }}>No campaign data available.</div>
+  );
+  return (
+    <table className="campaigns-table">
+      <thead>
+        <tr>
+          <th>Campaign</th>
+          <th>Status</th>
+          <th>Spend</th>
+          <th>Clicks</th>
+          <th>Conv.</th>
+        </tr>
+      </thead>
+      <tbody>
+        {campaigns.map((c, i) => (
+          <tr key={i}>
+            <td>{c.name || c.id}</td>
+            <td>
+              <span className={`badge badge-${(c.status || "").toLowerCase() === "active" ? "approved" : "pending"}`}>
+                {c.status || "—"}
+              </span>
+            </td>
+            <td style={{ color: C.amber }}>${c.spend || "—"}</td>
+            <td>{c.clicks != null ? Number(c.clicks).toLocaleString() : "—"}</td>
+            <td style={{ color: C.emerald }}>{c.conversions != null ? c.conversions : "—"}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
 // ── Main component ──
 export default function MarketingBotDashboard() {
   const [state, dispatch] = useReducer(reducer, initialState);
   const [now, setNow] = useState(new Date());
   const [botPulse, setBotPulse] = useState(true);
+
+  // ── Live data state ──
+  const [googleData, setGoogleData] = useState(null);
+  const [facebookData, setFacebookData] = useState(null);
+  const [liveDataLoading, setLiveDataLoading] = useState(false);
+  const [liveDataError, setLiveDataError] = useState(null);
+  const [lastSynced, setLastSynced] = useState(null);
 
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 60000);
@@ -549,15 +673,37 @@ export default function MarketingBotDashboard() {
     return () => { clearInterval(t); clearInterval(p); };
   }, []);
 
+  // ── Live data fetch ──
+  const fetchLiveData = async () => {
+    setLiveDataLoading(true);
+    setLiveDataError(null);
+    try {
+      const [gRes, fbRes] = await Promise.all([
+        fetch('/api/google-ads'),
+        fetch('/api/facebook-ads'),
+      ]);
+      const gData = await gRes.json();
+      const fbData = await fbRes.json();
+      if (gData.success) setGoogleData(gData);
+      if (fbData.success) setFacebookData(fbData);
+      setLastSynced(new Date().toLocaleTimeString());
+    } catch (err) {
+      setLiveDataError('Failed to fetch live data. Check API connections.');
+    } finally {
+      setLiveDataLoading(false);
+    }
+  };
+
   const pendingCount = state.actionQueue.filter(a => a.status === "pending").length;
 
   const tabs = [
-    { id: "overview", label: "Overview",                  icon: <Icons.BarChart /> },
-    { id: "actions",  label: `Actions (${pendingCount})`, icon: <Icons.Zap /> },
-    { id: "channels", label: "Channels",                  icon: <Icons.Globe /> },
-    { id: "content",  label: "Content",                   icon: <Icons.Edit /> },
-    { id: "intel",    label: "Intel",                     icon: <Icons.Eye /> },
-    { id: "setup",    label: "Setup Guide",               icon: <Icons.Settings /> },
+    { id: "overview",  label: "Overview",                  icon: <Icons.BarChart /> },
+    { id: "live",      label: "Live Data",                 icon: <Icons.Refresh /> },
+    { id: "actions",   label: `Actions (${pendingCount})`, icon: <Icons.Zap /> },
+    { id: "channels",  label: "Channels",                  icon: <Icons.Globe /> },
+    { id: "content",   label: "Content",                   icon: <Icons.Edit /> },
+    { id: "intel",     label: "Intel",                     icon: <Icons.Eye /> },
+    { id: "setup",     label: "Setup Guide",               icon: <Icons.Settings /> },
   ];
 
   return (
@@ -601,6 +747,12 @@ export default function MarketingBotDashboard() {
             <span style={{ width: 6, height: 6, borderRadius: "50%", background: C.amber, boxShadow: `0 0 7px ${C.amber}`, display: "inline-block" }} />
             {pendingCount} pending
           </div>
+          {lastSynced && (
+            <div className="stat-chip">
+              <span style={{ color: C.emerald, fontSize: 10 }}>●</span>
+              Synced {lastSynced}
+            </div>
+          )}
           <div className="stat-chip">
             {now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
           </div>
@@ -631,16 +783,14 @@ export default function MarketingBotDashboard() {
         {/* OVERVIEW TAB */}
         {state.activeTab === "overview" && (
           <div key="overview" style={{ animation: "panelIn 0.22s ease" }}>
-
-            {/* KPI Row */}
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(175px, 1fr))", gap: 14, marginBottom: 24 }}>
               {[
-                { label: "Total Spend",    value: `$${state.metrics.totalSpend.toLocaleString()}`,   sub: "+12% vs last month", color: C.violet,   spark: [1200,1800,2100,2400,3100,3800,4280]  },
-                { label: "Revenue",        value: `$${state.metrics.totalRevenue.toLocaleString()}`, sub: "Attributed",         color: C.emerald,  spark: [4200,6800,9400,11200,14500,16800,18940] },
-                { label: "ROAS",           value: `${state.metrics.overallROAS}x`,                  sub: "Overall blended",    color: C.amber,    spark: [3.1,3.4,3.8,4.0,4.1,4.3,4.42] },
-                { label: "Leads",          value: state.metrics.leadsThisWeek,                       sub: "This week",          color: C.teal,     spark: [42,58,71,89,95,112,127] },
-                { label: "Conv. Rate",     value: `${state.metrics.conversionRate}%`,                sub: "Avg across channels", color: C.sapphire, spark: [2.8,3.0,3.2,3.1,3.5,3.6,3.8] },
-                { label: "Organic Traffic",value: state.metrics.organicTraffic.toLocaleString(),     sub: "Monthly visits",     color: C.rose,     spark: [7200,8100,9200,10100,10800,11600,12400] },
+                { label: "Total Spend",     value: `$${state.metrics.totalSpend.toLocaleString()}`,   sub: "+12% vs last month",  color: C.violet,   spark: [1200,1800,2100,2400,3100,3800,4280] },
+                { label: "Revenue",         value: `$${state.metrics.totalRevenue.toLocaleString()}`, sub: "Attributed",           color: C.emerald,  spark: [4200,6800,9400,11200,14500,16800,18940] },
+                { label: "ROAS",            value: `${state.metrics.overallROAS}x`,                  sub: "Overall blended",      color: C.amber,    spark: [3.1,3.4,3.8,4.0,4.1,4.3,4.42] },
+                { label: "Leads",           value: state.metrics.leadsThisWeek,                       sub: "This week",            color: C.teal,     spark: [42,58,71,89,95,112,127] },
+                { label: "Conv. Rate",      value: `${state.metrics.conversionRate}%`,                sub: "Avg across channels",  color: C.sapphire, spark: [2.8,3.0,3.2,3.1,3.5,3.6,3.8] },
+                { label: "Organic Traffic", value: state.metrics.organicTraffic.toLocaleString(),     sub: "Monthly visits",       color: C.rose,     spark: [7200,8100,9200,10100,10800,11600,12400] },
               ].map((kpi, i) => (
                 <div key={i} className="metric-card">
                   <div className="card-top-bar" style={{ background: kpi.color }} />
@@ -658,23 +808,16 @@ export default function MarketingBotDashboard() {
               ))}
             </div>
 
-            {/* Two-column: action queue + automation log */}
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-
               <div style={{ background: `linear-gradient(145deg, ${C.bgRaised}, ${C.bgSurface})`, border: `1px solid ${C.borderDim}`, borderRadius: 12, padding: 16 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-                  <div className="section-label" style={{ marginBottom: 0, color: C.amber }}>
-                    {pendingCount} Actions Pending
-                  </div>
+                  <div className="section-label" style={{ marginBottom: 0, color: C.amber }}>{pendingCount} Actions Pending</div>
                   <button onClick={() => dispatch({ type: "SET_TAB", payload: "actions" })} className="view-all-btn">
                     View all <Icons.ChevRight />
                   </button>
                 </div>
                 {state.actionQueue.filter(a => a.status === "pending").slice(0, 3).map(a => (
-                  <div key={a.id} style={{
-                    display: "flex", alignItems: "center", gap: 8,
-                    padding: "9px 0", borderBottom: `1px solid ${C.borderDim}`,
-                  }}>
+                  <div key={a.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 0", borderBottom: `1px solid ${C.borderDim}` }}>
                     <PriorityDot priority={a.priority} />
                     <span style={{ color: C.textSecondary, flex: 1, fontFamily: F.sans, fontSize: 12 }}>{a.action}</span>
                     <span style={{ color: C.textDim, fontSize: 10, fontFamily: F.mono, whiteSpace: "nowrap" }}>{a.channel}</span>
@@ -697,10 +840,8 @@ export default function MarketingBotDashboard() {
                   ))}
                 </div>
               </div>
-
             </div>
 
-            {/* Channel spend vs revenue */}
             <div style={{ marginTop: 16, background: `linear-gradient(145deg, ${C.bgRaised}, ${C.bgSurface})`, border: `1px solid ${C.borderDim}`, borderRadius: 12, padding: 20 }}>
               <div className="section-label">Channel Spend vs Revenue</div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
@@ -716,6 +857,118 @@ export default function MarketingBotDashboard() {
                 </span>
               </div>
             </div>
+          </div>
+        )}
+
+        {/* LIVE DATA TAB */}
+        {state.activeTab === "live" && (
+          <div key="live" style={{ animation: "panelIn 0.22s ease" }}>
+            {/* Header row */}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 24 }}>
+              <div>
+                <div style={{ fontFamily: F.serif, fontSize: 22, fontWeight: 700, color: C.textPrimary, marginBottom: 4 }}>Live Performance</div>
+                <div style={{ fontSize: 13, color: C.textSecondary, fontFamily: F.sans }}>
+                  Real-time data from Google Ads and Facebook Ads APIs
+                </div>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                {lastSynced && (
+                  <span style={{ fontFamily: F.mono, fontSize: 10, color: C.textMuted }}>
+                    Last synced: <span style={{ color: C.emerald }}>{lastSynced}</span>
+                  </span>
+                )}
+                <button className="btn-sync" onClick={fetchLiveData} disabled={liveDataLoading}>
+                  {liveDataLoading ? <span className="spinner" /> : <Icons.Refresh />}
+                  {liveDataLoading ? "Syncing…" : "Sync Live Data"}
+                </button>
+              </div>
+            </div>
+
+            {/* Error state */}
+            {liveDataError && (
+              <div style={{
+                background: "rgba(242,92,122,0.08)", border: "1px solid rgba(242,92,122,0.22)",
+                borderRadius: 10, padding: "12px 16px", marginBottom: 20,
+                fontFamily: F.sans, fontSize: 13, color: C.rose,
+                display: "flex", alignItems: "center", gap: 8,
+              }}>
+                <Icons.Alert /> {liveDataError}
+              </div>
+            )}
+
+            {/* Empty state */}
+            {!liveDataLoading && !googleData && !facebookData && !liveDataError && (
+              <div style={{
+                background: `linear-gradient(145deg, ${C.bgRaised}, ${C.bgSurface})`,
+                border: `1px solid ${C.borderDim}`, borderRadius: 14,
+                padding: 48, textAlign: "center",
+              }}>
+                <div style={{ fontSize: 36, marginBottom: 12 }}>📡</div>
+                <div style={{ fontFamily: F.serif, fontSize: 18, fontWeight: 700, color: C.textPrimary, marginBottom: 8 }}>No Live Data Yet</div>
+                <div style={{ fontFamily: F.sans, fontSize: 13, color: C.textSecondary, marginBottom: 24 }}>
+                  Click "Sync Live Data" to pull real-time metrics from your ad accounts.
+                </div>
+                <button className="btn-sync" onClick={fetchLiveData} style={{ margin: "0 auto" }}>
+                  <Icons.Refresh /> Sync Live Data
+                </button>
+              </div>
+            )}
+
+            {/* Google Ads live data */}
+            {googleData && (
+              <div style={{ marginBottom: 20 }}>
+                <div className="section-label" style={{ color: C.amber }}>Google Ads — Last 30 Days</div>
+                <div className="live-card">
+                  <div className="card-top-bar" style={{ background: C.amber }} />
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16, paddingTop: 4 }}>
+                    <div style={{ color: C.amber }}><Icons.Google /></div>
+                    <span style={{ fontFamily: F.serif, fontSize: 16, fontWeight: 700, color: C.textPrimary }}>Google Ads</span>
+                    <span className="badge badge-approved" style={{ marginLeft: "auto" }}>Live</span>
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 10, marginBottom: 20 }}>
+                    <LiveMetric label="Total Spend"   value={`$${googleData.summary.totalSpend}`}                      color={C.amber} />
+                    <LiveMetric label="Clicks"        value={Number(googleData.summary.totalClicks).toLocaleString()}   color={C.sapphire} />
+                    <LiveMetric label="Conversions"   value={googleData.summary.totalConversions}                       color={C.emerald} />
+                    <LiveMetric label="ROAS"          value={`${googleData.summary.roas}x`}                            color={C.gold} />
+                    <LiveMetric label="Cost / Lead"   value={`$${googleData.summary.cpl}`}                             color={C.violet} />
+                  </div>
+                  {googleData.campaigns && googleData.campaigns.length > 0 && (
+                    <>
+                      <div className="section-label">Campaigns</div>
+                      <CampaignsTable campaigns={googleData.campaigns} />
+                    </>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Facebook Ads live data */}
+            {facebookData && (
+              <div style={{ marginBottom: 20 }}>
+                <div className="section-label" style={{ color: C.sapphire }}>Facebook Ads — Last 30 Days</div>
+                <div className="live-card">
+                  <div className="card-top-bar" style={{ background: C.sapphire }} />
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16, paddingTop: 4 }}>
+                    <div style={{ color: C.sapphire }}><Icons.Facebook /></div>
+                    <span style={{ fontFamily: F.serif, fontSize: 16, fontWeight: 700, color: C.textPrimary }}>Facebook Ads</span>
+                    <span className="badge badge-approved" style={{ marginLeft: "auto" }}>Live</span>
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 10, marginBottom: 20 }}>
+                    <LiveMetric label="Total Spend"   value={`$${facebookData.summary.totalSpend}`}                       color={C.sapphire} />
+                    <LiveMetric label="Clicks"        value={Number(facebookData.summary.totalClicks).toLocaleString()}    color={C.teal} />
+                    <LiveMetric label="Conversions"   value={facebookData.summary.totalConversions}                        color={C.emerald} />
+                    <LiveMetric label="ROAS"          value={`${facebookData.summary.roas}x`}                             color={C.gold} />
+                    <LiveMetric label="Cost / Lead"   value={`$${facebookData.summary.cpl}`}                              color={C.violet} />
+                  </div>
+                  {facebookData.campaigns && facebookData.campaigns.length > 0 && (
+                    <>
+                      <div className="section-label">Campaigns</div>
+                      <CampaignsTable campaigns={facebookData.campaigns} />
+                    </>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -736,8 +989,7 @@ export default function MarketingBotDashboard() {
 
             {state.actionQueue.map(a => (
               <div key={a.id} className="data-card" style={{
-                marginBottom: 10,
-                display: "flex", alignItems: "center", gap: 12,
+                marginBottom: 10, display: "flex", alignItems: "center", gap: 12,
                 opacity: a.status === "rejected" ? 0.38 : 1,
                 transition: "opacity 0.3s",
               }}>
@@ -760,80 +1012,115 @@ export default function MarketingBotDashboard() {
 
         {/* CHANNELS TAB */}
         {state.activeTab === "channels" && (
-          <div key="channels" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, animation: "panelIn 0.22s ease" }}>
-            {[
-              {
-                name: "Google Ads", icon: <Icons.Google />, color: C.amber,
-                stats: [
-                  { l: "Spend",       v: `$${state.channels.googleAds.spend}` },
-                  { l: "Clicks",      v: state.channels.googleAds.clicks.toLocaleString() },
-                  { l: "Conversions", v: state.channels.googleAds.conversions },
-                  { l: "CPA",         v: `$${state.channels.googleAds.cpa}` },
-                  { l: "ROAS",        v: `${state.channels.googleAds.roas}x` },
-                ],
-                spark: [1200,1400,1650,1800,1950,2000,2100],
-              },
-              {
-                name: "Facebook Ads", icon: <Icons.Facebook />, color: C.sapphire,
-                stats: [
-                  { l: "Spend",       v: `$${state.channels.facebookAds.spend}` },
-                  { l: "Reach",       v: state.channels.facebookAds.reach.toLocaleString() },
-                  { l: "Conversions", v: state.channels.facebookAds.conversions },
-                  { l: "CPA",         v: `$${state.channels.facebookAds.cpa}` },
-                  { l: "ROAS",        v: `${state.channels.facebookAds.roas}x` },
-                ],
-                spark: [900,1100,1250,1400,1500,1600,1680],
-              },
-              {
-                name: "SEO", icon: <Icons.Search />, color: C.emerald,
-                stats: [
-                  { l: "Organic Visits",   v: state.channels.seo.organicVisits.toLocaleString() },
-                  { l: "Keywords Tracked", v: state.channels.seo.keywords },
-                  { l: "Top 10 Rankings",  v: state.channels.seo.top10 },
-                  { l: "Avg Position",     v: state.channels.seo.avgPosition },
-                ],
-                spark: [7200,8100,9200,10100,10800,11600,12400],
-              },
-              {
-                name: "Blog / Content", icon: <Icons.Edit />, color: C.violet,
-                stats: [
-                  { l: "Posts This Month",  v: state.channels.blog.posts },
-                  { l: "Total Views",       v: state.channels.blog.views.toLocaleString() },
-                  { l: "Avg Time on Page",  v: state.channels.blog.avgTimeOnPage },
-                  { l: "Top Post",          v: state.channels.blog.topPost },
-                ],
-                spark: [4200,5100,5800,6400,7200,8000,8900],
-              },
-              {
-                name: "GEO / Local SEO", icon: <Icons.Globe />, color: C.teal,
-                stats: [
-                  { l: "Map Impressions", v: state.channels.geo.impressions.toLocaleString() },
-                  { l: "Phone Calls",     v: state.channels.geo.calls },
-                  { l: "Directions",      v: state.channels.geo.directions },
-                  { l: "Review Score",    v: `${state.channels.geo.reviews} ★` },
-                ],
-                spark: [3200,3600,4100,4500,4900,5200,5600],
-              },
-            ].map((ch, i) => (
-              <div key={i} className="data-card">
-                <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
-                  <div style={{ color: ch.color, display: "flex" }}>{ch.icon}</div>
-                  <span style={{ fontFamily: F.serif, fontSize: 15, fontWeight: 700, color: C.textPrimary }}>{ch.name}</span>
-                  <div style={{ marginLeft: "auto" }}>
-                    <Sparkline data={ch.spark} color={ch.color} width={60} height={20} />
+          <div key="channels" style={{ animation: "panelIn 0.22s ease" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+              {[
+                {
+                  name: "Google Ads", icon: <Icons.Google />, color: C.amber, platform: "google",
+                  stats: [
+                    { l: "Spend",       v: `$${state.channels.googleAds.spend}` },
+                    { l: "Clicks",      v: state.channels.googleAds.clicks.toLocaleString() },
+                    { l: "Conversions", v: state.channels.googleAds.conversions },
+                    { l: "CPA",         v: `$${state.channels.googleAds.cpa}` },
+                    { l: "ROAS",        v: `${state.channels.googleAds.roas}x` },
+                  ],
+                  spark: [1200,1400,1650,1800,1950,2000,2100],
+                },
+                {
+                  name: "Facebook Ads", icon: <Icons.Facebook />, color: C.sapphire, platform: "facebook",
+                  stats: [
+                    { l: "Spend",       v: `$${state.channels.facebookAds.spend}` },
+                    { l: "Reach",       v: state.channels.facebookAds.reach.toLocaleString() },
+                    { l: "Conversions", v: state.channels.facebookAds.conversions },
+                    { l: "CPA",         v: `$${state.channels.facebookAds.cpa}` },
+                    { l: "ROAS",        v: `${state.channels.facebookAds.roas}x` },
+                  ],
+                  spark: [900,1100,1250,1400,1500,1600,1680],
+                },
+                {
+                  name: "SEO", icon: <Icons.Search />, color: C.emerald,
+                  stats: [
+                    { l: "Organic Visits",   v: state.channels.seo.organicVisits.toLocaleString() },
+                    { l: "Keywords Tracked", v: state.channels.seo.keywords },
+                    { l: "Top 10 Rankings",  v: state.channels.seo.top10 },
+                    { l: "Avg Position",     v: state.channels.seo.avgPosition },
+                  ],
+                  spark: [7200,8100,9200,10100,10800,11600,12400],
+                },
+                {
+                  name: "Blog / Content", icon: <Icons.Edit />, color: C.violet,
+                  stats: [
+                    { l: "Posts This Month",  v: state.channels.blog.posts },
+                    { l: "Total Views",       v: state.channels.blog.views.toLocaleString() },
+                    { l: "Avg Time on Page",  v: state.channels.blog.avgTimeOnPage },
+                    { l: "Top Post",          v: state.channels.blog.topPost },
+                  ],
+                  spark: [4200,5100,5800,6400,7200,8000,8900],
+                },
+                {
+                  name: "GEO / Local SEO", icon: <Icons.Globe />, color: C.teal,
+                  stats: [
+                    { l: "Map Impressions", v: state.channels.geo.impressions.toLocaleString() },
+                    { l: "Phone Calls",     v: state.channels.geo.calls },
+                    { l: "Directions",      v: state.channels.geo.directions },
+                    { l: "Review Score",    v: `${state.channels.geo.reviews} ★` },
+                  ],
+                  spark: [3200,3600,4100,4500,4900,5200,5600],
+                },
+              ].map((ch, i) => (
+                <div key={i} className="data-card">
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+                    <div style={{ color: ch.color, display: "flex" }}>{ch.icon}</div>
+                    <span style={{ fontFamily: F.serif, fontSize: 15, fontWeight: 700, color: C.textPrimary }}>{ch.name}</span>
+                    <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10 }}>
+                      {ch.platform && (
+                        <button
+                          className="btn-view-live"
+                          onClick={() => { fetchLiveData(); dispatch({ type: "SET_TAB", payload: "live" }); }}
+                        >
+                          <Icons.Refresh /> Live Data
+                        </button>
+                      )}
+                      <Sparkline data={ch.spark} color={ch.color} width={60} height={20} />
+                    </div>
                   </div>
+                  {/* Inline live summary if available */}
+                  {ch.platform === "google" && googleData && (
+                    <div style={{
+                      background: "rgba(244,167,50,0.06)", border: "1px solid rgba(244,167,50,0.15)",
+                      borderRadius: 8, padding: "8px 12px", marginBottom: 12,
+                      display: "flex", gap: 16, flexWrap: "wrap",
+                    }}>
+                      <span style={{ fontFamily: F.mono, fontSize: 10, color: C.amber }}>● LIVE</span>
+                      <span style={{ fontFamily: F.mono, fontSize: 10, color: C.textSecondary }}>Spend: <strong style={{ color: C.amber }}>${googleData.summary.totalSpend}</strong></span>
+                      <span style={{ fontFamily: F.mono, fontSize: 10, color: C.textSecondary }}>ROAS: <strong style={{ color: C.gold }}>{googleData.summary.roas}x</strong></span>
+                      <span style={{ fontFamily: F.mono, fontSize: 10, color: C.textSecondary }}>Conv: <strong style={{ color: C.emerald }}>{googleData.summary.totalConversions}</strong></span>
+                    </div>
+                  )}
+                  {ch.platform === "facebook" && facebookData && (
+                    <div style={{
+                      background: "rgba(77,142,240,0.06)", border: "1px solid rgba(77,142,240,0.15)",
+                      borderRadius: 8, padding: "8px 12px", marginBottom: 12,
+                      display: "flex", gap: 16, flexWrap: "wrap",
+                    }}>
+                      <span style={{ fontFamily: F.mono, fontSize: 10, color: C.sapphire }}>● LIVE</span>
+                      <span style={{ fontFamily: F.mono, fontSize: 10, color: C.textSecondary }}>Spend: <strong style={{ color: C.sapphire }}>${facebookData.summary.totalSpend}</strong></span>
+                      <span style={{ fontFamily: F.mono, fontSize: 10, color: C.textSecondary }}>ROAS: <strong style={{ color: C.gold }}>{facebookData.summary.roas}x</strong></span>
+                      <span style={{ fontFamily: F.mono, fontSize: 10, color: C.textSecondary }}>Conv: <strong style={{ color: C.emerald }}>{facebookData.summary.totalConversions}</strong></span>
+                    </div>
+                  )}
+                  {ch.stats.map((s, j) => (
+                    <div key={j} style={{
+                      display: "flex", justifyContent: "space-between",
+                      padding: "5px 0", borderBottom: j < ch.stats.length - 1 ? `1px solid ${C.borderDim}` : "none",
+                    }}>
+                      <span style={{ color: C.textSecondary, fontFamily: F.sans, fontSize: 12 }}>{s.l}</span>
+                      <span style={{ fontWeight: 600, fontFamily: F.mono, fontSize: 12, color: C.textPrimary }}>{s.v}</span>
+                    </div>
+                  ))}
                 </div>
-                {ch.stats.map((s, j) => (
-                  <div key={j} style={{
-                    display: "flex", justifyContent: "space-between",
-                    padding: "5px 0", borderBottom: j < ch.stats.length - 1 ? `1px solid ${C.borderDim}` : "none",
-                  }}>
-                    <span style={{ color: C.textSecondary, fontFamily: F.sans, fontSize: 12 }}>{s.l}</span>
-                    <span style={{ fontWeight: 600, fontFamily: F.mono, fontSize: 12, color: C.textPrimary }}>{s.v}</span>
-                  </div>
-                ))}
-              </div>
-            ))}
+              ))}
+            </div>
           </div>
         )}
 
@@ -896,8 +1183,8 @@ export default function MarketingBotDashboard() {
             {[
               { step: 1,  title: "Get Claude Pro/Team Plan",       status: "required",    description: "You need Claude Pro ($20/mo) or Team plan to access Cowork. Go to claude.ai → Settings → Subscription." },
               { step: 2,  title: "Enable Cowork (Desktop)",        status: "required",    description: "Download Claude Desktop app → Settings → Enable Cowork. This lets Claude automate tasks on your computer." },
-              { step: 3,  title: "Connect Google Ads API",         status: "integration", description: "Create a Google Ads API developer token at ads.google.com/aw/apicenter. You'll need your Customer ID and a refresh token via OAuth2." },
-              { step: 4,  title: "Connect Meta Marketing API",     status: "integration", description: "Go to developers.facebook.com → Create App → Marketing API. Generate a long-lived access token. Note your Ad Account ID." },
+              { step: 3,  title: "Connect Google Ads API",         status: "integration", description: "Create a Google Ads API developer token at ads.google.com/aw/apicenter. Add GOOGLE_ADS_CLIENT_ID, GOOGLE_ADS_CLIENT_SECRET, GOOGLE_ADS_REFRESH_TOKEN, GOOGLE_ADS_DEVELOPER_TOKEN, GOOGLE_ADS_CUSTOMER_ID to Vercel env vars." },
+              { step: 4,  title: "Connect Meta Marketing API",     status: "integration", description: "Go to developers.facebook.com → Create App → Marketing API. Add META_ACCESS_TOKEN and META_AD_ACCOUNT_ID to Vercel env vars." },
               { step: 5,  title: "Connect Google Search Console",  status: "integration", description: "Enable Search Console API in Google Cloud Console. Create service account credentials. Verify your site in Search Console." },
               { step: 6,  title: "Connect Your CMS",               status: "integration", description: "For WordPress: install the REST API plugin and generate an application password. For Webflow: get your API token from Account Settings." },
               { step: 7,  title: "Set Up MCP Servers",             status: "config",      description: "Configure MCP servers in Claude Desktop's config file to give Claude access to all your marketing APIs." },
