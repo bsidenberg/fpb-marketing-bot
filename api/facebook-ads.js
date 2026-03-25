@@ -45,25 +45,48 @@ export default async function handler(req, res) {
     const roas = spend > 0 ? (conversions * 150 / spend).toFixed(2) : 0;
     const cpl = conversions > 0 ? (spend / conversions).toFixed(2) : 0;
 
-    const campaigns = (campaignsData.data || []).map(campaign => {
-      const cInsights = campaign.insights?.data?.[0] || {};
-      const cActions = cInsights.actions || [];
-      const cConversions = cActions
-        .filter(a => CONVERSION_TYPES.includes(a.action_type))
+    const rawCampaigns = campaignsData.data || [];
+    console.log('Raw campaigns count:', rawCampaigns.length);
+    console.log('First campaign sample:', JSON.stringify(rawCampaigns[0], null, 2));
+
+    const campaigns = rawCampaigns.map(campaign => {
+      // insights can be nested as campaign.insights.data[0] or campaign.insights
+      const insightData = campaign.insights?.data?.[0] || campaign.insights || {};
+      const actions = insightData.actions || [];
+
+      const conversions = actions
+        .filter(a => [
+          'lead',
+          'purchase',
+          'complete_registration',
+          'contact',
+          'schedule',
+          'offsite_conversion.fb_pixel_lead',
+          'offsite_conversion.fb_pixel_purchase',
+          'onsite_conversion.lead_grouped',
+        ].includes(a.action_type))
         .reduce((sum, a) => sum + parseFloat(a.value || 0), 0);
+
       return {
         id: campaign.id,
         name: campaign.name,
         status: campaign.status,
-        objective: campaign.objective,
-        spend: parseFloat(cInsights.spend || 0).toFixed(2),
-        clicks: cInsights.clicks || 0,
-        impressions: cInsights.impressions || 0,
-        conversions: Math.round(cConversions),
-        dailyBudget: campaign.daily_budget ? (campaign.daily_budget / 100).toFixed(2) : null,
-        lifetimeBudget: campaign.lifetime_budget ? (campaign.lifetime_budget / 100).toFixed(2) : null,
+        objective: campaign.objective || '',
+        spend: parseFloat(insightData.spend || 0).toFixed(2),
+        clicks: parseInt(insightData.clicks || 0),
+        impressions: parseInt(insightData.impressions || 0),
+        conversions: Math.round(conversions),
+        dailyBudget: campaign.daily_budget
+          ? (parseInt(campaign.daily_budget) / 100).toFixed(2)
+          : null,
       };
     });
+
+    // Log all action types found for debugging
+    const allActionTypes = rawCampaigns
+      .flatMap(c => c.insights?.data?.[0]?.actions || [])
+      .map(a => a.action_type);
+    console.log('All action types found:', [...new Set(allActionTypes)]);
 
     res.status(200).json({
       success: true,

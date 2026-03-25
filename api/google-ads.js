@@ -40,7 +40,7 @@ export default async function handler(req, res) {
     `;
 
     const adsResponse = await fetch(
-      `https://googleads.googleapis.com/v16/customers/${customerId}/googleAds:searchStream`,
+      `https://googleads.googleapis.com/v18/customers/${customerId}/googleAds:search`,
       {
         method: 'POST',
         headers: {
@@ -54,15 +54,14 @@ export default async function handler(req, res) {
     );
 
     const rawText = await adsResponse.text();
-
-    console.log('Google Ads API status:', adsResponse.status);
-    console.log('Google Ads raw response:', rawText.substring(0, 500));
+    console.log('Google Ads status:', adsResponse.status);
+    console.log('Google Ads response preview:', rawText.substring(0, 800));
 
     if (!adsResponse.ok) {
       return res.status(200).json({
         success: false,
         error: `Google Ads API error: ${adsResponse.status}`,
-        detail: rawText.substring(0, 300),
+        detail: rawText.substring(0, 500),
         summary: { totalSpend: 0, totalClicks: 0, totalImpressions: 0, totalConversions: 0, roas: 0, cpl: 0, ctr: 0 },
         campaigns: [],
       });
@@ -71,57 +70,54 @@ export default async function handler(req, res) {
     let data;
     try {
       data = JSON.parse(rawText);
-    } catch (e) {
-      // searchStream returns newline-delimited JSON
-      data = rawText.split('\n')
-        .filter(line => line.trim())
-        .map(line => { try { return JSON.parse(line); } catch (e) { return null; } })
-        .filter(Boolean);
+    } catch(e) {
+      return res.status(200).json({
+        success: false,
+        error: 'Failed to parse Google Ads response',
+        detail: rawText.substring(0, 300),
+        summary: { totalSpend: 0, totalClicks: 0, totalImpressions: 0, totalConversions: 0, roas: 0, cpl: 0, ctr: 0 },
+        campaigns: [],
+      });
     }
 
-    if (!Array.isArray(data)) data = [data];
+    // :search returns { results: [...] } not an array of batches
+    const results = data.results || [];
 
-    // Step 3: Parse and aggregate metrics
     let totalSpend = 0, totalClicks = 0, totalImpressions = 0, totalConversions = 0;
     const campaigns = [];
 
-    if (Array.isArray(data)) {
-      for (const batch of data) {
-        for (const result of batch.results || []) {
-          const spend = (result.metrics.costMicros || 0) / 1000000;
-          totalSpend += spend;
-          totalClicks += result.metrics.clicks || 0;
-          totalImpressions += result.metrics.impressions || 0;
-          totalConversions += result.metrics.conversions || 0;
-          campaigns.push({
-            id: result.campaign.id,
-            name: result.campaign.name,
-            status: result.campaign.status,
-            spend: spend.toFixed(2),
-            clicks: result.metrics.clicks || 0,
-            impressions: result.metrics.impressions || 0,
-            conversions: result.metrics.conversions || 0,
-            ctr: ((result.metrics.ctr || 0) * 100).toFixed(2),
-            avgCpc: ((result.metrics.averageCpc || 0) / 1000000).toFixed(2),
-            convRate: ((result.metrics.conversionRate || 0) * 100).toFixed(2),
-          });
-        }
-      }
+    for (const result of results) {
+      const spend = (result.metrics?.costMicros || 0) / 1000000;
+      totalSpend += spend;
+      totalClicks += parseInt(result.metrics?.clicks || 0);
+      totalImpressions += parseInt(result.metrics?.impressions || 0);
+      totalConversions += parseFloat(result.metrics?.conversions || 0);
+      campaigns.push({
+        id: result.campaign?.id,
+        name: result.campaign?.name,
+        status: result.campaign?.status,
+        spend: spend.toFixed(2),
+        clicks: parseInt(result.metrics?.clicks || 0),
+        impressions: parseInt(result.metrics?.impressions || 0),
+        conversions: parseFloat(result.metrics?.conversions || 0).toFixed(1),
+        ctr: ((parseFloat(result.metrics?.ctr || 0)) * 100).toFixed(2),
+        avgCpc: ((result.metrics?.averageCpc || 0) / 1000000).toFixed(2),
+      });
     }
 
-    const roas = totalSpend > 0 ? (totalConversions * 150 / totalSpend).toFixed(2) : 0;
-    const cpl = totalConversions > 0 ? (totalSpend / totalConversions).toFixed(2) : 0;
+    const roas = totalSpend > 0 ? (totalConversions * 150 / totalSpend).toFixed(2) : '0.00';
+    const cpl = totalConversions > 0 ? (totalSpend / totalConversions).toFixed(2) : '0.00';
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
       summary: {
         totalSpend: totalSpend.toFixed(2),
         totalClicks,
         totalImpressions,
-        totalConversions,
+        totalConversions: totalConversions.toFixed(1),
         roas,
         cpl,
-        ctr: totalClicks > 0 ? ((totalClicks / totalImpressions) * 100).toFixed(2) : 0,
+        ctr: totalImpressions > 0 ? ((totalClicks / totalImpressions) * 100).toFixed(2) : '0.00',
       },
       campaigns,
     });
