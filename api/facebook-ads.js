@@ -20,10 +20,25 @@ export default async function handler(req, res) {
     const campaignsRes = await fetch(campaignsUrl);
     const campaignsData = await campaignsRes.json();
 
+    const CONVERSION_TYPES = [
+      'lead',
+      'purchase',
+      'complete_registration',
+      'submit_application',
+      'contact',
+      'find_location',
+      'schedule',
+      'start_trial',
+      'subscribe',
+      'offsite_conversion.fb_pixel_lead',
+      'offsite_conversion.fb_pixel_purchase',
+      'onsite_conversion.lead_grouped',
+    ];
+
     // Parse conversions from actions
     const actions = insights.actions || [];
     const conversions = actions
-      .filter(a => ['lead', 'purchase', 'complete_registration'].includes(a.action_type))
+      .filter(a => CONVERSION_TYPES.includes(a.action_type))
       .reduce((sum, a) => sum + parseFloat(a.value || 0), 0);
 
     const spend = parseFloat(insights.spend || 0);
@@ -34,7 +49,7 @@ export default async function handler(req, res) {
       const cInsights = campaign.insights?.data?.[0] || {};
       const cActions = cInsights.actions || [];
       const cConversions = cActions
-        .filter(a => ['lead', 'purchase', 'complete_registration'].includes(a.action_type))
+        .filter(a => CONVERSION_TYPES.includes(a.action_type))
         .reduce((sum, a) => sum + parseFloat(a.value || 0), 0);
       return {
         id: campaign.id,
@@ -64,6 +79,7 @@ export default async function handler(req, res) {
         cpc: parseFloat(insights.cpc || 0).toFixed(2),
       },
       campaigns,
+      actions: actions.map(a => ({ type: a.action_type, value: a.value })),
     });
 
   } catch (error) {
