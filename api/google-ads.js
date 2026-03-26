@@ -17,7 +17,9 @@ export default async function handler(req, res) {
     });
     const { access_token } = await tokenResponse.json();
 
-    const customerId = (process.env.GOOGLE_ADS_CLIENT_CUSTOMER_ID || process.env.GOOGLE_ADS_CUSTOMER_ID).replace(/-/g, '');
+    const customerId = process.env.GOOGLE_ADS_CLIENT_CUSTOMER_ID
+      ? process.env.GOOGLE_ADS_CLIENT_CUSTOMER_ID.replace(/-/g, '')
+      : '8325311811';
 
     // Step 2: Query campaign performance for last 30 days
     const query = `
@@ -40,10 +42,12 @@ export default async function handler(req, res) {
     `;
 
     const apiUrl = `https://googleads.googleapis.com/v17/customers/${customerId}/googleAds:search`;
-    console.log('Calling Google Ads URL:', apiUrl);
+    console.log('=== GOOGLE ADS DEBUG ===');
+    console.log('API URL:', apiUrl);
     console.log('Customer ID:', customerId);
-    console.log('Developer token present:', !!process.env.GOOGLE_ADS_DEVELOPER_TOKEN);
-    console.log('Access token received:', !!access_token);
+    console.log('Manager ID:', process.env.GOOGLE_ADS_MANAGER_ID);
+    console.log('Dev token present:', !!process.env.GOOGLE_ADS_DEVELOPER_TOKEN);
+    console.log('Access token present:', !!access_token);
 
     const adsResponse = await fetch(
       apiUrl,
@@ -52,7 +56,9 @@ export default async function handler(req, res) {
         headers: {
           'Authorization': `Bearer ${access_token}`,
           'developer-token': process.env.GOOGLE_ADS_DEVELOPER_TOKEN,
-          'login-customer-id': (process.env.GOOGLE_ADS_MANAGER_ID || process.env.GOOGLE_ADS_CUSTOMER_ID).replace(/-/g, ''),
+          'login-customer-id': process.env.GOOGLE_ADS_MANAGER_ID
+            ? process.env.GOOGLE_ADS_MANAGER_ID.replace(/-/g, '')
+            : '5435219372',
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({ query }),
