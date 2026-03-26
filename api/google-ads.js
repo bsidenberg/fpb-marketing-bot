@@ -6,6 +6,13 @@ export default async function handler(req, res) {
 
   try {
     // Step 1: Get fresh access token using refresh token
+    console.log('=== TOKEN REQUEST DEBUG ===');
+    console.log('Client ID being used:', process.env.GOOGLE_ADS_CLIENT_ID?.substring(0, 30) + '...');
+    console.log('Client Secret length:', process.env.GOOGLE_ADS_CLIENT_SECRET?.length);
+    console.log('Client Secret first 10 chars:', process.env.GOOGLE_ADS_CLIENT_SECRET?.substring(0, 10));
+    console.log('Refresh Token first 20 chars:', process.env.GOOGLE_ADS_REFRESH_TOKEN?.substring(0, 20));
+    console.log('Refresh Token length:', process.env.GOOGLE_ADS_REFRESH_TOKEN?.length);
+
     const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
