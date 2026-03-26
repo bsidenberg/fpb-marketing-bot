@@ -39,8 +39,8 @@ export default async function handler(req, res) {
 
     const access_token = tokenJson.access_token;
 
-    const customerId = process.env.GOOGLE_ADS_CLIENT_CUSTOMER_ID
-      ? process.env.GOOGLE_ADS_CLIENT_CUSTOMER_ID.replace(/-/g, '')
+    const customerId = process.env.GOOGLE_ADS_CUSTOMER_ID
+      ? process.env.GOOGLE_ADS_CUSTOMER_ID.replace(/-/g, '')
       : '8325311811';
 
     // Step 2: Query campaign performance for last 30 days
@@ -63,7 +63,7 @@ export default async function handler(req, res) {
       LIMIT 10
     `;
 
-    const apiUrl = `https://googleads.googleapis.com/v15/customers/${customerId}/googleAds:search`;
+    const apiUrl = `https://googleads.googleapis.com/v18/customers/${customerId}/googleAds:search`;
     console.log('=== GOOGLE ADS DEBUG ===');
     console.log('API URL:', apiUrl);
     console.log('Customer ID:', customerId);
