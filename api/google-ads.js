@@ -63,7 +63,7 @@ export default async function handler(req, res) {
       LIMIT 10
     `;
 
-    const apiUrl = `https://googleads.googleapis.com/v17/customers/${customerId}/googleAds:search`;
+    const apiUrl = `https://googleads.googleapis.com/v15/customers/${customerId}/googleAds:search`;
     console.log('=== GOOGLE ADS DEBUG ===');
     console.log('API URL:', apiUrl);
     console.log('Customer ID:', customerId);
