@@ -15,7 +15,21 @@ export default async function handler(req, res) {
         grant_type: 'refresh_token',
       }),
     });
-    const { access_token } = await tokenResponse.json();
+    const tokenJson = await tokenResponse.json();
+    console.log('Token refresh status:', tokenResponse.status);
+    console.log('Token refresh response:', JSON.stringify(tokenJson));
+
+    if (!tokenJson.access_token) {
+      return res.status(200).json({
+        success: false,
+        error: 'Failed to get access token from Google OAuth',
+        detail: JSON.stringify(tokenJson),
+        summary: { totalSpend: 0, totalClicks: 0, totalImpressions: 0, totalConversions: 0, roas: 0, cpl: 0, ctr: 0 },
+        campaigns: [],
+      });
+    }
+
+    const access_token = tokenJson.access_token;
 
     const customerId = process.env.GOOGLE_ADS_CLIENT_CUSTOMER_ID
       ? process.env.GOOGLE_ADS_CLIENT_CUSTOMER_ID.replace(/-/g, '')
@@ -64,6 +78,9 @@ export default async function handler(req, res) {
         body: JSON.stringify({ query }),
       }
     );
+
+    console.log('Google Ads response status:', adsResponse.status);
+    console.log('Google Ads response headers:', JSON.stringify(Object.fromEntries(adsResponse.headers.entries())));
 
     const rawText = await adsResponse.text();
     console.log('Google Ads status:', adsResponse.status);
