@@ -55,7 +55,7 @@ export default async function handler(req, res) {
         metrics.conversions,
         metrics.ctr,
         metrics.average_cpc,
-        metrics.conversion_rate
+        metrics.conversions_from_interactions_rate
       FROM campaign
       WHERE segments.date DURING LAST_30_DAYS
         AND campaign.status != 'REMOVED'
