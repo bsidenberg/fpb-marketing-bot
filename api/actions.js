@@ -34,7 +34,7 @@ export default async function handler(req, res) {
     const urlParts = (req.url || '').split('?')[0].split('/').filter(Boolean);
     const id = urlParts[urlParts.length - 1];
 
-    const { status } = req.body || {};
+    const { status, executed_at, execution_result } = req.body || {};
 
     if (!id || id === 'actions') {
       return res.status(400).json({ success: false, error: 'Missing action id in URL' });
@@ -43,9 +43,13 @@ export default async function handler(req, res) {
       return res.status(400).json({ success: false, error: `Invalid status: ${status}` });
     }
 
+    const updatePayload = { status, reviewed_at: new Date().toISOString() };
+    if (executed_at)      updatePayload.executed_at      = executed_at;
+    if (execution_result) updatePayload.execution_result = execution_result;
+
     const { data, error } = await supabase
       .from('actions')
-      .update({ status, reviewed_at: new Date().toISOString() })
+      .update(updatePayload)
       .eq('id', id)
       .select()
       .single();

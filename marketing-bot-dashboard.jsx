@@ -663,6 +663,7 @@ export default function MarketingBotDashboard() {
   const [actionsLoading, setActionsLoading] = useState(false);
   const [actionsFilter, setActionsFilter] = useState("pending");
   const [toast, setToast] = useState(null);
+  const [executingIds, setExecutingIds] = useState(new Set());
 
   // ── Performance snapshot state (Overview) ──
   const [snapshotData, setSnapshotData] = useState(null);
@@ -721,16 +722,67 @@ export default function MarketingBotDashboard() {
     if (state.activeTab === "actions") fetchActions(actionsFilter);
   }, [state.activeTab, actionsFilter, fetchActions]);
 
-  const handleActionUpdate = async (id, newStatus) => {
-    setActionsData(prev => prev.filter(a => a.id !== id));
-    const msg = newStatus === "approved" ? "Action approved" : "Action rejected";
+  const normalizePlatform = (p) => {
+    if (!p) return null;
+    if (["google", "google_ads", "Google Ads"].includes(p)) return "google";
+    if (["meta", "meta_ads", "Meta Ads", "Facebook Ads"].includes(p)) return "meta";
+    return p;
+  };
+
+  const showToast = (msg) => {
     setToast(msg);
-    setTimeout(() => setToast(null), 2500);
+    setTimeout(() => setToast(null), 3000);
+  };
+
+  const handleApprove = async (action) => {
+    const id = action.id;
+    setExecutingIds(prev => new Set(prev).add(id));
+
+    const platform   = normalizePlatform(action.platform);
+    const actionType = action.action_type;
+    const campaignId = action.campaign_id;
+
+    try {
+      const execRes = await fetch("/api/execute-action", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ actionId: id, platform, actionType, campaignId }),
+      });
+      const execJson = await execRes.json();
+
+      if (!execRes.ok) throw new Error(execJson.error || "Execution request failed");
+
+      if (execJson.executed) {
+        // Execution succeeded
+        const label = actionType === "pause_campaign" ? "Campaign paused" : "Campaign enabled";
+        showToast(`✓ ${label}`);
+        setActionsData(prev => prev.filter(a => a.id !== id));
+      } else {
+        // Unsupported type — fall back to PATCH approve only
+        await fetch(`/api/actions/${id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status: "approved" }),
+        });
+        showToast("✓ Approved (execution not supported yet for this action type)");
+        setActionsData(prev => prev.filter(a => a.id !== id));
+      }
+    } catch {
+      showToast("Execution failed — check Automation Log");
+      // Do NOT remove card — let user retry
+    } finally {
+      setExecutingIds(prev => { const s = new Set(prev); s.delete(id); return s; });
+    }
+  };
+
+  const handleReject = async (id) => {
+    setActionsData(prev => prev.filter(a => a.id !== id));
+    showToast("Action rejected");
     try {
       await fetch(`/api/actions/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: newStatus }),
+        body: JSON.stringify({ status: "rejected" }),
       });
     } catch { /* optimistic applied — ignore */ }
   };
@@ -1322,8 +1374,21 @@ export default function MarketingBotDashboard() {
                   {/* Approve / Reject buttons */}
                   {actionsFilter === "pending" ? (
                     <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
-                      <button onClick={() => handleActionUpdate(a.id, "approved")} className="btn-approve">Approve</button>
-                      <button onClick={() => handleActionUpdate(a.id, "rejected")} className="btn-reject">Reject</button>
+                      <button
+                        onClick={() => handleApprove(a)}
+                        disabled={executingIds.has(a.id)}
+                        className="btn-approve"
+                        style={{ opacity: executingIds.has(a.id) ? 0.7 : 1, minWidth: 90 }}
+                      >
+                        {executingIds.has(a.id) ? "Executing…" : "Approve"}
+                      </button>
+                      <button
+                        onClick={() => handleReject(a.id)}
+                        disabled={executingIds.has(a.id)}
+                        className="btn-reject"
+                      >
+                        Reject
+                      </button>
                     </div>
                   ) : (
                     <StatusBadge status={actionsFilter} />
