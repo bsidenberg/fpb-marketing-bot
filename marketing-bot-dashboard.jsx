@@ -728,6 +728,23 @@ function ImageProcessPanel({ msgId, originalImage, panelState, updatePanel }) {
   const result      = panelState?.result      ?? null;
   const error       = panelState?.error       ?? null;
 
+  // Push-to-Meta form state
+  const pushOpen      = panelState?.pushOpen      ?? false;
+  const pushAdName    = panelState?.pushAdName    ?? `FPB ${format.charAt(0).toUpperCase() + format.slice(1)} — ${new Date().toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}`;
+  const pushHeadline  = panelState?.pushHeadline  ?? '';
+  const pushBody      = panelState?.pushBody      ?? '';
+  const pushCta       = panelState?.pushCta       ?? 'LEARN_MORE';
+  const pushing       = panelState?.pushing       ?? false;
+  const pushResult    = panelState?.pushResult    ?? null;
+  const pushError     = panelState?.pushError     ?? null;
+
+  const CTA_OPTIONS = [
+    { key: 'LEARN_MORE',  label: 'Learn More'  },
+    { key: 'GET_QUOTE',   label: 'Get Quote'   },
+    { key: 'CONTACT_US',  label: 'Contact Us'  },
+    { key: 'SHOP_NOW',    label: 'Shop Now'    },
+  ];
+
   const FORMAT_LABELS = [
     { key: 'feed',     label: 'Feed',   sub: '1200×628' },
     { key: 'story',    label: 'Story',  sub: '1080×1920' },
@@ -770,6 +787,34 @@ function ImageProcessPanel({ msgId, originalImage, panelState, updatePanel }) {
     a.href = `data:image/jpeg;base64,${result.base64}`;
     a.download = `fpb-ad-${format}-${Date.now()}.jpg`;
     a.click();
+  };
+
+  const handlePush = async () => {
+    if (!result) return;
+    updatePanel(msgId, { pushing: true, pushError: null, pushResult: null });
+    try {
+      const res  = await fetch('/api/meta-creative', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({
+          imageBase64:  result.base64,
+          mediaType:    result.mediaType || 'image/jpeg',
+          format,
+          adName:       pushAdName   || `FPB ${format} Ad`,
+          headline:     pushHeadline || 'Get Your Free Quote Today',
+          primaryText:  pushBody     || 'Florida Pole Barn Kits — Built for Florida.',
+          callToAction: pushCta,
+        }),
+      });
+      const json = await res.json();
+      if (json.success) {
+        updatePanel(msgId, { pushing: false, pushResult: json, pushOpen: false });
+      } else {
+        updatePanel(msgId, { pushing: false, pushError: `${json.error}${json.step ? ` (${json.step})` : ''}` });
+      }
+    } catch (e) {
+      updatePanel(msgId, { pushing: false, pushError: e.message });
+    }
   };
 
   const btnSel = { background: '#2b3a6b', color: '#ffffff', border: '1px solid #2b3a6b' };
@@ -894,18 +939,115 @@ function ImageProcessPanel({ msgId, originalImage, panelState, updatePanel }) {
             {result.width}×{result.height}px · {result.fileSizeKB}KB
           </div>
           <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
-            <button
-              disabled
-              title="Coming in next update"
-              style={{
-                width: '100%', padding: '8px 0', borderRadius: 8, border: 'none',
-                background: '#2b3a6b', color: '#ffffff', opacity: 0.45,
-                fontFamily: "'Inter', sans-serif", fontSize: 12, fontWeight: 600,
-                cursor: 'not-allowed',
-              }}
-            >
-              Push to Meta as Ad
-            </button>
+
+            {/* Push success banner */}
+            {pushResult && (
+              <div style={{
+                background: 'rgba(22,163,74,0.08)', border: '1px solid rgba(22,163,74,0.25)',
+                borderRadius: 8, padding: '10px 12px', marginBottom: 4,
+              }}>
+                <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 12, fontWeight: 600, color: '#16a34a', marginBottom: 4 }}>
+                  ✓ Creative uploaded to Meta
+                </div>
+                <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 10, color: '#6b7280', marginBottom: 6 }}>
+                  ID: {pushResult.creativeId}
+                </div>
+                <a
+                  href={pushResult.previewUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{ fontFamily: "'Inter', sans-serif", fontSize: 11, color: '#2563eb', textDecoration: 'underline' }}
+                >
+                  View in Meta Ads Manager →
+                </a>
+              </div>
+            )}
+
+            {/* Push error */}
+            {pushError && (
+              <div style={{ background: 'rgba(220,38,38,0.07)', border: '1px solid rgba(220,38,38,0.22)', borderRadius: 8, padding: '8px 12px', fontSize: 12, color: '#dc2626', fontFamily: "'Inter', sans-serif" }}>
+                ✗ {pushError}
+              </div>
+            )}
+
+            {/* Push to Meta button */}
+            {!pushResult && (
+              <button
+                onClick={() => updatePanel(msgId, { pushOpen: !pushOpen })}
+                style={{
+                  width: '100%', padding: '8px 0', borderRadius: 8, border: 'none',
+                  background: '#2b3a6b', color: '#ffffff',
+                  fontFamily: "'Inter', sans-serif", fontSize: 12, fontWeight: 600,
+                  cursor: 'pointer', transition: 'opacity 0.13s ease',
+                }}
+                onMouseEnter={e => e.currentTarget.style.opacity = '0.88'}
+                onMouseLeave={e => e.currentTarget.style.opacity = '1'}
+              >
+                {pushOpen ? 'Cancel ↑' : 'Push to Meta as Ad'}
+              </button>
+            )}
+
+            {/* Inline push form */}
+            {pushOpen && !pushResult && (
+              <div style={{ background: '#ffffff', border: '1px solid #e5e7eb', borderRadius: 10, padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 9, textTransform: 'uppercase', letterSpacing: '1.5px', color: '#9ca3af' }}>Ad Details</div>
+
+                <input
+                  type="text"
+                  placeholder="Ad name (e.g. Pole Barn Kits — Feed — Mar 2026)"
+                  value={pushAdName}
+                  onChange={e => updatePanel(msgId, { pushAdName: e.target.value })}
+                  style={{ padding: '7px 10px', borderRadius: 7, border: '1px solid #d1d5db', fontFamily: "'Inter', sans-serif", fontSize: 12, color: '#3a3a3a', outline: 'none' }}
+                />
+                <input
+                  type="text"
+                  placeholder="Headline — Get Your Free Quote Today"
+                  value={pushHeadline}
+                  onChange={e => updatePanel(msgId, { pushHeadline: e.target.value })}
+                  style={{ padding: '7px 10px', borderRadius: 7, border: '1px solid #d1d5db', fontFamily: "'Inter', sans-serif", fontSize: 12, color: '#3a3a3a', outline: 'none' }}
+                />
+                <textarea
+                  placeholder="Primary text — Florida Pole Barn Kits — Built to last. Licensed &amp; insured. Free quotes."
+                  value={pushBody}
+                  onChange={e => updatePanel(msgId, { pushBody: e.target.value })}
+                  rows={3}
+                  style={{ padding: '7px 10px', borderRadius: 7, border: '1px solid #d1d5db', fontFamily: "'Inter', sans-serif", fontSize: 12, color: '#3a3a3a', outline: 'none', resize: 'vertical' }}
+                />
+
+                <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
+                  {CTA_OPTIONS.map(c => (
+                    <button key={c.key} onClick={() => updatePanel(msgId, { pushCta: c.key })}
+                      style={{ padding: '4px 10px', borderRadius: 6, cursor: 'pointer', fontSize: 11,
+                        fontFamily: "'Inter', sans-serif", transition: 'all 0.13s ease',
+                        ...(pushCta === c.key ? btnSel : btnOff) }}>
+                      {c.label}
+                    </button>
+                  ))}
+                </div>
+
+                <button
+                  onClick={handlePush}
+                  disabled={pushing}
+                  style={{
+                    width: '100%', padding: '9px 0', borderRadius: 8, border: 'none',
+                    background: pushing ? '#9ca3af' : 'linear-gradient(135deg, #8b1a1e 0%, #c0272d 100%)',
+                    color: '#ffffff', fontFamily: "'Inter', sans-serif", fontSize: 12, fontWeight: 600,
+                    cursor: pushing ? 'not-allowed' : 'pointer',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                  }}
+                >
+                  {pushing ? (
+                    <>
+                      <span className="chat-dot" style={{ background: 'rgba(255,255,255,0.7)' }} />
+                      <span className="chat-dot" style={{ background: 'rgba(255,255,255,0.7)', animationDelay: '0.2s' }} />
+                      <span className="chat-dot" style={{ background: 'rgba(255,255,255,0.7)', animationDelay: '0.4s' }} />
+                      <span style={{ marginLeft: 4 }}>Uploading to Meta…</span>
+                    </>
+                  ) : 'Upload to Meta'}
+                </button>
+              </div>
+            )}
+
             <button
               onClick={handleDownload}
               style={{
