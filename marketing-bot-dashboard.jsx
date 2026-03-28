@@ -1253,8 +1253,8 @@ export default function MarketingBotDashboard() {
                     <LiveMetric label="Total Spend"   value={`$${facebookData.summary.totalSpend}`}                       color={C.sapphire} />
                     <LiveMetric label="Clicks"        value={Number(facebookData.summary.totalClicks).toLocaleString()}    color={C.teal} />
                     <LiveMetric label="Conversions"   value={facebookData.summary.totalConversions}                        color={C.emerald} />
-                    <LiveMetric label="ROAS"          value={`${facebookData.summary.roas}x`}                             color={C.gold} />
-                    <LiveMetric label="Cost / Lead"   value={`$${facebookData.summary.cpl}`}                              color={C.violet} />
+                    <LiveMetric label="Avg Frequency" value={facebookData.summary.frequency && parseFloat(facebookData.summary.frequency) > 0 ? facebookData.summary.frequency : "—"} color={C.gold} />
+                    <LiveMetric label="Cost / Lead"   value={facebookData.summary.cpl != null ? `$${facebookData.summary.cpl}` : "—"}         color={C.violet} />
                   </div>
                   {facebookData.campaigns && facebookData.campaigns.length > 0 ? (
                     <>
@@ -1518,7 +1518,7 @@ export default function MarketingBotDashboard() {
                     }}>
                       <span style={{ fontFamily: F.mono, fontSize: 10, color: C.sapphire }}>● LIVE</span>
                       <span style={{ fontFamily: F.mono, fontSize: 10, color: C.textSecondary }}>Spend: <strong style={{ color: C.sapphire }}>${facebookData.summary.totalSpend}</strong></span>
-                      <span style={{ fontFamily: F.mono, fontSize: 10, color: C.textSecondary }}>ROAS: <strong style={{ color: C.gold }}>{facebookData.summary.roas}x</strong></span>
+                      <span style={{ fontFamily: F.mono, fontSize: 10, color: C.textSecondary }}>CPL: <strong style={{ color: C.gold }}>{facebookData.summary.cpl != null ? `$${facebookData.summary.cpl}` : "—"}</strong></span>
                       <span style={{ fontFamily: F.mono, fontSize: 10, color: C.textSecondary }}>Conv: <strong style={{ color: C.emerald }}>{facebookData.summary.totalConversions}</strong></span>
                     </div>
                   )}
