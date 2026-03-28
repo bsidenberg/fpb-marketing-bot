@@ -11,6 +11,8 @@
 //   session_id   text        NOT NULL
 // );
 // CREATE INDEX chat_messages_session_id_idx ON chat_messages (session_id, created_at ASC);
+//
+// ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS image_data text;
 // ============================================================
 
 import supabase from './lib/supabase.js';
@@ -171,6 +173,15 @@ function parseActionBlock(text) {
   return { displayText, actionPayload };
 }
 
+// ── Parse CREATIVE_READY flag from Claude response ───────────────────────────
+function parseCreativeReady(text) {
+  const match = text.match(/CREATIVE_READY:(true|false)/i);
+  if (!match) return { displayText: text, creativeReady: null };
+  const creativeReady = match[1].toLowerCase() === 'true';
+  const displayText = text.replace(/\n?CREATIVE_READY:(true|false)/i, '').trim();
+  return { displayText, creativeReady };
+}
+
 // ── Main handler ─────────────────────────────────────────────────────────────
 export default async function handler(req, res) {
   cors(res);
@@ -196,7 +207,7 @@ export default async function handler(req, res) {
     return res.status(405).json({ success: false, error: 'Method not allowed' });
   }
 
-  const { message, sessionId, conversationHistory = [], includeAdData = false } = req.body || {};
+  const { message, sessionId, conversationHistory = [], includeAdData = false, imageData = null } = req.body || {};
 
   if (!message) return res.status(400).json({ success: false, error: 'Missing message' });
   if (!sessionId) return res.status(400).json({ success: false, error: 'Missing sessionId' });
@@ -237,7 +248,29 @@ export default async function handler(req, res) {
       role:    m.role === 'assistant' ? 'assistant' : 'user',
       content: String(m.content),
     }));
-    const messages = [...history, { role: 'user', content: userContent }];
+
+    // If an image was uploaded, append analysis instructions to the text
+    let finalUserText = userContent;
+    if (imageData?.base64) {
+      finalUserText += '\n\nAn image has been uploaded. Analyze it for ad creative use and provide:\n1. Creative assessment — what\'s strong or weak about this image for pole barn ads\n2. Recommended ad copy — 2-3 headline options and a primary text option\n3. Best audience fit — which FPB customer segment this image would resonate with most (DIY kit buyers, turnkey project buyers, agricultural/farm, commercial)\n4. Format recommendations — which Meta ad formats this image works best in (single image, carousel, story)\n5. Image improvements — if the image would benefit from a text overlay, logo placement, or crop adjustment, describe exactly what you\'d recommend\n6. End with: CREATIVE_READY:true if the image is strong enough to use as-is, or CREATIVE_READY:false if it needs processing first';
+    }
+
+    // Build user message content — array for vision, string for text-only
+    const userMessageContent = imageData?.base64
+      ? [
+          {
+            type:   'image',
+            source: {
+              type:       'base64',
+              media_type: imageData.mediaType,
+              data:       imageData.base64,
+            },
+          },
+          { type: 'text', text: finalUserText },
+        ]
+      : finalUserText;
+
+    const messages = [...history, { role: 'user', content: userMessageContent }];
 
     // ── Step 5: Call Claude ──
     const claudeRes = await callClaude({
@@ -249,8 +282,9 @@ export default async function handler(req, res) {
 
     const rawText = claudeRes.content?.[0]?.text || '';
 
-    // ── Step 6: Parse ACTION block ──
-    const { displayText, actionPayload } = parseActionBlock(rawText);
+    // ── Step 6: Parse ACTION block then CREATIVE_READY flag ──
+    const { displayText: afterAction, actionPayload } = parseActionBlock(rawText);
+    const { displayText, creativeReady } = parseCreativeReady(afterAction);
     const messageType = actionPayload ? 'action_request' : 'text';
 
     // ── Step 7: Save to Supabase ──
@@ -260,13 +294,15 @@ export default async function handler(req, res) {
         content:      message,
         message_type: 'text',
         session_id:   sessionId,
+        image_data:   null, // image storage handled in future step
       },
       {
-        role:          'assistant',
-        content:       displayText,
-        message_type:  messageType,
+        role:           'assistant',
+        content:        displayText,
+        message_type:   messageType,
         action_payload: actionPayload,
-        session_id:    sessionId,
+        session_id:     sessionId,
+        image_data:     null,
       },
     ]);
 
@@ -276,6 +312,7 @@ export default async function handler(req, res) {
       reply:         displayText,
       messageType,
       actionPayload: actionPayload || null,
+      creativeReady: creativeReady ?? null,
       sessionId,
     });
 

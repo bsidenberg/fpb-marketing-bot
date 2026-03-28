@@ -835,7 +835,9 @@ export default function MarketingBotDashboard() {
   const [chatLoading, setChatLoading] = useState(false);
   const [chatFetching, setChatFetching] = useState(false);
   const [chatSessionId] = useState(() => crypto.randomUUID());
+  const [pendingImage, setPendingImage] = useState(null); // { file, previewUrl, base64, mediaType }
   const chatBottomRef = useRef(null);
+  const fileInputRef = useRef(null);
 
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 60000);
@@ -1023,13 +1025,42 @@ export default function MarketingBotDashboard() {
     chatBottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [chatMessages, chatFetching]);
 
+  // ── Chat: handle image file select ──
+  const handleImageSelect = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = "";
+
+    if (file.size > 5 * 1024 * 1024) {
+      showToast("Image too large — max 5MB");
+      return;
+    }
+
+    const previewUrl = URL.createObjectURL(file);
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const dataUrl = ev.target.result;
+      const base64 = dataUrl.split(",")[1];
+      setPendingImage({ file, previewUrl, base64, mediaType: file.type });
+    };
+    reader.readAsDataURL(file);
+  };
+
   // ── Chat: send message ──
   const sendMessage = async (text) => {
-    const msg = (text || chatInput).trim();
+    const rawText = text || chatInput;
+    const hasImage = !!pendingImage;
+    const msg = rawText.trim() || (hasImage ? "Analyze this image for ad creative potential" : "");
     if (!msg || chatLoading || chatFetching) return;
-    setChatInput("");
 
-    const userMsg = { id: Date.now() + "-u", role: "user", content: msg, message_type: "text" };
+    const imageSnapshot = pendingImage;
+    setChatInput("");
+    setPendingImage(null);
+
+    const userMsg = {
+      id: Date.now() + "-u", role: "user", content: msg, message_type: "text",
+      previewUrl: imageSnapshot?.previewUrl || null,
+    };
     setChatMessages(prev => [...prev, userMsg]);
     setChatLoading(true);
 
@@ -1038,10 +1069,13 @@ export default function MarketingBotDashboard() {
         role: m.role, content: m.content,
       }));
 
+      const body1 = { message: msg, sessionId: chatSessionId, conversationHistory: history };
+      if (imageSnapshot) body1.imageData = { base64: imageSnapshot.base64, mediaType: imageSnapshot.mediaType };
+
       const res1 = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: msg, sessionId: chatSessionId, conversationHistory: history }),
+        body: JSON.stringify(body1),
       });
       const json1 = await res1.json();
 
@@ -1049,10 +1083,13 @@ export default function MarketingBotDashboard() {
         setChatLoading(false);
         setChatFetching(true);
 
+        const body2 = { message: msg, sessionId: chatSessionId, conversationHistory: history, includeAdData: true };
+        if (imageSnapshot) body2.imageData = { base64: imageSnapshot.base64, mediaType: imageSnapshot.mediaType };
+
         const res2 = await fetch("/api/chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ message: msg, sessionId: chatSessionId, conversationHistory: history, includeAdData: true }),
+          body: JSON.stringify(body2),
         });
         const json2 = await res2.json();
         setChatFetching(false);
@@ -1062,6 +1099,7 @@ export default function MarketingBotDashboard() {
             id: Date.now() + "-a", role: "assistant",
             content: json2.reply, message_type: json2.messageType || "text",
             action_payload: json2.actionPayload || null,
+            creative_ready: json2.creativeReady ?? null,
           }]);
         }
       } else if (json1.success) {
@@ -1069,6 +1107,7 @@ export default function MarketingBotDashboard() {
           id: Date.now() + "-a", role: "assistant",
           content: json1.reply, message_type: json1.messageType || "text",
           action_payload: json1.actionPayload || null,
+          creative_ready: json1.creativeReady ?? null,
         }]);
       }
     } catch {
@@ -1708,7 +1747,14 @@ export default function MarketingBotDashboard() {
                 {chatMessages.map((msg) => {
                   if (msg.role === "user") {
                     return (
-                      <div key={msg.id} style={{ display: "flex", justifyContent: "flex-end", marginBottom: 14 }}>
+                      <div key={msg.id} style={{ display: "flex", justifyContent: "flex-end", marginBottom: 14, flexDirection: "column", alignItems: "flex-end", gap: 6 }}>
+                        {msg.previewUrl && (
+                          <img
+                            src={msg.previewUrl}
+                            alt="uploaded"
+                            style={{ width: 140, height: 100, objectFit: "cover", borderRadius: 10, border: `1px solid ${C.borderMed}` }}
+                          />
+                        )}
                         <div className="chat-bubble-user">{msg.content}</div>
                       </div>
                     );
@@ -1813,10 +1859,60 @@ export default function MarketingBotDashboard() {
 
               {/* Input area */}
               <div style={{ borderTop: `1px solid ${C.borderDim}`, padding: "12px 16px", background: "#fafafa" }}>
+
+                {/* Image preview */}
+                {pendingImage && (
+                  <div style={{ marginBottom: 10, position: "relative", display: "inline-block" }}>
+                    <img
+                      src={pendingImage.previewUrl}
+                      alt="attachment preview"
+                      style={{ width: 60, height: 60, objectFit: "cover", borderRadius: 8, border: `1px solid ${C.borderMed}`, display: "block" }}
+                    />
+                    <button
+                      onClick={() => setPendingImage(null)}
+                      style={{
+                        position: "absolute", top: -6, right: -6,
+                        width: 18, height: 18, borderRadius: "50%",
+                        background: "#374151", border: "none", cursor: "pointer",
+                        display: "flex", alignItems: "center", justifyContent: "center",
+                        color: "#ffffff", fontSize: 10, fontWeight: 700, lineHeight: 1,
+                      }}
+                    >×</button>
+                  </div>
+                )}
+
                 <div style={{ display: "flex", gap: 10, alignItems: "flex-end" }}>
+                  {/* Hidden file input */}
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp"
+                    style={{ display: "none" }}
+                    onChange={handleImageSelect}
+                  />
+
+                  {/* Paperclip button */}
+                  <button
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={chatLoading || chatFetching}
+                    style={{
+                      width: 36, height: 36, border: "none", background: "none",
+                      cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
+                      color: pendingImage ? C.sapphire : C.textMuted,
+                      borderRadius: 8, flexShrink: 0, alignSelf: "flex-end",
+                      transition: "color 0.14s ease",
+                    }}
+                    onMouseEnter={e => { if (!pendingImage) e.currentTarget.style.color = "#2b3a6b"; }}
+                    onMouseLeave={e => { if (!pendingImage) e.currentTarget.style.color = C.textMuted; }}
+                  >
+                    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
+                    </svg>
+                  </button>
+
                   <textarea
                     className="chat-input"
-                    placeholder="Ask about campaigns, strategy, or request changes…"
+                    placeholder={pendingImage ? "Add a note or send as-is…" : "Ask about campaigns, strategy, or request changes…"}
                     value={chatInput}
                     onChange={e => setChatInput(e.target.value)}
                     onKeyDown={e => {
@@ -1831,7 +1927,7 @@ export default function MarketingBotDashboard() {
                   <button
                     className="chat-send-btn"
                     onClick={() => sendMessage()}
-                    disabled={!chatInput.trim() || chatLoading || chatFetching}
+                    disabled={(!chatInput.trim() && !pendingImage) || chatLoading || chatFetching}
                   >
                     <Icons.Send />
                   </button>
