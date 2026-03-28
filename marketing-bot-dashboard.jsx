@@ -1750,6 +1750,35 @@ export default function MarketingBotDashboard() {
                   );
                 })}
 
+                {/* Thinking bubble — shown immediately after send, before any response */}
+                {chatLoading && !chatFetching && chatMessages.length > 0 && chatMessages[chatMessages.length - 1].role === "user" && (
+                  <div style={{ display: "flex", justifyContent: "flex-start", marginBottom: 14, gap: 10 }}>
+                    <div style={{
+                      flexShrink: 0, width: 28, height: 28, borderRadius: "50%",
+                      background: "linear-gradient(135deg, #2b3a6b, #1a2444)",
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                    }}>
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#ffffff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                        <rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/>
+                      </svg>
+                    </div>
+                    <div>
+                      <div style={{ fontFamily: F.mono, fontSize: 9, textTransform: "uppercase", letterSpacing: "1.5px", color: C.textDim, marginBottom: 5 }}>AI Assistant</div>
+                      <div style={{
+                        background: "#ffffff", border: "1px solid #e5e7eb",
+                        borderRadius: "18px 18px 18px 4px", padding: "13px 16px",
+                        display: "flex", gap: 5, alignItems: "center",
+                        boxShadow: "0 1px 4px rgba(0,0,0,0.06)",
+                      }}>
+                        <span className="chat-dot" />
+                        <span className="chat-dot" />
+                        <span className="chat-dot" />
+                        <span style={{ fontFamily: F.mono, fontSize: 9, color: C.textDim, marginLeft: 6 }}>Thinking…</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 {/* Fetching dots indicator */}
                 {chatFetching && (
                   <div style={{ display: "flex", justifyContent: "flex-start", marginBottom: 14, gap: 10 }}>
