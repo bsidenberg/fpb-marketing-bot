@@ -2,32 +2,32 @@ import { useState, useEffect, useReducer } from "react";
 
 // ── Design tokens ──
 const C = {
-  bgBase:    "#1a2444",   // Navy Dark
-  bgSurface: "#1f2d57",
-  bgRaised:  "#2b3a6b",   // Navy
-  bgOverlay: "#374d8a",
-  bgInput:   "#162040",
+  bgBase:    "#f3f4f6",   // Gray-100 page bg
+  bgSurface: "#ffffff",   // White cards
+  bgRaised:  "#ffffff",   // White cards
+  bgOverlay: "#f9fafb",
+  bgInput:   "#f9fafb",
 
-  borderDim: "rgba(209,213,219,0.08)",   // Gray-300 at low opacity
-  borderMed: "rgba(209,213,219,0.15)",
-  borderHi:  "rgba(209,213,219,0.25)",
+  borderDim: "#e5e7eb",   // Gray-200
+  borderMed: "#d1d5db",   // Gray-300
+  borderHi:  "#9ca3af",   // Gray-400
 
-  gold:     "#c0272d",                    // Brand Red (primary accent)
-  goldLt:   "#e04a4f",                    // Red lighter
-  goldDk:   "#8b1a1e",                    // Red Dark
-  goldGlow: "rgba(192,39,45,0.18)",
+  gold:     "#c0272d",    // Brand Red
+  goldLt:   "#e04a4f",
+  goldDk:   "#8b1a1e",
+  goldGlow: "rgba(192,39,45,0.12)",
 
-  textPrimary:   "#ffffff",
-  textSecondary: "#d1d5db",   // Gray-300
-  textMuted:     "#9ca3af",   // Gray-400
-  textDim:       "#6b7280",   // Gray-500
+  textPrimary:   "#3a3a3a",   // Charcoal
+  textSecondary: "#374151",   // Gray-700
+  textMuted:     "#6b7280",   // Gray-500
+  textDim:       "#9ca3af",   // Gray-400
 
-  emerald: "#22d472",
-  sapphire: "#4d8ef0",
-  amber:   "#c0272d",    // → Brand Red (replaces orange)
-  rose:    "#f25c7a",
-  violet:  "#c0272d",    // → Brand Red (replaces purple)
-  teal:    "#60a5fa",    // Light blue (replaces teal)
+  emerald: "#16a34a",   // Green-600 (readable on white)
+  sapphire: "#2563eb",  // Blue-600
+  amber:   "#c0272d",   // Brand Red
+  rose:    "#dc2626",   // Red-600
+  violet:  "#c0272d",   // Brand Red
+  teal:    "#0284c7",   // Sky-600
 };
 const F = {
   serif: "'Inter', system-ui, sans-serif",
@@ -43,25 +43,12 @@ const GLOBAL_CSS = `
   html, body { height: 100%; }
 
   body {
-    background: radial-gradient(ellipse at 20% 0%, #1f2d57 0%, #1a2444 55%, #111a38 100%);
+    background: #f3f4f6;
     min-height: 100vh;
     font-family: 'Inter', system-ui, sans-serif;
-    color: #ffffff;
+    color: #3a3a3a;
     position: relative;
     overflow-x: hidden;
-  }
-  body::before {
-    content: '';
-    position: fixed; inset: 0;
-    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='1'/%3E%3C/svg%3E");
-    opacity: 0.025; pointer-events: none; z-index: 0;
-  }
-  body::after {
-    content: '';
-    position: fixed; top: -20vh; left: 50%; transform: translateX(-50%);
-    width: 700px; height: 400px;
-    background: radial-gradient(ellipse, rgba(192,39,45,0.07) 0%, transparent 70%);
-    pointer-events: none; z-index: 0;
   }
   #root { position: relative; z-index: 1; }
 
@@ -135,18 +122,18 @@ const GLOBAL_CSS = `
   }
 
   .metric-card {
-    background: linear-gradient(145deg, #2b3a6b 0%, #1f2d57 100%);
-    border: 1px solid rgba(209,213,219,0.10);
+    background: #ffffff;
+    border: 1px solid #d1d5db;
     border-radius: 16px;
     padding: 20px 22px;
     position: relative; overflow: hidden;
-    box-shadow: 0 4px 24px rgba(0,0,0,0.30), inset 0 1px 0 rgba(255,255,255,0.05);
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
     transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
   }
   .metric-card:hover {
-    transform: translateY(-3px);
-    box-shadow: 0 12px 40px rgba(0,0,0,0.40), inset 0 1px 0 rgba(255,255,255,0.07);
-    border-color: rgba(209,213,219,0.20);
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(0,0,0,0.10);
+    border-color: #9ca3af;
   }
   .metric-card .card-top-bar {
     position: absolute; top: 0; left: 0; right: 0; height: 2px;
@@ -166,31 +153,32 @@ const GLOBAL_CSS = `
   }
 
   .data-card {
-    background: linear-gradient(145deg, #2b3a6b, #1f2d57);
-    border: 1px solid rgba(209,213,219,0.08);
+    background: #ffffff;
+    border: 1px solid #d1d5db;
     border-radius: 12px; padding: 16px;
     position: relative; overflow: hidden;
-    transition: transform 0.16s ease, box-shadow 0.16s ease, border-color 0.16s ease;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    transition: transform 0.16s ease, box-shadow 0.16s ease;
   }
   .data-card:hover {
-    transform: translateY(-3px);
-    box-shadow: 0 10px 32px rgba(0,0,0,0.35);
-    border-color: rgba(209,213,219,0.16);
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(0,0,0,0.10);
   }
   .data-card::after {
     content: '';
-    position: absolute; bottom: 0; left: 0; right: 0; height: 1px;
+    position: absolute; bottom: 0; left: 0; right: 0; height: 2px;
     background: linear-gradient(90deg, transparent, #c0272d, transparent);
     opacity: 0;
     transition: opacity 0.16s ease;
   }
-  .data-card:hover::after { opacity: 0.5; }
+  .data-card:hover::after { opacity: 0.6; }
 
   .live-card {
-    background: linear-gradient(145deg, #2b3a6b, #1f2d57);
-    border: 1px solid rgba(209,213,219,0.08);
+    background: #ffffff;
+    border: 1px solid #d1d5db;
     border-radius: 12px; padding: 18px 20px;
     position: relative; overflow: hidden;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
   }
   .live-card .card-top-bar {
     position: absolute; top: 0; left: 0; right: 0; height: 2px;
@@ -200,21 +188,21 @@ const GLOBAL_CSS = `
     display: flex; align-items: center; gap: 10px;
     font-family: 'DM Mono', monospace;
     font-size: 9.5px; text-transform: uppercase; letter-spacing: 2px;
-    color: #6b7280; margin-bottom: 12px;
+    color: #2b3a6b; margin-bottom: 12px;
   }
   .section-label::after {
     content: ''; flex: 1; height: 1px;
-    background: linear-gradient(90deg, rgba(209,213,219,0.12), transparent);
+    background: linear-gradient(90deg, #d1d5db, transparent);
   }
 
   .activity-row {
     padding: 11px 18px;
-    border-bottom: 1px solid rgba(209,213,219,0.06);
+    border-bottom: 1px solid #e5e7eb;
     transition: background 0.12s ease;
     display: flex; align-items: center; gap: 10px;
   }
   .activity-row:last-child { border-bottom: none; }
-  .activity-row:hover { background: rgba(255,255,255,0.02); }
+  .activity-row:hover { background: #f9fafb; }
 
   .badge {
     display: inline-flex; align-items: center; gap: 4px;
@@ -228,8 +216,8 @@ const GLOBAL_CSS = `
     border: 1px solid rgba(34,212,114,0.22);
   }
   .badge-pending, .badge-waiting, .badge-review {
-    background: rgba(209,213,219,0.10); color: #d1d5db;
-    border: 1px solid rgba(209,213,219,0.20);
+    background: #f3f4f6; color: #6b7280;
+    border: 1px solid #d1d5db;
   }
   .badge-rejected {
     background: rgba(192,39,45,0.10); color: #e04a4f;
@@ -243,13 +231,13 @@ const GLOBAL_CSS = `
   .kw-chip {
     padding: 3px 9px; border-radius: 6px;
     font-family: 'DM Mono', monospace; font-size: 10px;
-    background: rgba(255,255,255,0.04); color: #9ca3af;
-    border: 1px solid rgba(209,213,219,0.10);
+    background: #f3f4f6; color: #6b7280;
+    border: 1px solid #d1d5db;
     transition: all 0.14s ease; cursor: default;
   }
   .kw-chip:hover {
-    border-color: rgba(192,39,45,0.32);
-    color: #eef1f9; background: rgba(192,39,45,0.08);
+    border-color: rgba(192,39,45,0.4);
+    color: #c0272d; background: #fdf2f2;
   }
 
   .btn-approve {
@@ -261,12 +249,12 @@ const GLOBAL_CSS = `
   .btn-approve:hover { background: rgba(34,212,114,0.18); }
 
   .btn-reject {
-    background: rgba(255,255,255,0.04); border: 1px solid rgba(209,213,219,0.12);
+    background: #f3f4f6; border: 1px solid #d1d5db;
     color: #6b7280; padding: 5px 13px; border-radius: 8px;
     font-size: 11px; cursor: pointer; font-family: 'Inter', sans-serif;
     transition: all 0.14s ease;
   }
-  .btn-reject:hover { background: rgba(255,255,255,0.08); color: #d1d5db; }
+  .btn-reject:hover { background: #e5e7eb; color: #374151; }
 
   .btn-approve-all {
     background: linear-gradient(135deg, #8b1a1e 0%, #c0272d 55%, #e04a4f 100%);
@@ -317,7 +305,7 @@ const GLOBAL_CSS = `
 
   .spinner {
     width: 14px; height: 14px;
-    border: 2px solid rgba(255,255,255,0.2);
+    border: 2px solid rgba(255,255,255,0.35);
     border-top-color: #ffffff;
     border-radius: 50%;
     animation: spin 0.7s linear infinite;
@@ -328,19 +316,21 @@ const GLOBAL_CSS = `
     width: 100%; border-collapse: collapse; margin-top: 12px;
   }
   .campaigns-table th {
-    font-family: 'DM Mono', monospace; font-size: 9px; font-weight: 500;
-    text-transform: uppercase; letter-spacing: 1.5px; color: #6b7280;
+    font-family: 'DM Mono', monospace; font-size: 9px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 1.5px; color: #374151;
     padding: 8px 12px; text-align: left;
-    border-bottom: 1px solid rgba(209,213,219,0.10);
+    border-bottom: 1px solid #d1d5db;
+    background: #f9fafb;
   }
   .campaigns-table td {
-    font-family: 'DM Mono', monospace; font-size: 11px; color: #9ca3af;
+    font-family: 'DM Mono', monospace; font-size: 11px; color: #374151;
     padding: 9px 12px;
-    border-bottom: 1px solid rgba(209,213,219,0.06);
+    border-bottom: 1px solid #d1d5db;
   }
+  .campaigns-table tr:nth-child(even) td { background: #f3f4f6; }
   .campaigns-table tr:last-child td { border-bottom: none; }
-  .campaigns-table tr:hover td { background: rgba(255,255,255,0.02); }
-  .campaigns-table td:first-child { color: #ffffff; font-family: 'Inter', sans-serif; font-size: 12px; font-weight: 500; }
+  .campaigns-table tr:hover td { background: #fdf2f2; }
+  .campaigns-table td:first-child { color: #3a3a3a; font-family: 'Inter', sans-serif; font-size: 12px; font-weight: 500; }
 
   .view-all-btn {
     background: none; border: none; color: #c0272d;
@@ -358,8 +348,8 @@ const GLOBAL_CSS = `
   }
 
   .stat-chip {
-    background: rgba(43,58,107,0.60);
-    border: 1px solid rgba(209,213,219,0.10);
+    background: rgba(255,255,255,0.10);
+    border: 1px solid rgba(255,255,255,0.15);
     border-radius: 20px; padding: 5px 13px;
     font-family: 'DM Mono', monospace; font-size: 11px; color: #d1d5db;
     display: flex; align-items: center; gap: 6px;
@@ -609,12 +599,13 @@ function PriorityDot({ priority }) {
 function LiveMetric({ label, value, color }) {
   return (
     <div style={{
-      background: "rgba(255,255,255,0.03)",
-      border: `1px solid rgba(255,255,255,0.07)`,
+      background: "#f9fafb",
+      border: "1px solid #e5e7eb",
       borderRadius: 10, padding: "12px 14px",
+      borderTop: `2px solid ${color || "#c0272d"}`,
     }}>
-      <div style={{ fontFamily: F.mono, fontSize: 9, textTransform: "uppercase", letterSpacing: "1.5px", color: C.textMuted, marginBottom: 6 }}>{label}</div>
-      <div style={{ fontFamily: F.serif, fontSize: 22, fontWeight: 700, color: color || C.textPrimary, lineHeight: 1 }}>{value}</div>
+      <div style={{ fontFamily: F.mono, fontSize: 9, textTransform: "uppercase", letterSpacing: "1.5px", color: "#374151", marginBottom: 6 }}>{label}</div>
+      <div style={{ fontFamily: F.serif, fontSize: 22, fontWeight: 700, color: "#3a3a3a", lineHeight: 1 }}>{value}</div>
     </div>
   );
 }
@@ -644,9 +635,9 @@ function CampaignsTable({ campaigns }) {
                 {c.status || "—"}
               </span>
             </td>
-            <td style={{ color: C.amber }}>${c.spend != null && c.spend !== "" ? (parseFloat(c.spend) === 0 ? "0" : c.spend) : "—"}</td>
+            <td style={{ color: "#3a3a3a" }}>${c.spend != null && c.spend !== "" ? (parseFloat(c.spend) === 0 ? "0" : c.spend) : "—"}</td>
             <td>{c.clicks != null ? Number(c.clicks).toLocaleString() : "—"}</td>
-            <td style={{ color: C.emerald }}>{c.conversions != null ? c.conversions : "—"}</td>
+            <td style={{ color: "#374151" }}>{c.conversions != null ? c.conversions : "—"}</td>
           </tr>
         ))}
       </tbody>
@@ -765,7 +756,7 @@ export default function MarketingBotDashboard() {
       {/* ── TABS ── */}
       <div style={{
         display: "flex", gap: 2, padding: "0 24px",
-        background: "rgba(22,28,45,0.80)", borderBottom: `1px solid ${C.borderDim}`,
+        background: "rgba(22,28,45,0.80)", borderBottom: "1px solid rgba(255,255,255,0.08)",
         overflowX: "auto", backdropFilter: "blur(16px)",
       }}>
         {tabs.map(tab => (
@@ -919,7 +910,7 @@ export default function MarketingBotDashboard() {
 
             {/* Google Ads live data */}
             <div style={{ marginBottom: 20 }}>
-              <div className="section-label" style={{ color: C.amber }}>Google Ads — Last 30 Days</div>
+              <div className="section-label" style={{ color: "#2b3a6b" }}>Google Ads — Last 30 Days</div>
               {!googleData ? (
                 <div style={{
                   background: "rgba(255,255,255,0.02)", border: `1px solid ${C.borderDim}`,
@@ -987,7 +978,7 @@ export default function MarketingBotDashboard() {
 
             {/* Facebook Ads live data */}
             <div style={{ marginBottom: 20 }}>
-              <div className="section-label" style={{ color: C.sapphire }}>Facebook Ads — Last 30 Days</div>
+              <div className="section-label" style={{ color: "#2b3a6b" }}>Facebook Ads — Last 30 Days</div>
               {!facebookData ? (
                 <div style={{
                   background: "rgba(255,255,255,0.02)", border: `1px solid ${C.borderDim}`,
