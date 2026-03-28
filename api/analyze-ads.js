@@ -95,23 +95,49 @@ export default async function handler(req, res) {
     // 2. Send to Claude
     const actions = await callClaude(performanceData);
 
-    // 3. Insert actions into Supabase
+    // 3. Insert actions into Supabase (with deduplication)
     let insertedCount = 0;
-    if (Array.isArray(actions) && actions.length > 0) {
-      const rows = actions.map(a => ({
-        channel:        a.channel        || 'other',
-        action_type:    a.action_type    || 'other',
-        title:          a.title          || 'Untitled',
-        description:    a.description    || '',
-        priority:       a.priority       || 'medium',
-        auto_execute:   a.auto_execute   === true,
-        execution_data: a.execution_data || {},
-        status:         'pending',
-      }));
+    let skippedCount  = 0;
+    const totalCount  = Array.isArray(actions) ? actions.length : 0;
 
-      const { error: insertErr } = await supabase.from('actions').insert(rows);
-      if (insertErr) throw new Error(`Supabase actions insert: ${insertErr.message}`);
-      insertedCount = rows.length;
+    if (totalCount > 0) {
+      // Fetch all existing pending actions for dedup check
+      const { data: existingPending } = await supabase
+        .from('actions')
+        .select('action_type, campaign_id, campaign_name')
+        .eq('status', 'pending');
+
+      const existingKeys = new Set(
+        (existingPending || []).map(
+          r => `${r.action_type}::${r.campaign_id || r.campaign_name || ''}`
+        )
+      );
+
+      const rows = actions
+        .map(a => ({
+          channel:        a.channel        || 'other',
+          action_type:    a.action_type    || 'other',
+          title:          a.title          || 'Untitled',
+          description:    a.description    || '',
+          priority:       a.priority       || 'medium',
+          auto_execute:   a.auto_execute   === true,
+          execution_data: a.execution_data || {},
+          status:         'pending',
+        }))
+        .filter(row => {
+          const key = `${row.action_type}::${row.execution_data?.campaign_id || row.execution_data?.campaign_name || ''}`;
+          if (existingKeys.has(key)) return false;
+          existingKeys.add(key); // prevent dupes within this batch too
+          return true;
+        });
+
+      skippedCount = totalCount - rows.length;
+
+      if (rows.length > 0) {
+        const { error: insertErr } = await supabase.from('actions').insert(rows);
+        if (insertErr) throw new Error(`Supabase actions insert: ${insertErr.message}`);
+        insertedCount = rows.length;
+      }
     }
 
     // 4. Log the analysis run
@@ -119,7 +145,7 @@ export default async function handler(req, res) {
       event_type:  'analysis_run',
       description: `Analyzed ${Object.keys(performanceData).join(', ')}. Created ${insertedCount} recommended actions.`,
       status:      'complete',
-      metadata:    { google_available: !!googleData, meta_available: !!metaData, actions_created: insertedCount },
+      metadata:    { google_available: !!googleData, meta_available: !!metaData, total: totalCount, inserted: insertedCount, skipped: skippedCount },
     });
 
     // 5. Save performance snapshot
