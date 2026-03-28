@@ -2,6 +2,9 @@
   "functions": {
     "api/*.js": {
       "maxDuration": 30
+    },
+    "api/analyze-ads.js": {
+      "maxDuration": 60
     }
   },
   "rewrites": [
