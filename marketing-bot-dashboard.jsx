@@ -1,4 +1,4 @@
-import { useState, useEffect, useReducer } from "react";
+import { useState, useEffect, useReducer, useCallback } from "react";
 
 // ── Design tokens ──
 const C = {
@@ -658,6 +658,12 @@ export default function MarketingBotDashboard() {
   const [liveDataError, setLiveDataError] = useState(null);
   const [lastSynced, setLastSynced] = useState(null);
 
+  // ── Actions tab state ──
+  const [actionsData, setActionsData] = useState([]);
+  const [actionsLoading, setActionsLoading] = useState(false);
+  const [actionsFilter, setActionsFilter] = useState("pending");
+  const [toast, setToast] = useState(null);
+
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 60000);
     const p = setInterval(() => setBotPulse(v => !v), 2000);
@@ -686,6 +692,38 @@ export default function MarketingBotDashboard() {
     } finally {
       setLiveDataLoading(false);
     }
+  };
+
+  // ── Actions fetch ──
+  const fetchActions = useCallback(async (status) => {
+    setActionsLoading(true);
+    try {
+      const res = await fetch(`/api/actions?status=${status}`);
+      const json = await res.json();
+      setActionsData(json.success ? (json.data || []) : []);
+    } catch {
+      setActionsData([]);
+    } finally {
+      setActionsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (state.activeTab === "actions") fetchActions(actionsFilter);
+  }, [state.activeTab, actionsFilter, fetchActions]);
+
+  const handleActionUpdate = async (id, newStatus) => {
+    setActionsData(prev => prev.filter(a => a.id !== id));
+    const msg = newStatus === "approved" ? "Action approved" : "Action rejected";
+    setToast(msg);
+    setTimeout(() => setToast(null), 2500);
+    try {
+      await fetch(`/api/actions/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: newStatus }),
+      });
+    } catch { /* optimistic applied — ignore */ }
   };
 
   const pendingCount = state.actionQueue.filter(a => a.status === "pending").length;
@@ -1049,38 +1087,138 @@ export default function MarketingBotDashboard() {
         {/* ACTIONS TAB */}
         {state.activeTab === "actions" && (
           <div key="actions" style={{ animation: "panelIn 0.22s ease" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
-              <div>
-                <div style={{ fontFamily: F.serif, fontSize: 22, fontWeight: 700, color: C.textPrimary, marginBottom: 4 }}>Action Queue</div>
-                <div style={{ fontSize: 13, color: C.textSecondary, fontFamily: F.sans }}>Claude analyzed your campaigns and recommends these actions</div>
-              </div>
-              {pendingCount > 0 && (
-                <button onClick={() => dispatch({ type: "APPROVE_ALL" })} className="btn-approve-all">
-                  Approve All ({pendingCount})
-                </button>
-              )}
+            {/* Header */}
+            <div style={{ marginBottom: 20 }}>
+              <div style={{ fontFamily: F.serif, fontSize: 22, fontWeight: 700, color: C.textPrimary, marginBottom: 4 }}>Action Queue</div>
+              <div style={{ fontSize: 13, color: C.textSecondary, fontFamily: F.sans }}>Claude analyzed your campaigns and recommends these actions</div>
             </div>
 
-            {state.actionQueue.map(a => (
-              <div key={a.id} className="data-card" style={{
-                marginBottom: 10, display: "flex", alignItems: "center", gap: 12,
-                opacity: a.status === "rejected" ? 0.38 : 1,
-                transition: "opacity 0.3s",
-              }}>
-                <PriorityDot priority={a.priority} />
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 4, fontFamily: F.sans, color: C.textPrimary }}>{a.action}</div>
-                  <div style={{ fontSize: 10, color: C.textMuted, fontFamily: F.mono }}>{a.channel}</div>
-                </div>
-                <StatusBadge status={a.status} />
-                {a.status === "pending" && (
-                  <div style={{ display: "flex", gap: 6 }}>
-                    <button onClick={() => dispatch({ type: "APPROVE_ACTION", payload: a.id })} className="btn-approve">Approve</button>
-                    <button onClick={() => dispatch({ type: "REJECT_ACTION", payload: a.id })} className="btn-reject">Reject</button>
+            {/* Filter tabs */}
+            <div style={{ display: "flex", gap: 0, marginBottom: 20, borderBottom: `1px solid ${C.borderDim}` }}>
+              {[
+                { key: "pending",  label: "Pending",  accent: C.gold },
+                { key: "approved", label: "Approved", accent: C.emerald },
+                { key: "rejected", label: "Rejected", accent: C.textDim },
+              ].map(({ key, label, accent }) => (
+                <button
+                  key={key}
+                  onClick={() => setActionsFilter(key)}
+                  style={{
+                    padding: "10px 20px", border: "none", cursor: "pointer",
+                    background: "transparent",
+                    color: actionsFilter === key ? accent : C.textMuted,
+                    borderBottom: `2px solid ${actionsFilter === key ? accent : "transparent"}`,
+                    fontFamily: F.sans, fontSize: 12, fontWeight: 500,
+                    transition: "all 0.15s", marginBottom: -1,
+                  }}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            {/* Skeleton loading */}
+            {actionsLoading && [0, 1, 2].map(i => (
+              <div key={i} className="data-card" style={{ marginBottom: 10, padding: "14px 16px" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                  <div style={{ width: 40, height: 18, borderRadius: 99, background: C.borderDim }} />
+                  <div style={{ flex: 1 }}>
+                    <div style={{ height: 12, width: "55%", background: C.borderDim, borderRadius: 4, marginBottom: 8 }} />
+                    <div style={{ height: 10, width: "35%", background: C.borderDim, borderRadius: 4 }} />
                   </div>
-                )}
+                </div>
               </div>
             ))}
+
+            {/* Empty state */}
+            {!actionsLoading && actionsData.length === 0 && (
+              <div style={{ textAlign: "center", padding: "56px 20px", color: C.textMuted }}>
+                <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke={C.borderMed} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginBottom: 14 }}>
+                  <polyline points="20 6 9 17 4 12"/><rect x="3" y="3" width="18" height="18" rx="3"/>
+                </svg>
+                <div style={{ fontFamily: F.sans, fontSize: 15, fontWeight: 600, color: C.textSecondary, marginBottom: 6 }}>
+                  No {actionsFilter} actions
+                </div>
+                <div style={{ fontFamily: F.sans, fontSize: 13 }}>
+                  {actionsFilter === "pending"
+                    ? "Run an analysis to generate new recommendations."
+                    : `No actions have been ${actionsFilter} yet.`}
+                </div>
+              </div>
+            )}
+
+            {/* Action cards */}
+            {!actionsLoading && actionsData.map(a => (
+              <div key={a.id} className="data-card" style={{ marginBottom: 10 }}>
+                <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
+                  {/* Platform badge */}
+                  <span style={{
+                    padding: "3px 9px", borderRadius: 99, fontSize: 10, fontFamily: F.mono, fontWeight: 600,
+                    background: a.platform === "google_ads" ? "rgba(192,39,45,0.08)" : "rgba(37,99,235,0.08)",
+                    color: a.platform === "google_ads" ? C.gold : C.sapphire,
+                    border: `1px solid ${a.platform === "google_ads" ? "rgba(192,39,45,0.2)" : "rgba(37,99,235,0.2)"}`,
+                    flexShrink: 0, marginTop: 2, whiteSpace: "nowrap",
+                  }}>
+                    {a.platform === "google_ads" ? "Google" : "Meta"}
+                  </span>
+
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    {/* Action type + campaign name */}
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 5, flexWrap: "wrap" }}>
+                      <span style={{ fontFamily: F.mono, fontSize: 9, textTransform: "uppercase", letterSpacing: "1px", color: C.textDim }}>
+                        {(a.action_type || "").replace(/_/g, " ")}
+                      </span>
+                      {a.campaign_name && (
+                        <span style={{ fontFamily: F.mono, fontSize: 9, color: C.textMuted }}>— {a.campaign_name}</span>
+                      )}
+                    </div>
+
+                    {/* Description */}
+                    <div style={{ fontSize: 13, fontWeight: 500, color: C.textPrimary, marginBottom: 8, fontFamily: F.sans, lineHeight: 1.45 }}>
+                      {a.description}
+                    </div>
+
+                    {/* Value change + impact */}
+                    <div style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "center" }}>
+                      {(a.current_value != null || a.recommended_value != null) && (
+                        <span style={{ fontFamily: F.mono, fontSize: 10, color: C.textMuted }}>
+                          {a.current_value ?? "—"}
+                          <span style={{ color: C.gold, margin: "0 4px" }}>→</span>
+                          {a.recommended_value ?? "—"}
+                        </span>
+                      )}
+                      {a.impact_estimate && (
+                        <span style={{ fontFamily: F.mono, fontSize: 10, color: C.emerald }}>{a.impact_estimate}</span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Approve / Reject buttons */}
+                  {actionsFilter === "pending" ? (
+                    <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                      <button onClick={() => handleActionUpdate(a.id, "approved")} className="btn-approve">Approve</button>
+                      <button onClick={() => handleActionUpdate(a.id, "rejected")} className="btn-reject">Reject</button>
+                    </div>
+                  ) : (
+                    <StatusBadge status={actionsFilter} />
+                  )}
+                </div>
+              </div>
+            ))}
+
+            {/* Toast */}
+            {toast && (
+              <div style={{
+                position: "fixed", bottom: 28, right: 28, zIndex: 999,
+                background: "#1a2444", color: "#ffffff",
+                padding: "12px 22px", borderRadius: 10,
+                fontFamily: F.sans, fontSize: 13, fontWeight: 500,
+                boxShadow: "0 8px 28px rgba(0,0,0,0.22)",
+                animation: "panelIn 0.2s ease",
+              }}>
+                {toast}
+              </div>
+            )}
           </div>
         )}
 

@@ -2,7 +2,7 @@ import supabase from './lib/supabase.js';
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+  'Access-Control-Allow-Methods': 'GET, POST, PATCH, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type',
 };
 
@@ -14,7 +14,7 @@ export default async function handler(req, res) {
   cors(res);
   if (req.method === 'OPTIONS') return res.status(200).end();
 
-  // GET — list actions
+  // GET — list actions by status
   if (req.method === 'GET') {
     const status = req.query?.status || 'pending';
 
@@ -25,53 +25,61 @@ export default async function handler(req, res) {
       .order('created_at', { ascending: false });
 
     if (error) return res.status(500).json({ success: false, error: error.message });
-    return res.status(200).json({ success: true, actions: data });
+    return res.status(200).json({ success: true, data });
   }
 
-  // POST — approve / reject / execute
+  // PATCH /api/actions/:id — update status
+  if (req.method === 'PATCH') {
+    // Extract id from URL path: /api/actions/123
+    const urlParts = (req.url || '').split('?')[0].split('/').filter(Boolean);
+    const id = urlParts[urlParts.length - 1];
+
+    const { status } = req.body || {};
+
+    if (!id || id === 'actions') {
+      return res.status(400).json({ success: false, error: 'Missing action id in URL' });
+    }
+    if (!['approved', 'rejected', 'pending'].includes(status)) {
+      return res.status(400).json({ success: false, error: `Invalid status: ${status}` });
+    }
+
+    const { data, error } = await supabase
+      .from('actions')
+      .update({ status, reviewed_at: new Date().toISOString() })
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) return res.status(500).json({ success: false, error: error.message });
+    return res.status(200).json({ success: true, data });
+  }
+
+  // POST — legacy approve/reject/execute via body action field
   if (req.method === 'POST') {
     const { action, id } = req.body || {};
 
     if (!id) return res.status(400).json({ success: false, error: 'Missing action id' });
 
-    if (action === 'approve') {
-      const { data, error } = await supabase
-        .from('actions')
-        .update({ status: 'approved', reviewed_at: new Date().toISOString() })
-        .eq('id', id)
-        .select()
-        .single();
+    const statusMap = { approve: 'approved', reject: 'rejected', execute: 'executed' };
+    const newStatus = statusMap[action];
 
-      if (error) return res.status(500).json({ success: false, error: error.message });
-      return res.status(200).json({ success: true, action: data });
+    if (!newStatus) {
+      return res.status(400).json({ success: false, error: `Unknown action: ${action}` });
     }
 
-    if (action === 'reject') {
-      const { data, error } = await supabase
-        .from('actions')
-        .update({ status: 'rejected', reviewed_at: new Date().toISOString() })
-        .eq('id', id)
-        .select()
-        .single();
+    const extra = action === 'execute'
+      ? { executed_at: new Date().toISOString() }
+      : { reviewed_at: new Date().toISOString() };
 
-      if (error) return res.status(500).json({ success: false, error: error.message });
-      return res.status(200).json({ success: true, action: data });
-    }
+    const { data, error } = await supabase
+      .from('actions')
+      .update({ status: newStatus, ...extra })
+      .eq('id', id)
+      .select()
+      .single();
 
-    if (action === 'execute') {
-      // Placeholder for future execution logic
-      const { data, error } = await supabase
-        .from('actions')
-        .update({ status: 'executed', executed_at: new Date().toISOString() })
-        .eq('id', id)
-        .select()
-        .single();
-
-      if (error) return res.status(500).json({ success: false, error: error.message });
-      return res.status(200).json({ success: true, action: data, note: 'Execution logic not yet implemented' });
-    }
-
-    return res.status(400).json({ success: false, error: `Unknown action: ${action}` });
+    if (error) return res.status(500).json({ success: false, error: error.message });
+    return res.status(200).json({ success: true, data });
   }
 
   return res.status(405).json({ success: false, error: 'Method not allowed' });
