@@ -10,13 +10,13 @@ export default async function handler(req, res) {
     const baseUrl = `https://graph.facebook.com/${apiVersion}`;
 
     // Fetch account-level insights for last 30 days
-    const insightsUrl = `${baseUrl}/act_${adAccountId}/insights?fields=spend,clicks,impressions,actions,action_values,ctr,cpc,cpp,reach&date_preset=last_30d&access_token=${accessToken}`;
+    const insightsUrl = `${baseUrl}/act_${adAccountId}/insights?fields=spend,clicks,impressions,actions,action_values,ctr,cpc,cpp,reach,frequency&date_preset=last_30d&access_token=${accessToken}`;
     const insightsRes = await fetch(insightsUrl);
     const insightsData = await insightsRes.json();
     const insights = insightsData.data?.[0] || {};
 
     // Fetch active campaigns with per-campaign insights
-    const campaignsUrl = `${baseUrl}/act_${adAccountId}/campaigns?fields=id,name,status,objective,daily_budget,lifetime_budget,insights.date_preset(last_30d){spend,clicks,actions,impressions}&effective_status=["ACTIVE","PAUSED","DELETED","ARCHIVED"]&access_token=${accessToken}&limit=25`;
+    const campaignsUrl = `${baseUrl}/act_${adAccountId}/campaigns?fields=id,name,status,objective,daily_budget,lifetime_budget,insights.date_preset(last_30d){spend,clicks,actions,impressions,frequency}&effective_status=["ACTIVE","PAUSED"]&access_token=${accessToken}&limit=25`;
     const campaignsRes = await fetch(campaignsUrl);
     const campaignsData = await campaignsRes.json();
 
@@ -42,8 +42,7 @@ export default async function handler(req, res) {
       .reduce((sum, a) => sum + parseFloat(a.value || 0), 0);
 
     const spend = parseFloat(insights.spend || 0);
-    const roas = spend > 0 ? (conversions * 150 / spend).toFixed(2) : 0;
-    const cpl = conversions > 0 ? (spend / conversions).toFixed(2) : 0;
+    const cpl = conversions > 0 ? (spend / conversions).toFixed(2) : null;
 
     const rawCampaigns = campaignsData.data || [];
     console.log('Raw campaigns count:', rawCampaigns.length);
@@ -67,15 +66,20 @@ export default async function handler(req, res) {
         ].includes(a.action_type))
         .reduce((sum, a) => sum + parseFloat(a.value || 0), 0);
 
+      const campaignSpend = parseFloat(insightData.spend || 0);
+      const campaignCpl = conversions > 0 ? (campaignSpend / conversions).toFixed(2) : null;
+
       return {
         id: campaign.id,
         name: campaign.name,
         status: campaign.status,
         objective: campaign.objective || '',
-        spend: parseFloat(insightData.spend || 0).toFixed(2),
+        spend: campaignSpend.toFixed(2),
         clicks: parseInt(insightData.clicks || 0),
         impressions: parseInt(insightData.impressions || 0),
         conversions: Math.round(conversions),
+        cpl: campaignCpl,
+        frequency: parseFloat(insightData.frequency || 0),
         dailyBudget: campaign.daily_budget
           ? (parseInt(campaign.daily_budget) / 100).toFixed(2)
           : null,
@@ -96,10 +100,10 @@ export default async function handler(req, res) {
         totalImpressions: insights.impressions || 0,
         totalReach: insights.reach || 0,
         totalConversions: Math.round(conversions),
-        roas,
         cpl,
         ctr: parseFloat(insights.ctr || 0).toFixed(2),
         cpc: parseFloat(insights.cpc || 0).toFixed(2),
+        frequency: parseFloat(insights.frequency || 0).toFixed(2),
       },
       campaigns,
       actions: actions.map(a => ({ type: a.action_type, value: a.value })),
