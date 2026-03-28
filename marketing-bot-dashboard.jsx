@@ -717,6 +717,215 @@ function CampaignsTable({ campaigns }) {
   );
 }
 
+// ── Image processing panel ──
+function ImageProcessPanel({ msgId, originalImage, panelState, updatePanel }) {
+  const format    = panelState?.format    ?? 'feed';
+  const overlayOn = panelState?.overlayOn ?? false;
+  const overlayText = panelState?.overlayText ?? '';
+  const overlayPos  = panelState?.overlayPos  ?? 'bottom';
+  const overlayStyle = panelState?.overlayStyle ?? 'light';
+  const processing  = panelState?.processing  ?? false;
+  const result      = panelState?.result      ?? null;
+  const error       = panelState?.error       ?? null;
+
+  const FORMAT_LABELS = [
+    { key: 'feed',     label: 'Feed',   sub: '1200×628' },
+    { key: 'story',    label: 'Story',  sub: '1080×1920' },
+    { key: 'square',   label: 'Square', sub: '1080×1080' },
+    { key: 'original', label: 'Original', sub: 'as-is' },
+  ];
+
+  const handleProcess = async () => {
+    if (!originalImage) return;
+    updatePanel(msgId, { processing: true, error: null, result: null });
+
+    const body = {
+      imageData: { base64: originalImage.base64, mediaType: originalImage.mediaType },
+      format,
+      overlays: overlayOn && overlayText.trim()
+        ? [{ text: overlayText.trim(), position: overlayPos, style: overlayStyle, fontSize: 'medium' }]
+        : [],
+    };
+
+    try {
+      const res  = await fetch('/api/image-process', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const json = await res.json();
+      if (json.success) {
+        updatePanel(msgId, { processing: false, result: json.processedImage });
+      } else {
+        updatePanel(msgId, { processing: false, error: json.error || 'Processing failed' });
+      }
+    } catch (e) {
+      updatePanel(msgId, { processing: false, error: e.message });
+    }
+  };
+
+  const handleDownload = () => {
+    if (!result) return;
+    const a = document.createElement('a');
+    a.href = `data:image/jpeg;base64,${result.base64}`;
+    a.download = `fpb-ad-${format}-${Date.now()}.jpg`;
+    a.click();
+  };
+
+  const btnSel = { background: '#2b3a6b', color: '#ffffff', border: '1px solid #2b3a6b' };
+  const btnOff = { background: '#f3f4f6', color: '#374151', border: '1px solid #d1d5db' };
+
+  return (
+    <div style={{
+      marginTop: 10, background: '#f9fafb', border: '1px solid #e5e7eb',
+      borderRadius: 12, padding: '14px 16px',
+    }}>
+      <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 14, fontWeight: 600, color: '#3a3a3a', marginBottom: 12 }}>
+        Process this image for Meta
+      </div>
+
+      {/* Format selector */}
+      <div style={{ display: 'flex', gap: 6, marginBottom: 12, flexWrap: 'wrap' }}>
+        {FORMAT_LABELS.map(f => (
+          <button
+            key={f.key}
+            onClick={() => updatePanel(msgId, { format: f.key })}
+            style={{
+              padding: '5px 11px', borderRadius: 8, cursor: 'pointer',
+              fontFamily: "'Inter', sans-serif", fontSize: 11, fontWeight: 500,
+              transition: 'all 0.13s ease',
+              ...(format === f.key ? btnSel : btnOff),
+            }}
+          >
+            {f.label}
+            <span style={{ fontSize: 9, opacity: 0.7, marginLeft: 4 }}>{f.sub}</span>
+          </button>
+        ))}
+      </div>
+
+      {/* Text overlay toggle */}
+      <div style={{ marginBottom: 12 }}>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer', fontFamily: "'Inter', sans-serif", fontSize: 12, color: '#374151' }}>
+          <input
+            type="checkbox"
+            checked={overlayOn}
+            onChange={e => updatePanel(msgId, { overlayOn: e.target.checked })}
+            style={{ accentColor: '#2b3a6b', width: 14, height: 14 }}
+          />
+          Add text overlay
+        </label>
+
+        {overlayOn && (
+          <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <input
+              type="text"
+              placeholder="Enter overlay text…"
+              value={overlayText}
+              onChange={e => updatePanel(msgId, { overlayText: e.target.value })}
+              style={{
+                padding: '7px 10px', borderRadius: 8,
+                border: '1px solid #d1d5db', fontFamily: "'Inter', sans-serif",
+                fontSize: 12, color: '#3a3a3a', background: '#ffffff', outline: 'none',
+              }}
+            />
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 9, textTransform: 'uppercase', letterSpacing: '1px', color: '#9ca3af', flexShrink: 0 }}>Position</span>
+              {['top', 'center', 'bottom'].map(p => (
+                <button key={p} onClick={() => updatePanel(msgId, { overlayPos: p })}
+                  style={{ padding: '4px 9px', borderRadius: 6, cursor: 'pointer', fontSize: 11,
+                    fontFamily: "'Inter', sans-serif", transition: 'all 0.13s ease',
+                    ...(overlayPos === p ? btnSel : btnOff) }}>
+                  {p.charAt(0).toUpperCase() + p.slice(1)}
+                </button>
+              ))}
+              <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 9, textTransform: 'uppercase', letterSpacing: '1px', color: '#9ca3af', marginLeft: 8, flexShrink: 0 }}>Style</span>
+              {[{ k: 'light', l: 'Light' }, { k: 'dark', l: 'Dark' }].map(s => (
+                <button key={s.k} onClick={() => updatePanel(msgId, { overlayStyle: s.k })}
+                  style={{ padding: '4px 9px', borderRadius: 6, cursor: 'pointer', fontSize: 11,
+                    fontFamily: "'Inter', sans-serif", transition: 'all 0.13s ease',
+                    ...(overlayStyle === s.k ? btnSel : btnOff) }}>
+                  {s.l}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Process button */}
+      <button
+        onClick={handleProcess}
+        disabled={processing}
+        style={{
+          width: '100%', padding: '9px 0', borderRadius: 10, border: 'none',
+          background: processing ? '#9ca3af' : 'linear-gradient(135deg, #8b1a1e 0%, #c0272d 100%)',
+          color: '#ffffff', fontFamily: "'Inter', sans-serif", fontSize: 13, fontWeight: 600,
+          cursor: processing ? 'not-allowed' : 'pointer',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7,
+          transition: 'opacity 0.15s ease',
+        }}
+      >
+        {processing ? (
+          <>
+            <span className="chat-dot" style={{ background: 'rgba(255,255,255,0.7)' }} />
+            <span className="chat-dot" style={{ background: 'rgba(255,255,255,0.7)', animationDelay: '0.2s' }} />
+            <span className="chat-dot" style={{ background: 'rgba(255,255,255,0.7)', animationDelay: '0.4s' }} />
+            <span style={{ marginLeft: 4 }}>Processing…</span>
+          </>
+        ) : 'Process Image'}
+      </button>
+
+      {/* Error */}
+      {error && (
+        <div style={{ marginTop: 8, fontFamily: "'Inter', sans-serif", fontSize: 12, color: '#dc2626' }}>
+          ✗ {error}
+        </div>
+      )}
+
+      {/* Result */}
+      {result && (
+        <div style={{ marginTop: 12 }}>
+          <img
+            src={`data:image/jpeg;base64,${result.base64}`}
+            alt="processed"
+            style={{ width: '100%', borderRadius: 8, border: '1px solid #d1d5db', display: 'block' }}
+          />
+          <div style={{ marginTop: 6, fontFamily: "'DM Mono', monospace", fontSize: 10, color: '#9ca3af' }}>
+            {result.width}×{result.height}px · {result.fileSizeKB}KB
+          </div>
+          <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <button
+              disabled
+              title="Coming in next update"
+              style={{
+                width: '100%', padding: '8px 0', borderRadius: 8, border: 'none',
+                background: '#2b3a6b', color: '#ffffff', opacity: 0.45,
+                fontFamily: "'Inter', sans-serif", fontSize: 12, fontWeight: 600,
+                cursor: 'not-allowed',
+              }}
+            >
+              Push to Meta as Ad
+            </button>
+            <button
+              onClick={handleDownload}
+              style={{
+                width: '100%', padding: '8px 0', borderRadius: 8,
+                border: '1px solid #d1d5db', background: '#ffffff', color: '#374151',
+                fontFamily: "'Inter', sans-serif", fontSize: 12, fontWeight: 500,
+                cursor: 'pointer', transition: 'background 0.13s ease',
+              }}
+              onMouseEnter={e => e.currentTarget.style.background = '#f3f4f6'}
+              onMouseLeave={e => e.currentTarget.style.background = '#ffffff'}
+            >
+              Download
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Chat action card ──
 function ActionCard({ payload }) {
   const [status, setStatus] = useState("idle"); // idle | executing | done | error
@@ -836,6 +1045,7 @@ export default function MarketingBotDashboard() {
   const [chatFetching, setChatFetching] = useState(false);
   const [chatSessionId] = useState(() => crypto.randomUUID());
   const [pendingImage, setPendingImage] = useState(null); // { file, previewUrl, base64, mediaType }
+  const [imagePanels, setImagePanels] = useState({}); // keyed by message id
   const chatBottomRef = useRef(null);
   const fileInputRef = useRef(null);
 
@@ -1059,7 +1269,9 @@ export default function MarketingBotDashboard() {
 
     const userMsg = {
       id: Date.now() + "-u", role: "user", content: msg, message_type: "text",
-      previewUrl: imageSnapshot?.previewUrl || null,
+      previewUrl:     imageSnapshot?.previewUrl  || null,
+      imageBase64:    imageSnapshot?.base64       || null,
+      imageMediaType: imageSnapshot?.mediaType    || null,
     };
     setChatMessages(prev => [...prev, userMsg]);
     setChatLoading(true);
@@ -1120,6 +1332,10 @@ export default function MarketingBotDashboard() {
       setChatFetching(false);
     }
   };
+
+  // ── Image panel state helpers ──
+  const updatePanel = (msgId, patch) =>
+    setImagePanels(prev => ({ ...prev, [msgId]: { ...prev[msgId], ...patch } }));
 
   const pendingCount = state.actionQueue.filter(a => a.status === "pending").length;
 
@@ -1744,7 +1960,7 @@ export default function MarketingBotDashboard() {
                 )}
 
                 {/* Bubbles */}
-                {chatMessages.map((msg) => {
+                {chatMessages.map((msg, msgIdx) => {
                   if (msg.role === "user") {
                     return (
                       <div key={msg.id} style={{ display: "flex", justifyContent: "flex-end", marginBottom: 14, flexDirection: "column", alignItems: "flex-end", gap: 6 }}>
@@ -1785,12 +2001,26 @@ export default function MarketingBotDashboard() {
                     );
                   }
 
+                  // Find the original image from the preceding user message
+                  const prevMsg = msgIdx > 0 ? chatMessages[msgIdx - 1] : null;
+                  const origImage = prevMsg?.imageBase64
+                    ? { base64: prevMsg.imageBase64, mediaType: prevMsg.imageMediaType || 'image/jpeg' }
+                    : null;
+
                   return (
                     <div key={msg.id} style={{ display: "flex", justifyContent: "flex-start", marginBottom: 14, gap: 10 }}>
                       <AiAvatar />
                       <div style={{ maxWidth: "80%" }}>
                         <div style={{ fontFamily: F.mono, fontSize: 9, textTransform: "uppercase", letterSpacing: "1.5px", color: C.textDim, marginBottom: 5 }}>AI Assistant</div>
                         <div className="chat-bubble-assistant">{msg.content}</div>
+                        {msg.creative_ready !== null && msg.creative_ready !== undefined && origImage && (
+                          <ImageProcessPanel
+                            msgId={msg.id}
+                            originalImage={origImage}
+                            panelState={imagePanels[msg.id]}
+                            updatePanel={updatePanel}
+                          />
+                        )}
                       </div>
                     </div>
                   );
