@@ -1,4 +1,4 @@
-import { useState, useEffect, useReducer, useCallback } from "react";
+import { useState, useEffect, useReducer, useCallback, useRef } from "react";
 
 // ── Design tokens ──
 const C = {
@@ -354,6 +354,67 @@ const GLOBAL_CSS = `
     font-family: 'DM Mono', monospace; font-size: 11px; color: #d1d5db;
     display: flex; align-items: center; gap: 6px;
   }
+
+  @keyframes dotPulse {
+    0%, 80%, 100% { transform: scale(0); opacity: 0.4; }
+    40% { transform: scale(1); opacity: 1; }
+  }
+  .chat-dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: #9ca3af; display: inline-block;
+    animation: dotPulse 1.4s infinite ease-in-out;
+  }
+  .chat-dot:nth-child(1) { animation-delay: 0s; }
+  .chat-dot:nth-child(2) { animation-delay: 0.2s; }
+  .chat-dot:nth-child(3) { animation-delay: 0.4s; }
+
+  .chat-bubble-user {
+    background: #2b3a6b; color: #ffffff;
+    border-radius: 18px 18px 4px 18px;
+    padding: 10px 14px; max-width: 72%;
+    font-family: 'Inter', sans-serif; font-size: 13px;
+    line-height: 1.55; word-break: break-word;
+  }
+  .chat-bubble-assistant {
+    background: #ffffff; color: #3a3a3a;
+    border: 1px solid #e5e7eb;
+    border-radius: 18px 18px 18px 4px;
+    padding: 10px 14px; max-width: 100%;
+    font-family: 'Inter', sans-serif; font-size: 13px;
+    line-height: 1.55; word-break: break-word;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+    white-space: pre-wrap;
+  }
+  .chat-input {
+    flex: 1; background: #f9fafb;
+    border: 1px solid #d1d5db; border-radius: 12px;
+    padding: 10px 14px;
+    font-family: 'Inter', sans-serif; font-size: 13px; color: #3a3a3a;
+    resize: none; outline: none;
+    min-height: 44px; max-height: 120px;
+    transition: border-color 0.15s ease; line-height: 1.5;
+  }
+  .chat-input:focus { border-color: #2b3a6b; }
+  .chat-input::placeholder { color: #9ca3af; }
+  .chat-send-btn {
+    width: 40px; height: 40px; align-self: flex-end;
+    background: linear-gradient(135deg, #8b1a1e 0%, #c0272d 100%);
+    border: none; border-radius: 10px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+    transition: transform 0.15s ease, opacity 0.15s ease;
+    box-shadow: 0 2px 8px rgba(192,39,45,0.3);
+  }
+  .chat-send-btn:hover:not(:disabled) { transform: translateY(-1px); }
+  .chat-send-btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+  .chat-chip {
+    padding: 6px 13px; border-radius: 20px;
+    font-family: 'Inter', sans-serif; font-size: 12px; font-weight: 500;
+    background: #f3f4f6; color: #374151;
+    border: 1px solid #d1d5db; cursor: pointer;
+    transition: all 0.14s ease; white-space: nowrap;
+  }
+  .chat-chip:hover { background: #e5e7eb; border-color: #9ca3af; color: #1f2937; }
 `;
 
 // ── Icon components ──
@@ -448,6 +509,17 @@ const Icons = {
   Refresh: () => (
     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+    </svg>
+  ),
+  Chat: () => (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+    </svg>
+  ),
+  Send: () => (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+      <line x1="22" y1="2" x2="11" y2="13"/>
+      <polygon points="22 2 15 22 11 13 2 9 22 2"/>
     </svg>
   ),
 };
@@ -645,6 +717,89 @@ function CampaignsTable({ campaigns }) {
   );
 }
 
+// ── Chat action card ──
+function ActionCard({ payload }) {
+  const [status, setStatus] = useState("idle"); // idle | executing | done | error
+  const [errorMsg, setErrorMsg] = useState(null);
+
+  if (!payload) return null;
+
+  const platformLabel = (p) => {
+    if (["google", "google_ads"].includes(p)) return "Google Ads";
+    if (["meta", "meta_ads"].includes(p)) return "Meta Ads";
+    return p || "Unknown";
+  };
+
+  const handleConfirm = async () => {
+    setStatus("executing");
+    try {
+      const res = await fetch("/api/execute-action", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          platform:   payload.platform,
+          actionType: payload.action_type,
+          campaignId: payload.campaign_id,
+        }),
+      });
+      const json = await res.json();
+      if (res.status === 400 || (json.success && !json.executed)) {
+        setStatus("done");
+      } else if (!res.ok) {
+        throw new Error(json.error || "Execution failed");
+      } else {
+        setStatus("done");
+      }
+    } catch (err) {
+      setStatus("error");
+      setErrorMsg(err.message);
+    }
+  };
+
+  return (
+    <div style={{
+      background: "#f9fafb", border: "1px solid #e5e7eb",
+      borderRadius: 12, padding: "12px 14px", marginTop: 4,
+      borderLeft: "3px solid #c0272d",
+    }}>
+      <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 9, textTransform: "uppercase", letterSpacing: "1.5px", color: "#6b7280", marginBottom: 8 }}>
+        Recommended Action
+      </div>
+      <div style={{ fontSize: 12, fontWeight: 600, color: "#3a3a3a", marginBottom: 4 }}>
+        {(payload.action_type || "").replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase())}
+        {payload.campaign_name && (
+          <span style={{ fontWeight: 400, color: "#6b7280" }}> · {payload.campaign_name}</span>
+        )}
+      </div>
+      {payload.description && (
+        <div style={{ fontSize: 12, color: "#374151", marginBottom: 10, lineHeight: 1.5 }}>{payload.description}</div>
+      )}
+      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        {status === "idle" && (
+          <>
+            <button className="btn-approve" onClick={handleConfirm} style={{ fontSize: 12 }}>Confirm</button>
+            <button className="btn-reject" onClick={() => setStatus("done")} style={{ fontSize: 12 }}>Dismiss</button>
+            <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 10, color: "#9ca3af" }}>
+              {platformLabel(payload.platform)}
+            </span>
+          </>
+        )}
+        {status === "executing" && (
+          <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 11, color: "#6b7280", display: "flex", alignItems: "center", gap: 6 }}>
+            <span className="spinner" style={{ borderColor: "rgba(0,0,0,0.15)", borderTopColor: "#2b3a6b" }} /> Executing…
+          </span>
+        )}
+        {status === "done" && (
+          <span style={{ fontSize: 12, color: "#16a34a", fontWeight: 600 }}>✓ Done</span>
+        )}
+        {status === "error" && (
+          <span style={{ fontSize: 12, color: "#dc2626" }}>✗ {errorMsg || "Failed"}</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── Main component ──
 export default function MarketingBotDashboard() {
   const [state, dispatch] = useReducer(reducer, initialState);
@@ -673,6 +828,14 @@ export default function MarketingBotDashboard() {
   const [logData, setLogData] = useState([]);
   const [logLoading, setLogLoading] = useState(false);
   const [logPlatform, setLogPlatform] = useState("all");
+
+  // ── Chat tab state ──
+  const [chatMessages, setChatMessages] = useState([]);
+  const [chatInput, setChatInput] = useState("");
+  const [chatLoading, setChatLoading] = useState(false);
+  const [chatFetching, setChatFetching] = useState(false);
+  const [chatSessionId] = useState(() => crypto.randomUUID());
+  const chatBottomRef = useRef(null);
 
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 60000);
@@ -834,12 +997,98 @@ export default function MarketingBotDashboard() {
     if (state.activeTab === "log") fetchLog(logPlatform);
   }, [state.activeTab, logPlatform, fetchLog]);
 
+  // ── Chat: load history on mount ──
+  const WELCOME_MSG = {
+    id: "welcome", role: "assistant", message_type: "text",
+    content: "Hi! I'm your FPB marketing AI. Ask me about your ad performance, campaign strategy, or request changes to your campaigns.",
+  };
+  useEffect(() => {
+    (async () => {
+      try {
+        const res  = await fetch(`/api/chat?sessionId=${chatSessionId}`);
+        const json = await res.json();
+        if (json.success && json.messages?.length > 0) {
+          setChatMessages(json.messages);
+        } else {
+          setChatMessages([WELCOME_MSG]);
+        }
+      } catch {
+        setChatMessages([WELCOME_MSG]);
+      }
+    })();
+  }, [chatSessionId]); // eslint-disable-line
+
+  // ── Chat: auto-scroll ──
+  useEffect(() => {
+    chatBottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [chatMessages, chatFetching]);
+
+  // ── Chat: send message ──
+  const sendMessage = async (text) => {
+    const msg = (text || chatInput).trim();
+    if (!msg || chatLoading || chatFetching) return;
+    setChatInput("");
+
+    const userMsg = { id: Date.now() + "-u", role: "user", content: msg, message_type: "text" };
+    setChatMessages(prev => [...prev, userMsg]);
+    setChatLoading(true);
+
+    try {
+      const history = chatMessages.filter(m => m.role !== "system").map(m => ({
+        role: m.role, content: m.content,
+      }));
+
+      const res1 = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: msg, sessionId: chatSessionId, conversationHistory: history }),
+      });
+      const json1 = await res1.json();
+
+      if (json1.type === "fetching") {
+        setChatLoading(false);
+        setChatFetching(true);
+
+        const res2 = await fetch("/api/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message: msg, sessionId: chatSessionId, conversationHistory: history, includeAdData: true }),
+        });
+        const json2 = await res2.json();
+        setChatFetching(false);
+
+        if (json2.success) {
+          setChatMessages(prev => [...prev, {
+            id: Date.now() + "-a", role: "assistant",
+            content: json2.reply, message_type: json2.messageType || "text",
+            action_payload: json2.actionPayload || null,
+          }]);
+        }
+      } else if (json1.success) {
+        setChatMessages(prev => [...prev, {
+          id: Date.now() + "-a", role: "assistant",
+          content: json1.reply, message_type: json1.messageType || "text",
+          action_payload: json1.actionPayload || null,
+        }]);
+      }
+    } catch {
+      setChatMessages(prev => [...prev, {
+        id: Date.now() + "-err", role: "assistant", message_type: "text",
+        content: "Something went wrong. Please try again.",
+      }]);
+    } finally {
+      setChatLoading(false);
+      setChatFetching(false);
+    }
+  };
+
   const pendingCount = state.actionQueue.filter(a => a.status === "pending").length;
 
   const tabs = [
     { id: "overview",  label: "Overview",                  icon: <Icons.BarChart /> },
     { id: "live",      label: "Live Data",                 icon: <Icons.Refresh /> },
     { id: "actions",   label: `Actions (${pendingCount})`, icon: <Icons.Zap /> },
+    { id: "chat",      label: "Chat",                      icon: <Icons.Chat /> },
     { id: "channels",  label: "Channels",                  icon: <Icons.Globe /> },
     { id: "content",   label: "Content",                   icon: <Icons.Edit /> },
     { id: "intel",     label: "Intel",                     icon: <Icons.Eye /> },
@@ -1420,6 +1669,149 @@ export default function MarketingBotDashboard() {
                 {toast}
               </div>
             )}
+          </div>
+        )}
+
+        {/* CHAT TAB */}
+        {state.activeTab === "chat" && (
+          <div key="chat" style={{ animation: "panelIn 0.22s ease" }}>
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ fontFamily: F.serif, fontSize: 22, fontWeight: 700, color: C.textPrimary, marginBottom: 4 }}>AI Chat</div>
+              <div style={{ fontSize: 13, color: C.textSecondary, fontFamily: F.sans }}>
+                Ask about performance, request campaign changes, or get strategy advice
+              </div>
+            </div>
+
+            <div style={{
+              background: C.bgSurface, border: `1px solid ${C.borderDim}`, borderRadius: 16,
+              display: "flex", flexDirection: "column", height: 580,
+              boxShadow: "0 1px 6px rgba(0,0,0,0.07)", overflow: "hidden",
+            }}>
+              {/* Messages */}
+              <div style={{ flex: 1, overflowY: "auto", padding: "20px 20px 12px" }}>
+
+                {/* Suggested chips — only when ≤1 message (welcome only) */}
+                {chatMessages.length <= 1 && (
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 20 }}>
+                    {[
+                      "How are my campaigns performing?",
+                      "Which campaign should I pause?",
+                      "Where is budget being wasted?",
+                      "What's my best-performing ad?",
+                    ].map((chip, i) => (
+                      <button key={i} className="chat-chip" onClick={() => sendMessage(chip)}>{chip}</button>
+                    ))}
+                  </div>
+                )}
+
+                {/* Bubbles */}
+                {chatMessages.map((msg) => {
+                  if (msg.role === "user") {
+                    return (
+                      <div key={msg.id} style={{ display: "flex", justifyContent: "flex-end", marginBottom: 14 }}>
+                        <div className="chat-bubble-user">{msg.content}</div>
+                      </div>
+                    );
+                  }
+
+                  const AiAvatar = () => (
+                    <div style={{
+                      flexShrink: 0, width: 28, height: 28, borderRadius: "50%",
+                      background: "linear-gradient(135deg, #2b3a6b, #1a2444)",
+                      display: "flex", alignItems: "center", justifyContent: "center", marginTop: 2,
+                    }}>
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#ffffff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                        <rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/>
+                      </svg>
+                    </div>
+                  );
+
+                  if (msg.message_type === "action_request" && msg.action_payload) {
+                    return (
+                      <div key={msg.id} style={{ display: "flex", justifyContent: "flex-start", marginBottom: 14, gap: 10 }}>
+                        <AiAvatar />
+                        <div style={{ maxWidth: "80%" }}>
+                          <div style={{ fontFamily: F.mono, fontSize: 9, textTransform: "uppercase", letterSpacing: "1.5px", color: C.textDim, marginBottom: 5 }}>AI Assistant</div>
+                          <div className="chat-bubble-assistant" style={{ marginBottom: 8 }}>{msg.content}</div>
+                          <ActionCard payload={msg.action_payload} />
+                        </div>
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div key={msg.id} style={{ display: "flex", justifyContent: "flex-start", marginBottom: 14, gap: 10 }}>
+                      <AiAvatar />
+                      <div style={{ maxWidth: "80%" }}>
+                        <div style={{ fontFamily: F.mono, fontSize: 9, textTransform: "uppercase", letterSpacing: "1.5px", color: C.textDim, marginBottom: 5 }}>AI Assistant</div>
+                        <div className="chat-bubble-assistant">{msg.content}</div>
+                      </div>
+                    </div>
+                  );
+                })}
+
+                {/* Fetching dots indicator */}
+                {chatFetching && (
+                  <div style={{ display: "flex", justifyContent: "flex-start", marginBottom: 14, gap: 10 }}>
+                    <div style={{
+                      flexShrink: 0, width: 28, height: 28, borderRadius: "50%",
+                      background: "linear-gradient(135deg, #2b3a6b, #1a2444)",
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                    }}>
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#ffffff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                        <rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/>
+                      </svg>
+                    </div>
+                    <div>
+                      <div style={{ fontFamily: F.mono, fontSize: 9, textTransform: "uppercase", letterSpacing: "1.5px", color: C.textDim, marginBottom: 5 }}>AI Assistant</div>
+                      <div style={{
+                        background: "#ffffff", border: "1px solid #e5e7eb",
+                        borderRadius: "18px 18px 18px 4px", padding: "13px 16px",
+                        display: "flex", gap: 5, alignItems: "center",
+                        boxShadow: "0 1px 4px rgba(0,0,0,0.06)",
+                      }}>
+                        <span className="chat-dot" />
+                        <span className="chat-dot" />
+                        <span className="chat-dot" />
+                        <span style={{ fontFamily: F.mono, fontSize: 9, color: C.textDim, marginLeft: 6 }}>Fetching live ad data…</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                <div ref={chatBottomRef} />
+              </div>
+
+              {/* Input area */}
+              <div style={{ borderTop: `1px solid ${C.borderDim}`, padding: "12px 16px", background: "#fafafa" }}>
+                <div style={{ display: "flex", gap: 10, alignItems: "flex-end" }}>
+                  <textarea
+                    className="chat-input"
+                    placeholder="Ask about campaigns, strategy, or request changes…"
+                    value={chatInput}
+                    onChange={e => setChatInput(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === "Enter" && !e.shiftKey) {
+                        e.preventDefault();
+                        sendMessage();
+                      }
+                    }}
+                    rows={1}
+                    disabled={chatLoading || chatFetching}
+                  />
+                  <button
+                    className="chat-send-btn"
+                    onClick={() => sendMessage()}
+                    disabled={!chatInput.trim() || chatLoading || chatFetching}
+                  >
+                    <Icons.Send />
+                  </button>
+                </div>
+                <div style={{ marginTop: 6, fontFamily: F.mono, fontSize: 9, color: C.textDim, textAlign: "center" }}>
+                  Enter to send · Shift+Enter for newline
+                </div>
+              </div>
+            </div>
           </div>
         )}
 
