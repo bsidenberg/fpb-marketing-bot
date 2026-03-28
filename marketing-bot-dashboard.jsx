@@ -664,6 +664,10 @@ export default function MarketingBotDashboard() {
   const [actionsFilter, setActionsFilter] = useState("pending");
   const [toast, setToast] = useState(null);
 
+  // ── Performance snapshot state (Overview) ──
+  const [snapshotData, setSnapshotData] = useState(null);
+  const [snapshotLoading, setSnapshotLoading] = useState(false);
+
   // ── Automation Log tab state ──
   const [logData, setLogData] = useState([]);
   const [logLoading, setLogLoading] = useState(false);
@@ -730,6 +734,24 @@ export default function MarketingBotDashboard() {
       });
     } catch { /* optimistic applied — ignore */ }
   };
+
+  // ── Performance snapshot fetch ──
+  const fetchSnapshot = useCallback(async () => {
+    setSnapshotLoading(true);
+    try {
+      const res = await fetch("/api/performance-snapshots");
+      const json = await res.json();
+      setSnapshotData(json.success ? json.data : null);
+    } catch {
+      setSnapshotData(null);
+    } finally {
+      setSnapshotLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (state.activeTab === "overview") fetchSnapshot();
+  }, [state.activeTab, fetchSnapshot]);
 
   // ── Automation Log fetch ──
   const fetchLog = useCallback(async (platform) => {
@@ -840,30 +862,109 @@ export default function MarketingBotDashboard() {
         {/* OVERVIEW TAB */}
         {state.activeTab === "overview" && (
           <div key="overview" style={{ animation: "panelIn 0.22s ease" }}>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(175px, 1fr))", gap: 14, marginBottom: 24 }}>
-              {[
-                { label: "Total Spend",     value: `$${state.metrics.totalSpend.toLocaleString()}`,   sub: "+12% vs last month",  color: C.violet,   spark: [1200,1800,2100,2400,3100,3800,4280] },
-                { label: "Revenue",         value: `$${state.metrics.totalRevenue.toLocaleString()}`, sub: "Attributed",           color: C.emerald,  spark: [4200,6800,9400,11200,14500,16800,18940] },
-                { label: "ROAS",            value: `${state.metrics.overallROAS}x`,                  sub: "Overall blended",      color: C.amber,    spark: [3.1,3.4,3.8,4.0,4.1,4.3,4.42] },
-                { label: "Leads",           value: state.metrics.leadsThisWeek,                       sub: "This week",            color: C.teal,     spark: [42,58,71,89,95,112,127] },
-                { label: "Conv. Rate",      value: `${state.metrics.conversionRate}%`,                sub: "Avg across channels",  color: C.sapphire, spark: [2.8,3.0,3.2,3.1,3.5,3.6,3.8] },
-                { label: "Organic Traffic", value: state.metrics.organicTraffic.toLocaleString(),     sub: "Monthly visits",       color: C.rose,     spark: [7200,8100,9200,10100,10800,11600,12400] },
-              ].map((kpi, i) => (
-                <div key={i} className="metric-card">
-                  <div className="card-top-bar" style={{ background: kpi.color }} />
-                  <div className="card-glow" style={{ background: `radial-gradient(circle, ${kpi.color} 0%, transparent 70%)` }} />
-                  <div className="card-corner" />
-                  <div style={{ position: "relative", zIndex: 1 }}>
-                    <div style={{ fontFamily: F.mono, fontSize: 10, textTransform: "uppercase", letterSpacing: "1.5px", color: C.textMuted, marginBottom: 10 }}>{kpi.label}</div>
-                    <div style={{ fontFamily: F.serif, fontSize: 30, fontWeight: 700, color: C.textPrimary, letterSpacing: "-0.5px", lineHeight: 1, marginBottom: 8 }}>{kpi.value}</div>
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                      <span style={{ fontFamily: F.mono, fontSize: 10, color: kpi.color }}>{kpi.sub}</span>
-                      <Sparkline data={kpi.spark} color={kpi.color} />
+
+            {/* ── Metric cards ── */}
+            {snapshotLoading && (
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(175px, 1fr))", gap: 14, marginBottom: 24 }}>
+                {[0,1,2,3,4,5].map(i => (
+                  <div key={i} className="metric-card" style={{ minHeight: 110 }}>
+                    <div className="card-top-bar" style={{ background: C.borderMed }} />
+                    <div style={{ paddingTop: 4 }}>
+                      <div style={{ height: 9,  width: "50%", background: C.borderDim, borderRadius: 4, marginBottom: 14 }} />
+                      <div style={{ height: 28, width: "70%", background: C.borderDim, borderRadius: 6, marginBottom: 12 }} />
+                      <div style={{ height: 9,  width: "85%", background: C.borderDim, borderRadius: 4 }} />
                     </div>
                   </div>
+                ))}
+              </div>
+            )}
+
+            {!snapshotLoading && !snapshotData && (
+              <div style={{ textAlign: "center", padding: "56px 20px", color: C.textMuted, marginBottom: 24 }}>
+                <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke={C.borderMed} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginBottom: 14 }}>
+                  <line x1="12" y1="20" x2="12" y2="10"/><line x1="18" y1="20" x2="18" y2="4"/><line x1="6" y1="20" x2="6" y2="16"/>
+                </svg>
+                <div style={{ fontFamily: F.sans, fontSize: 15, fontWeight: 600, color: C.textSecondary, marginBottom: 6 }}>
+                  No performance data yet
                 </div>
-              ))}
-            </div>
+                <div style={{ fontFamily: F.sans, fontSize: 13 }}>
+                  Run an analysis from the Live Data tab to populate metrics.
+                </div>
+              </div>
+            )}
+
+            {!snapshotLoading && snapshotData && (() => {
+              const c  = snapshotData.combined || {};
+              const g  = snapshotData.google   || {};
+              const m  = snapshotData.meta     || {};
+              const fmt = (n) => Number(n || 0).toLocaleString("en-US");
+              const fmtUSD = (n) => `$${Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+              const fmtPct = (n) => `${Number(n || 0).toFixed(2)}%`;
+
+              const updatedTs = snapshotData.created_at
+                ? new Date(snapshotData.created_at).toLocaleString("en-US", {
+                    month: "short", day: "numeric",
+                    hour: "numeric", minute: "2-digit", hour12: true,
+                  }).replace(", ", " · ").replace(" AM", "am").replace(" PM", "pm")
+                : null;
+
+              const cards = [
+                {
+                  label: "Total Spend", color: C.gold,
+                  value: fmtUSD(c.spend),
+                  breakdown: `Google: ${fmtUSD(g.spend)} · Meta: ${fmtUSD(m.spend)}`,
+                },
+                {
+                  label: "Impressions", color: "#2b3a6b",
+                  value: fmt(c.impressions),
+                  breakdown: `Google: ${fmt(g.impressions)} · Meta: ${fmt(m.impressions)}`,
+                },
+                {
+                  label: "Clicks", color: "#2b3a6b",
+                  value: fmt(c.clicks),
+                  breakdown: `Google: ${fmt(g.clicks)} · Meta: ${fmt(m.clicks)}`,
+                },
+                {
+                  label: "Conversions", color: "#2b3a6b",
+                  value: fmt(c.conversions),
+                  breakdown: `Google: ${fmt(g.conversions)} · Meta: ${fmt(m.conversions)}`,
+                },
+                {
+                  label: "Avg CTR", color: "#2b3a6b",
+                  value: fmtPct(c.ctr),
+                  breakdown: `Google: ${fmtPct(g.ctr)} · Meta: ${fmtPct(m.ctr)}`,
+                },
+                {
+                  label: "Avg CPC", color: "#2b3a6b",
+                  value: fmtUSD(c.cpc),
+                  breakdown: `Google: ${fmtUSD(g.cpc)} · Meta: ${fmtUSD(m.cpc)}`,
+                },
+              ];
+
+              return (
+                <>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(175px, 1fr))", gap: 14, marginBottom: 10 }}>
+                    {cards.map((kpi, i) => (
+                      <div key={i} className="metric-card">
+                        <div className="card-top-bar" style={{ background: kpi.color }} />
+                        <div style={{ position: "relative", zIndex: 1 }}>
+                          <div style={{ fontFamily: F.mono, fontSize: 10, textTransform: "uppercase", letterSpacing: "1.5px", color: C.textMuted, marginBottom: 10 }}>{kpi.label}</div>
+                          <div style={{ fontFamily: F.serif, fontSize: 28, fontWeight: 700, color: C.textPrimary, letterSpacing: "-0.5px", lineHeight: 1, marginBottom: 10 }}>{kpi.value}</div>
+                          <div style={{ fontFamily: F.mono, fontSize: 9.5, color: C.textDim, lineHeight: 1.4 }}>{kpi.breakdown}</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24, padding: "0 2px" }}>
+                    {updatedTs && (
+                      <span style={{ fontFamily: F.mono, fontSize: 10, color: C.textDim }}>
+                        Last updated: <span style={{ color: C.textMuted }}>{updatedTs}</span>
+                      </span>
+                    )}
+                  </div>
+                </>
+              );
+            })()}
 
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
               <div style={{ background: `linear-gradient(145deg, ${C.bgRaised}, ${C.bgSurface})`, border: `1px solid ${C.borderDim}`, borderRadius: 12, padding: 16 }}>
