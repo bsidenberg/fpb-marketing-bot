@@ -664,6 +664,11 @@ export default function MarketingBotDashboard() {
   const [actionsFilter, setActionsFilter] = useState("pending");
   const [toast, setToast] = useState(null);
 
+  // ── Automation Log tab state ──
+  const [logData, setLogData] = useState([]);
+  const [logLoading, setLogLoading] = useState(false);
+  const [logPlatform, setLogPlatform] = useState("all");
+
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 60000);
     const p = setInterval(() => setBotPulse(v => !v), 2000);
@@ -726,6 +731,25 @@ export default function MarketingBotDashboard() {
     } catch { /* optimistic applied — ignore */ }
   };
 
+  // ── Automation Log fetch ──
+  const fetchLog = useCallback(async (platform) => {
+    setLogLoading(true);
+    try {
+      const params = platform !== "all" ? `?platform=${platform}` : "";
+      const res = await fetch(`/api/automation-log${params}`);
+      const json = await res.json();
+      setLogData(json.success ? (json.data || []) : []);
+    } catch {
+      setLogData([]);
+    } finally {
+      setLogLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (state.activeTab === "log") fetchLog(logPlatform);
+  }, [state.activeTab, logPlatform, fetchLog]);
+
   const pendingCount = state.actionQueue.filter(a => a.status === "pending").length;
 
   const tabs = [
@@ -735,6 +759,7 @@ export default function MarketingBotDashboard() {
     { id: "channels",  label: "Channels",                  icon: <Icons.Globe /> },
     { id: "content",   label: "Content",                   icon: <Icons.Edit /> },
     { id: "intel",     label: "Intel",                     icon: <Icons.Eye /> },
+    { id: "log",       label: "Automation Log",            icon: <Icons.Clock /> },
     { id: "setup",     label: "Setup Guide",               icon: <Icons.Settings /> },
   ];
 
@@ -1383,6 +1408,144 @@ export default function MarketingBotDashboard() {
                 <span style={{ fontSize: 10, color: C.textDim, whiteSpace: "nowrap", fontFamily: F.mono }}>{alert.time}</span>
               </div>
             ))}
+          </div>
+        )}
+
+        {/* AUTOMATION LOG TAB */}
+        {state.activeTab === "log" && (
+          <div key="log" style={{ animation: "panelIn 0.22s ease" }}>
+            {/* Header */}
+            <div style={{ marginBottom: 20 }}>
+              <div style={{ fontFamily: F.serif, fontSize: 22, fontWeight: 700, color: C.textPrimary, marginBottom: 4 }}>Automation Log</div>
+              <div style={{ fontSize: 13, color: C.textSecondary, fontFamily: F.sans }}>Read-only record of all automated analysis runs and actions</div>
+            </div>
+
+            {/* Platform filter */}
+            <div style={{ display: "flex", gap: 0, marginBottom: 20, borderBottom: `1px solid ${C.borderDim}` }}>
+              {[
+                { key: "all",    label: "All" },
+                { key: "google", label: "Google" },
+                { key: "meta",   label: "Meta" },
+              ].map(({ key, label }) => (
+                <button
+                  key={key}
+                  onClick={() => setLogPlatform(key)}
+                  style={{
+                    padding: "10px 20px", border: "none", cursor: "pointer",
+                    background: "transparent",
+                    color: logPlatform === key ? C.gold : C.textMuted,
+                    borderBottom: `2px solid ${logPlatform === key ? C.gold : "transparent"}`,
+                    fontFamily: F.sans, fontSize: 12, fontWeight: 500,
+                    transition: "all 0.15s", marginBottom: -1,
+                  }}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            {/* Skeleton loading */}
+            {logLoading && [0, 1, 2, 3, 4].map(i => (
+              <div key={i} className="data-card" style={{ marginBottom: 8, padding: "12px 16px" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                  <div style={{ width: 56, height: 10, borderRadius: 4, background: C.borderDim }} />
+                  <div style={{ width: 40, height: 18, borderRadius: 99, background: C.borderDim }} />
+                  <div style={{ flex: 1, height: 11, borderRadius: 4, background: C.borderDim }} />
+                  <div style={{ width: 50, height: 18, borderRadius: 99, background: C.borderDim }} />
+                </div>
+              </div>
+            ))}
+
+            {/* Empty state */}
+            {!logLoading && logData.length === 0 && (
+              <div style={{ textAlign: "center", padding: "56px 20px", color: C.textMuted }}>
+                <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke={C.borderMed} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginBottom: 14 }}>
+                  <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+                </svg>
+                <div style={{ fontFamily: F.sans, fontSize: 15, fontWeight: 600, color: C.textSecondary, marginBottom: 6 }}>
+                  No automation activity yet
+                </div>
+                <div style={{ fontFamily: F.sans, fontSize: 13 }}>
+                  Run an analysis from the Live Data tab to generate log entries.
+                </div>
+              </div>
+            )}
+
+            {/* Log rows */}
+            {!logLoading && logData.length > 0 && (
+              <div style={{ borderRadius: 10, border: `1px solid ${C.borderDim}`, overflow: "hidden" }}>
+                {logData.map((entry, i) => {
+                  const platform = entry.platform || (entry.metadata?.google_available ? "google_ads" : null);
+                  const isGoogle = platform === "google_ads";
+                  const isMeta   = platform === "meta_ads";
+                  const status   = entry.status || "pending";
+                  const ts = entry.created_at
+                    ? new Date(entry.created_at).toLocaleString("en-US", {
+                        month: "short", day: "numeric", year: "numeric",
+                        hour: "numeric", minute: "2-digit", hour12: true,
+                      }).replace(", ", " · ").replace(" AM", "am").replace(" PM", "pm")
+                    : "—";
+
+                  const statusStyle = {
+                    complete: { bg: "rgba(22,163,74,0.08)",  color: "#16a34a", border: "rgba(22,163,74,0.2)"  },
+                    success:  { bg: "rgba(22,163,74,0.08)",  color: "#16a34a", border: "rgba(22,163,74,0.2)"  },
+                    error:    { bg: "rgba(192,39,45,0.08)",  color: C.gold,    border: "rgba(192,39,45,0.2)"  },
+                    failed:   { bg: "rgba(192,39,45,0.08)",  color: C.gold,    border: "rgba(192,39,45,0.2)"  },
+                    pending:  { bg: "rgba(107,114,128,0.08)", color: C.textMuted, border: "rgba(107,114,128,0.2)" },
+                  }[status] || { bg: "rgba(107,114,128,0.08)", color: C.textMuted, border: "rgba(107,114,128,0.2)" };
+
+                  return (
+                    <div key={entry.id || i} style={{
+                      display: "flex", alignItems: "center", gap: 12,
+                      padding: "12px 18px",
+                      borderBottom: i < logData.length - 1 ? `1px solid ${C.borderDim}` : "none",
+                      background: i % 2 === 1 ? C.bgOverlay : C.bgSurface,
+                      transition: "background 0.15s",
+                    }}>
+                      {/* Timestamp */}
+                      <span style={{ fontFamily: F.mono, fontSize: 10, color: C.textDim, whiteSpace: "nowrap", minWidth: 148 }}>
+                        {ts}
+                      </span>
+
+                      {/* Platform badge */}
+                      {(isGoogle || isMeta) && (
+                        <span style={{
+                          padding: "2px 8px", borderRadius: 99, fontSize: 10, fontFamily: F.mono, fontWeight: 600,
+                          background: isGoogle ? "rgba(192,39,45,0.08)" : "rgba(37,99,235,0.08)",
+                          color: isGoogle ? C.gold : C.sapphire,
+                          border: `1px solid ${isGoogle ? "rgba(192,39,45,0.2)" : "rgba(37,99,235,0.2)"}`,
+                          whiteSpace: "nowrap", flexShrink: 0,
+                        }}>
+                          {isGoogle ? "Google" : "Meta"}
+                        </span>
+                      )}
+
+                      {/* Action type / event type */}
+                      {(entry.action_type || entry.event_type) && (
+                        <span style={{ fontFamily: F.mono, fontSize: 9, textTransform: "uppercase", letterSpacing: "1px", color: C.textDim, whiteSpace: "nowrap", flexShrink: 0 }}>
+                          {(entry.action_type || entry.event_type || "").replace(/_/g, " ")}
+                        </span>
+                      )}
+
+                      {/* Description */}
+                      <span style={{ flex: 1, fontFamily: F.sans, fontSize: 12, color: C.textSecondary, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {entry.description || entry.campaign_name || "—"}
+                      </span>
+
+                      {/* Status badge */}
+                      <span style={{
+                        padding: "2px 9px", borderRadius: 99, fontSize: 10, fontFamily: F.mono, fontWeight: 600,
+                        background: statusStyle.bg, color: statusStyle.color,
+                        border: `1px solid ${statusStyle.border}`,
+                        whiteSpace: "nowrap", flexShrink: 0,
+                      }}>
+                        {status}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         )}
 
