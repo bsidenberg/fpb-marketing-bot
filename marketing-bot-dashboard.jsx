@@ -2130,7 +2130,46 @@ export default function MarketingBotDashboard() {
                     </div>
                   );
 
+                  // Find the original image from the preceding user message (used by both branches)
+                  const prevMsg = msgIdx > 0 ? chatMessages[msgIdx - 1] : null;
+                  const origImage = prevMsg?.imageBase64
+                    ? { base64: prevMsg.imageBase64, mediaType: prevMsg.imageMediaType || 'image/jpeg' }
+                    : null;
+
                   if (msg.message_type === "action_request" && msg.action_payload) {
+                    const isProcessImage = msg.action_payload.action_type === "process_image";
+
+                    // process_image: auto-pre-fill the panel and show it inline — no confirm button
+                    if (isProcessImage && origImage) {
+                      const p = msg.action_payload;
+                      // Pre-fill panel with Claude's recommended settings (only on first render — don't overwrite user edits)
+                      if (!imagePanels[msg.id]) {
+                        updatePanel(msg.id, {
+                          format:       p.format        || 'feed',
+                          overlayOn:    !!p.overlay_text,
+                          overlayText:  p.overlay_text  || '',
+                          overlayPos:   p.overlay_position || 'bottom',
+                          overlayStyle: p.overlay_style || 'light',
+                        });
+                      }
+                      return (
+                        <div key={msg.id} style={{ display: "flex", justifyContent: "flex-start", marginBottom: 14, gap: 10 }}>
+                          <AiAvatar />
+                          <div style={{ maxWidth: "80%" }}>
+                            <div style={{ fontFamily: F.mono, fontSize: 9, textTransform: "uppercase", letterSpacing: "1.5px", color: C.textDim, marginBottom: 5 }}>AI Assistant</div>
+                            <div className="chat-bubble-assistant">{msg.content}</div>
+                            <ImageProcessPanel
+                              msgId={msg.id}
+                              originalImage={origImage}
+                              panelState={imagePanels[msg.id]}
+                              updatePanel={updatePanel}
+                            />
+                          </div>
+                        </div>
+                      );
+                    }
+
+                    // All other action types: standard ActionCard
                     return (
                       <div key={msg.id} style={{ display: "flex", justifyContent: "flex-start", marginBottom: 14, gap: 10 }}>
                         <AiAvatar />
@@ -2142,12 +2181,6 @@ export default function MarketingBotDashboard() {
                       </div>
                     );
                   }
-
-                  // Find the original image from the preceding user message
-                  const prevMsg = msgIdx > 0 ? chatMessages[msgIdx - 1] : null;
-                  const origImage = prevMsg?.imageBase64
-                    ? { base64: prevMsg.imageBase64, mediaType: prevMsg.imageMediaType || 'image/jpeg' }
-                    : null;
 
                   return (
                     <div key={msg.id} style={{ display: "flex", justifyContent: "flex-start", marginBottom: 14, gap: 10 }}>

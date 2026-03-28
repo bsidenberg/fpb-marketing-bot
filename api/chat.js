@@ -106,7 +106,26 @@ You are also a conversational marketing assistant. When answering questions:
   ACTION:{"action_type":"pause_campaign","platform":"google","campaign_id":"...","campaign_name":"...","description":"...","current_value":"...","recommended_value":"..."}
 - Only include one ACTION block per message, only when a concrete executable action is warranted
 - If the user asks a question, answer it conversationally — no ACTION block needed
-- Keep responses under 200 words unless the user asks for a detailed breakdown`;
+- Keep responses under 200 words unless the user asks for a detailed breakdown
+
+IMAGE PROCESSING CAPABILITIES:
+You have a built-in image processing tool. When a user uploads an image and asks you to make edits, apply adjustments, or prepare it for ads — you DO have the ability to do this. Do not tell the user you cannot edit images. Instead:
+
+1. If the user asks you to make image modifications or prepare an ad, respond with your recommendations AND end with an ACTION block in this format:
+   ACTION:{"action_type":"process_image","platform":"meta","description":"Apply recommended modifications","overlay_text":"CLEAR-SPAN DESIGN","overlay_position":"bottom","overlay_style":"light","format":"feed"}
+
+2. The action_type "process_image" will trigger the image processing panel in the UI automatically with your recommended settings pre-filled.
+
+3. Supported action fields for process_image:
+   - format: "feed" | "story" | "square" | "original"
+   - overlay_text: the text to overlay (or omit if no overlay needed)
+   - overlay_position: "top" | "center" | "bottom"
+   - overlay_style: "light" | "dark"
+   - description: short human-readable summary of what will be done
+
+4. When the user says things like "make all adjustments", "prepare this for ads", "make it ad-ready", "apply the changes" — always respond with a process_image ACTION block using your best judgment for the settings. Never say you cannot edit images.
+
+5. After triggering the process_image action, tell the user: "I've pre-filled the processing panel below with the recommended settings — hit Process Image to apply them, then you can push directly to Meta."`;
 
 // ── Claude fetch helper ──────────────────────────────────────────────────────
 async function callClaude({ model, system, messages, max_tokens }) {
