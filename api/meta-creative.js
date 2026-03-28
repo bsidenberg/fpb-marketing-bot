@@ -86,26 +86,25 @@ export default async function handler(req, res) {
   let creativeId;
   try {
     const creativeBody = {
-      name: adName,
+      name:         adName,
+      access_token: accessToken,
       object_story_spec: {
-        page_id:   pageId,
+        page_id:   String(pageId),
         link_data: {
-          image_hash: imageHash,
-          link:       'https://floridapolebarn.com',
-          message:    primaryText,
-          name:       headline,
+          image_hash:  imageHash,
+          link:        'https://floridapolebarn.com',
+          message:     primaryText  || 'Florida Pole Barn Kits — Built for Florida.',
+          name:        headline     || 'Get Your Free Quote Today',
+          description: 'Hurricane-rated construction. Licensed & insured.',
           call_to_action: {
-            type:  callToAction,
+            type:  callToAction || 'LEARN_MORE',
             value: { link: 'https://floridapolebarn.com' },
           },
         },
       },
     };
 
-    const creativeUrl = new URL(`${apiBase}/act_${adAccountId}/adcreatives`);
-    creativeUrl.searchParams.set('access_token', accessToken);
-
-    const creativeRes = await fetch(creativeUrl.toString(), {
+    const creativeRes = await fetch(`${apiBase}/act_${adAccountId}/adcreatives`, {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify(creativeBody),
@@ -114,6 +113,7 @@ export default async function handler(req, res) {
     const creativeJson = await creativeRes.json();
 
     if (creativeJson.error) {
+      console.error('Meta creative error:', JSON.stringify(creativeJson));
       throw new Error(creativeJson.error.message || `Meta creative error code ${creativeJson.error.code}`);
     }
     if (!creativeJson.id) {

@@ -778,7 +778,9 @@ function AdPreviewCard({ adPreview, processedImage, onApprove, autoApproveEnable
 
   if (!adPreview) return null;
 
-  const formats     = adPreview.formats || ['meta_feed'];
+  const formats     = (adPreview.formats && adPreview.formats.length > 0)
+    ? adPreview.formats
+    : ['meta_feed', 'meta_story', 'google_search', 'google_display'];
   const headline    = adPreview.headline    || 'Pole Barn Kits — Built for Florida';
   const primaryText = adPreview.primaryText || 'Florida Pole Barn Kits — Licensed & insured. Free quotes statewide.';
   const description = adPreview.description || 'Hurricane-rated. AG-exempt available.';
