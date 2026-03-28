@@ -750,15 +750,25 @@ export default function MarketingBotDashboard() {
       });
       const execJson = await execRes.json();
 
-      if (!execRes.ok) throw new Error(execJson.error || "Execution request failed");
-
-      if (execJson.executed) {
+      if (execRes.status === 400) {
+        // Unsupported platform or action type — expected for Meta etc. Fall back to PATCH.
+        await fetch(`/api/actions/${id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status: "approved" }),
+        });
+        showToast("✓ Approved (execution not supported yet for this action type)");
+        setActionsData(prev => prev.filter(a => a.id !== id));
+      } else if (!execRes.ok) {
+        // 500 or unexpected — surface as failure, keep card
+        throw new Error(execJson.error || "Execution request failed");
+      } else if (execJson.executed) {
         // Execution succeeded
         const label = actionType === "pause_campaign" ? "Campaign paused" : "Campaign enabled";
         showToast(`✓ ${label}`);
         setActionsData(prev => prev.filter(a => a.id !== id));
       } else {
-        // Unsupported type — fall back to PATCH approve only
+        // 200 but executed:false (API-side failure logged) — fall back to PATCH
         await fetch(`/api/actions/${id}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
