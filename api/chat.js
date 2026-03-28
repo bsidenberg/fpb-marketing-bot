@@ -125,7 +125,29 @@ You have a built-in image processing tool. When a user uploads an image and asks
 
 4. When the user says things like "make all adjustments", "prepare this for ads", "make it ad-ready", "apply the changes" — always respond with a process_image ACTION block using your best judgment for the settings. Never say you cannot edit images.
 
-5. After triggering the process_image action, tell the user: "I've pre-filled the processing panel below with the recommended settings — hit Process Image to apply them, then you can push directly to Meta."`;
+5. After triggering the process_image action, tell the user: "I've pre-filled the processing panel below with the recommended settings — hit Process Image to apply them, then you can push directly to Meta."
+
+AD PREVIEW GENERATION:
+When you have enough information to show a complete ad (image has been processed OR user asks to preview a text-based Google ad), end your message with an AD_PREVIEW block:
+
+AD_PREVIEW:{"formats":["meta_feed","meta_story","google_search","google_display"],"headline":"...","primaryText":"...","description":"...","cta":"Get Quote","displayUrl":"floridapolebarn.com","hasImage":true}
+
+Fields:
+- formats: array of which previews to show — include all that are relevant
+- headline: the ad headline (max 30 chars for Google, any length for Meta)
+- primaryText: Meta primary text / Google description
+- description: secondary description line (Google only)
+- cta: call to action button text
+- displayUrl: always "floridapolebarn.com"
+- hasImage: true if an image was uploaded in this conversation, false for text-only ads
+
+Include AD_PREVIEW when:
+- User asks to "preview the ad", "show me how it looks", "show me the full ad"
+- User says the ad is ready or asks to prepare for publishing
+- After image processing is complete and user wants to see the result
+- When creating a new Google search ad from scratch
+
+Do NOT include AD_PREVIEW for general performance questions or strategy discussions.`;
 
 // ── Claude fetch helper ──────────────────────────────────────────────────────
 async function callClaude({ model, system, messages, max_tokens }) {
@@ -199,6 +221,18 @@ function parseCreativeReady(text) {
   const creativeReady = match[1].toLowerCase() === 'true';
   const displayText = text.replace(/\n?CREATIVE_READY:(true|false)/i, '').trim();
   return { displayText, creativeReady };
+}
+
+// ── Parse AD_PREVIEW block from Claude response ───────────────────────────────
+function parseAdPreview(text) {
+  const match = text.match(/^AD_PREVIEW:(\{.+\})\s*$/m);
+  if (!match) return { displayText: text, adPreview: null };
+  let adPreview = null;
+  try {
+    adPreview = JSON.parse(match[1]);
+  } catch { /* malformed — treat as text */ }
+  const displayText = text.replace(/^AD_PREVIEW:\{.+\}\s*$/m, '').trim();
+  return { displayText, adPreview };
 }
 
 // ── Main handler ─────────────────────────────────────────────────────────────
@@ -301,9 +335,10 @@ export default async function handler(req, res) {
 
     const rawText = claudeRes.content?.[0]?.text || '';
 
-    // ── Step 6: Parse ACTION block then CREATIVE_READY flag ──
-    const { displayText: afterAction, actionPayload } = parseActionBlock(rawText);
-    const { displayText, creativeReady } = parseCreativeReady(afterAction);
+    // ── Step 6: Parse ACTION block → CREATIVE_READY → AD_PREVIEW ──
+    const { displayText: afterAction,   actionPayload } = parseActionBlock(rawText);
+    const { displayText: afterCreative, creativeReady } = parseCreativeReady(afterAction);
+    const { displayText,                adPreview     } = parseAdPreview(afterCreative);
     const messageType = actionPayload ? 'action_request' : 'text';
 
     // ── Step 7: Save to Supabase ──
@@ -332,6 +367,7 @@ export default async function handler(req, res) {
       messageType,
       actionPayload: actionPayload || null,
       creativeReady: creativeReady ?? null,
+      adPreview:     adPreview     || null,
       sessionId,
     });
 

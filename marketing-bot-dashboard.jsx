@@ -717,6 +717,276 @@ function CampaignsTable({ campaigns }) {
   );
 }
 
+// ── Ad preview card ──
+function AdPreviewCard({ adPreview, processedImage, onApprove, autoApproveEnabled, onAutoApproveToggle }) {
+  const [activeTab,    setActiveTab]    = useState(adPreview?.formats?.[0] || 'meta_feed');
+  const [publishing,   setPublishing]   = useState(false);
+  const [publishResult,setPublishResult]= useState(null);
+  const [publishError, setPublishError] = useState(null);
+  const [countdown,    setCountdown]    = useState(null);
+
+  const TAB_LABELS = { meta_feed: 'Feed', meta_story: 'Story', google_search: 'Search', google_display: 'Display' };
+
+  // Auto-approve countdown
+  useEffect(() => {
+    if (!autoApproveEnabled || publishResult) return;
+    let n = 3;
+    setCountdown(n);
+    const iv = setInterval(() => {
+      n--;
+      if (n <= 0) { clearInterval(iv); setCountdown(null); doPublish(); }
+      else setCountdown(n);
+    }, 1000);
+    return () => clearInterval(iv);
+  }, [autoApproveEnabled]); // eslint-disable-line
+
+  const doPublish = async () => {
+    setPublishing(true);
+    setPublishError(null);
+    try {
+      const hasImg = adPreview.hasImage && processedImage;
+      if (hasImg) {
+        const ctaMap = { 'Get Quote': 'GET_QUOTE', 'Contact Us': 'CONTACT_US', 'Shop Now': 'SHOP_NOW' };
+        const res  = await fetch('/api/meta-creative', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            imageBase64:  processedImage.base64,
+            mediaType:    processedImage.mediaType || 'image/jpeg',
+            format:       processedImage.format    || 'feed',
+            adName:       `FPB — ${adPreview.headline || 'Ad'} — ${new Date().toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}`,
+            headline:     adPreview.headline    || 'Get Your Free Quote Today',
+            primaryText:  adPreview.primaryText || 'Florida Pole Barn Kits — Built for Florida.',
+            callToAction: ctaMap[adPreview.cta] || 'LEARN_MORE',
+          }),
+        });
+        const json = await res.json();
+        if (json.success) {
+          setPublishResult(json);
+          if (onApprove) onApprove(json);
+        } else {
+          setPublishError(json.error || 'Upload failed');
+        }
+      } else {
+        setPublishError('Google ad publishing coming soon — Meta ads require an image.');
+      }
+    } catch (e) {
+      setPublishError(e.message);
+    } finally {
+      setPublishing(false);
+    }
+  };
+
+  if (!adPreview) return null;
+
+  const formats     = adPreview.formats || ['meta_feed'];
+  const headline    = adPreview.headline    || 'Pole Barn Kits — Built for Florida';
+  const primaryText = adPreview.primaryText || 'Florida Pole Barn Kits — Licensed & insured. Free quotes statewide.';
+  const description = adPreview.description || 'Hurricane-rated. AG-exempt available.';
+  const cta         = adPreview.cta         || 'Learn More';
+  const displayUrl  = adPreview.displayUrl  || 'floridapolebarn.com';
+  const hasImg      = adPreview.hasImage && !!processedImage;
+  const imgSrc      = hasImg ? `data:image/jpeg;base64,${processedImage.base64}` : null;
+
+  const visibleTabs = ['meta_feed','meta_story','google_search','google_display'].filter(t => formats.includes(t));
+  const currentTab  = visibleTabs.includes(activeTab) ? activeTab : visibleTabs[0];
+
+  const btnSel = { background: '#2b3a6b', color: '#ffffff', border: '1px solid #2b3a6b' };
+  const btnOff = { background: '#f3f4f6', color: '#374151', border: '1px solid #dadce0' };
+
+  return (
+    <div style={{ marginTop: 12, maxWidth: 440, fontFamily: 'system-ui, -apple-system, sans-serif' }}>
+
+      {/* Tab bar */}
+      <div style={{ display: 'flex', gap: 4, marginBottom: 10 }}>
+        {visibleTabs.map(t => (
+          <button key={t} onClick={() => setActiveTab(t)} style={{
+            padding: '4px 12px', borderRadius: 20, border: 'none', cursor: 'pointer',
+            fontSize: 12, fontWeight: 500, transition: 'all 0.13s ease',
+            ...(currentTab === t ? btnSel : btnOff),
+          }}>{TAB_LABELS[t] || t}</button>
+        ))}
+      </div>
+
+      {/* ── META FEED ── */}
+      {currentTab === 'meta_feed' && (
+        <div style={{ borderRadius: 8, overflow: 'hidden', boxShadow: '0 2px 8px rgba(0,0,0,0.12)', background: '#fff', maxWidth: 400 }}>
+          <div style={{ padding: '10px 12px', display: 'flex', alignItems: 'center', gap: 8 }}>
+            <div style={{ width: 36, height: 36, borderRadius: '50%', background: '#e4e6ea', flexShrink: 0 }} />
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: '#050505' }}>Florida Pole Barn</div>
+              <div style={{ fontSize: 11, color: '#65676b' }}>Sponsored · 🌐</div>
+            </div>
+            <div style={{ color: '#65676b', fontSize: 18, cursor: 'pointer' }}>•••</div>
+          </div>
+          <div style={{ padding: '0 12px 10px', fontSize: 13, color: '#050505', lineHeight: 1.5 }}>
+            {primaryText.length > 120 ? primaryText.slice(0, 120) + '…' : primaryText}
+          </div>
+          {imgSrc
+            ? <img src={imgSrc} alt="ad" style={{ width: '100%', maxHeight: 210, objectFit: 'cover', display: 'block' }} />
+            : <div style={{ width: '100%', height: 210, background: '#e4e6ea', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#90949c', fontSize: 12 }}>Image will appear here</div>
+          }
+          <div style={{ borderTop: '1px solid #e4e6ea', padding: '8px 12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#f0f2f5' }}>
+            <div>
+              <div style={{ fontSize: 10, color: '#65676b', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{displayUrl}</div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: '#050505', marginTop: 2, maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{headline}</div>
+            </div>
+            <button style={{ background: '#e4e6ea', border: 'none', borderRadius: 4, padding: '6px 12px', fontSize: 13, fontWeight: 600, color: '#050505', cursor: 'pointer', flexShrink: 0 }}>{cta}</button>
+          </div>
+          <div style={{ padding: '6px 12px', display: 'flex', borderTop: '1px solid #e4e6ea' }}>
+            {['👍 Like', '💬 Comment', '↗ Share'].map((a, i) => (
+              <div key={i} style={{ flex: 1, textAlign: 'center', fontSize: 12, color: '#65676b', fontWeight: 600, padding: '4px 0', cursor: 'pointer' }}>{a}</div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── META STORY ── */}
+      {currentTab === 'meta_story' && (
+        <div style={{ display: 'flex', justifyContent: 'center' }}>
+          <div style={{ width: 200, height: 355, borderRadius: 14, overflow: 'hidden', background: '#000', position: 'relative', boxShadow: '0 2px 8px rgba(0,0,0,0.12)' }}>
+            {imgSrc
+              ? <img src={imgSrc} alt="story" style={{ width: '100%', height: '100%', objectFit: 'cover', position: 'absolute', inset: 0 }} />
+              : <div style={{ position: 'absolute', inset: 0, background: '#1c1c1e' }} />
+            }
+            <div style={{ position: 'absolute', top: 8, left: 8, right: 8, height: 2, background: 'rgba(255,255,255,0.35)', borderRadius: 2 }}>
+              <div style={{ width: '60%', height: '100%', background: '#fff', borderRadius: 2 }} />
+            </div>
+            <div style={{ position: 'absolute', top: 16, left: 8, right: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+              <div style={{ width: 24, height: 24, borderRadius: '50%', background: 'rgba(255,255,255,0.3)', border: '1.5px solid #fff', flexShrink: 0 }} />
+              <div>
+                <div style={{ fontSize: 10, fontWeight: 700, color: '#fff' }}>Florida Pole Barn</div>
+                <div style={{ fontSize: 9, color: 'rgba(255,255,255,0.7)' }}>Sponsored</div>
+              </div>
+            </div>
+            <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, background: 'linear-gradient(transparent, rgba(0,0,0,0.78))', padding: '24px 12px 12px' }}>
+              <div style={{ fontSize: 14, fontWeight: 700, color: '#fff', marginBottom: 4, lineHeight: 1.3 }}>{headline}</div>
+              <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.85)', marginBottom: 8, lineHeight: 1.4 }}>
+                {primaryText.length > 80 ? primaryText.slice(0, 80) + '…' : primaryText}
+              </div>
+              <div style={{ textAlign: 'center' }}>
+                <button style={{ background: 'transparent', border: '1.5px solid #fff', color: '#fff', borderRadius: 4, padding: '5px 14px', fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>{cta}</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── GOOGLE SEARCH ── */}
+      {currentTab === 'google_search' && (
+        <div style={{ background: '#fff', borderRadius: 8, padding: '14px 16px', boxShadow: '0 2px 8px rgba(0,0,0,0.12)', maxWidth: 400, fontFamily: 'Arial, sans-serif' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+            <span style={{ fontSize: 10, border: '1px solid #006621', color: '#006621', borderRadius: 3, padding: '1px 4px', fontWeight: 700 }}>Ad</span>
+            <span style={{ fontSize: 13, color: '#006621' }}>https://{displayUrl}</span>
+          </div>
+          <div
+            style={{ fontSize: 18, color: '#1a0dab', cursor: 'pointer', marginBottom: 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+            onMouseEnter={e => e.currentTarget.style.textDecoration = 'underline'}
+            onMouseLeave={e => e.currentTarget.style.textDecoration = 'none'}
+          >
+            {headline.length > 30 ? headline.slice(0, 30) + '…' : headline}
+          </div>
+          <div style={{ fontSize: 13, color: '#545454', lineHeight: 1.5 }}>
+            {primaryText.length > 90 ? primaryText.slice(0, 90) + '…' : primaryText}
+            {description && <span> {description}</span>}
+          </div>
+          <div style={{ marginTop: 8, display: 'flex', gap: 6 }}>
+            {['Free Quote', 'View Gallery'].map((s, i) => (
+              <span key={i} style={{ fontSize: 12, color: '#1a0dab', border: '1px solid #dadce0', borderRadius: 16, padding: '3px 10px', cursor: 'pointer' }}>{s}</span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── GOOGLE DISPLAY ── */}
+      {currentTab === 'google_display' && (
+        <div style={{ display: 'flex', justifyContent: 'center' }}>
+          <div style={{ width: 300, height: 250, borderRadius: 6, overflow: 'hidden', boxShadow: '0 2px 8px rgba(0,0,0,0.12)', display: 'flex', flexDirection: 'column', fontFamily: 'Arial, sans-serif' }}>
+            <div style={{ flex: '0 0 55%', background: '#1a2444', position: 'relative', overflow: 'hidden' }}>
+              {imgSrc
+                ? <img src={imgSrc} alt="display" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                : <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 8, background: '#c0272d' }} />
+              }
+            </div>
+            <div style={{ flex: 1, background: '#fff', padding: '8px 10px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 700, color: '#3a3a3a' }}>Florida Pole Barn</div>
+                <div style={{ fontSize: 11, color: '#3a3a3a', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{headline}</div>
+              </div>
+              <button style={{ width: '100%', padding: '5px 0', background: '#c0272d', color: '#fff', border: 'none', borderRadius: 3, fontSize: 10, fontWeight: 700, cursor: 'pointer' }}>{cta}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── APPROVAL SECTION ── */}
+      <div style={{ marginTop: 12, background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: 8, padding: '14px 16px' }}>
+        {publishResult ? (
+          <div style={{ background: 'rgba(22,163,74,0.08)', border: '1px solid rgba(22,163,74,0.25)', borderRadius: 8, padding: '10px 12px' }}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: '#16a34a', marginBottom: 4 }}>✓ Published to Meta</div>
+            <div style={{ fontFamily: 'monospace', fontSize: 10, color: '#6b7280', marginBottom: 6 }}>Creative ID: {publishResult.creativeId}</div>
+            <a href={publishResult.previewUrl} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, color: '#2563eb', textDecoration: 'underline' }}>View in Ads Manager →</a>
+          </div>
+        ) : (
+          <>
+            <div style={{ fontSize: 14, fontWeight: 600, color: '#3a3a3a', marginBottom: 10, display: 'flex', alignItems: 'center', gap: 8 }}>
+              Ad Preview — Ready to publish?
+              {countdown !== null && (
+                <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 12, color: '#c0272d', fontWeight: 700 }}>
+                  Auto-publishing in {countdown}…
+                </span>
+              )}
+            </div>
+            <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+              <button onClick={doPublish} disabled={publishing} style={{
+                flex: 1, padding: '8px 0', borderRadius: 8, border: 'none', cursor: publishing ? 'not-allowed' : 'pointer',
+                background: publishing ? '#9ca3af' : 'linear-gradient(135deg, #8b1a1e 0%, #c0272d 100%)',
+                color: '#fff', fontSize: 13, fontWeight: 600,
+                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+              }}>
+                {publishing ? (
+                  <>
+                    <span className="chat-dot" style={{ background: 'rgba(255,255,255,0.7)' }} />
+                    <span className="chat-dot" style={{ background: 'rgba(255,255,255,0.7)', animationDelay: '0.2s' }} />
+                    <span className="chat-dot" style={{ background: 'rgba(255,255,255,0.7)', animationDelay: '0.4s' }} />
+                    <span style={{ marginLeft: 4 }}>Publishing…</span>
+                  </>
+                ) : 'Approve & Publish'}
+              </button>
+              <button
+                onClick={() => window.dispatchEvent(new CustomEvent('fpb:requestChanges', { detail: 'Please make these changes to the ad: ' }))}
+                style={{ flex: 1, padding: '8px 0', borderRadius: 8, border: '1px solid #d1d5db', background: '#fff', color: '#374151', fontSize: 13, fontWeight: 500, cursor: 'pointer' }}
+              >Request Changes</button>
+            </div>
+            {publishError && (
+              <div style={{ fontSize: 12, color: '#dc2626', marginBottom: 8 }}>✗ {publishError}</div>
+            )}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 8 }}>
+              {autoApproveEnabled && (
+                <span style={{ fontSize: 11, background: 'rgba(234,179,8,0.15)', color: '#92400e', border: '1px solid rgba(234,179,8,0.4)', borderRadius: 20, padding: '2px 8px' }}>
+                  ⚠ AI will publish ads automatically
+                </span>
+              )}
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                <span style={{ fontSize: 11, color: '#6b7280' }}>Auto-publish</span>
+                <div onClick={() => onAutoApproveToggle(!autoApproveEnabled)} style={{
+                  width: 32, height: 18, borderRadius: 9, cursor: 'pointer', position: 'relative',
+                  background: autoApproveEnabled ? '#2b3a6b' : '#d1d5db', transition: 'background 0.2s ease',
+                }}>
+                  <div style={{
+                    position: 'absolute', top: 2, left: autoApproveEnabled ? 16 : 2,
+                    width: 14, height: 14, borderRadius: '50%', background: '#fff',
+                    transition: 'left 0.2s ease', boxShadow: '0 1px 3px rgba(0,0,0,0.2)',
+                  }} />
+                </div>
+              </label>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── Image processing panel ──
 function ImageProcessPanel({ msgId, originalImage, panelState, updatePanel }) {
   const format    = panelState?.format    ?? 'feed';
@@ -1188,6 +1458,9 @@ export default function MarketingBotDashboard() {
   const [chatSessionId] = useState(() => crypto.randomUUID());
   const [pendingImage, setPendingImage] = useState(null); // { file, previewUrl, base64, mediaType }
   const [imagePanels, setImagePanels] = useState({}); // keyed by message id
+  const [autoApproveEnabled, setAutoApproveEnabled] = useState(
+    () => localStorage.getItem('fpb_auto_approve') === 'true'
+  );
   const chatBottomRef = useRef(null);
   const fileInputRef = useRef(null);
 
@@ -1454,6 +1727,7 @@ export default function MarketingBotDashboard() {
             content: json2.reply, message_type: json2.messageType || "text",
             action_payload: json2.actionPayload || null,
             creative_ready: json2.creativeReady ?? null,
+            adPreview:      json2.adPreview     || null,
           }]);
         }
       } else if (json1.success) {
@@ -1462,6 +1736,7 @@ export default function MarketingBotDashboard() {
           content: json1.reply, message_type: json1.messageType || "text",
           action_payload: json1.actionPayload || null,
           creative_ready: json1.creativeReady ?? null,
+          adPreview:      json1.adPreview     || null,
         }]);
       }
     } catch {
@@ -1478,6 +1753,28 @@ export default function MarketingBotDashboard() {
   // ── Image panel state helpers ──
   const updatePanel = (msgId, patch) =>
     setImagePanels(prev => ({ ...prev, [msgId]: { ...prev[msgId], ...patch } }));
+
+  // ── Get most recently processed image across all panels ──
+  const getProcessedImageForSession = useCallback(() => {
+    for (let i = chatMessages.length - 1; i >= 0; i--) {
+      const panel = imagePanels[chatMessages[i]?.id];
+      if (panel?.result) return panel.result;
+    }
+    return null;
+  }, [chatMessages, imagePanels]);
+
+  // ── Auto-approve persistence ──
+  const handleAutoApproveToggle = (val) => {
+    setAutoApproveEnabled(val);
+    localStorage.setItem('fpb_auto_approve', String(val));
+  };
+
+  // ── Request Changes event (from AdPreviewCard "Request Changes" button) ──
+  useEffect(() => {
+    const handler = (e) => setChatInput(e.detail || 'Please make these changes to the ad: ');
+    window.addEventListener('fpb:requestChanges', handler);
+    return () => window.removeEventListener('fpb:requestChanges', handler);
+  }, []);
 
   const pendingCount = state.actionQueue.filter(a => a.status === "pending").length;
 
@@ -2177,6 +2474,15 @@ export default function MarketingBotDashboard() {
                           <div style={{ fontFamily: F.mono, fontSize: 9, textTransform: "uppercase", letterSpacing: "1.5px", color: C.textDim, marginBottom: 5 }}>AI Assistant</div>
                           <div className="chat-bubble-assistant" style={{ marginBottom: 8 }}>{msg.content}</div>
                           <ActionCard payload={msg.action_payload} />
+                          {msg.adPreview && (
+                            <AdPreviewCard
+                              adPreview={msg.adPreview}
+                              processedImage={getProcessedImageForSession()}
+                              onApprove={() => {}}
+                              autoApproveEnabled={autoApproveEnabled}
+                              onAutoApproveToggle={handleAutoApproveToggle}
+                            />
+                          )}
                         </div>
                       </div>
                     );
@@ -2194,6 +2500,15 @@ export default function MarketingBotDashboard() {
                             originalImage={origImage}
                             panelState={imagePanels[msg.id]}
                             updatePanel={updatePanel}
+                          />
+                        )}
+                        {msg.adPreview && (
+                          <AdPreviewCard
+                            adPreview={msg.adPreview}
+                            processedImage={getProcessedImageForSession()}
+                            onApprove={() => {}}
+                            autoApproveEnabled={autoApproveEnabled}
+                            onAutoApproveToggle={handleAutoApproveToggle}
                           />
                         )}
                       </div>
