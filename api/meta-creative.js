@@ -48,6 +48,16 @@ export default async function handler(req, res) {
   };
   const ctaType = ctaMap[callToAction] || 'LEARN_MORE';
 
+  // ── STEP 0: Get Page access token ────────────────────────────────────────
+  const pageTokenRes  = await fetch(
+    `${apiBase}/${process.env.META_PAGE_ID}?fields=access_token&access_token=${process.env.META_ACCESS_TOKEN}`
+  );
+  const pageTokenJson = await pageTokenRes.json();
+  if (!pageTokenJson.access_token) {
+    return res.status(500).json({ success: false, error: 'Could not get page access token', step: 'get_page_token' });
+  }
+  const pageAccessToken = pageTokenJson.access_token;
+
   // ── STEP 1: Upload image to Meta ad image library ─────────────────────────
   let imageHash;
   try {
@@ -95,7 +105,7 @@ export default async function handler(req, res) {
   try {
     const creativeBody = {
       name:         adName,
-      access_token: accessToken,
+      access_token: pageAccessToken,
       object_story_spec: {
         page_id:   pageId,
         link_data: {
