@@ -48,15 +48,10 @@ export default async function handler(req, res) {
   };
   const ctaType = ctaMap[callToAction] || 'LEARN_MORE';
 
-  // ── STEP 0: Get Page access token ────────────────────────────────────────
-  const pageTokenRes  = await fetch(
-    `${apiBase}/${process.env.META_PAGE_ID}?fields=access_token&access_token=${process.env.META_ACCESS_TOKEN}`
-  );
-  const pageTokenJson = await pageTokenRes.json();
-  if (!pageTokenJson.access_token) {
-    return res.status(500).json({ success: false, error: 'Could not get page access token', step: 'get_page_token' });
-  }
-  const pageAccessToken = pageTokenJson.access_token;
+  // ── STEP 0: Diagnostic — verify token can see pages ─────────────────────
+  const testRes  = await fetch(`${apiBase}/me/accounts?access_token=${accessToken}`);
+  const testJson = await testRes.json();
+  console.log('Page accounts accessible:', JSON.stringify(testJson));
 
   // ── STEP 1: Upload image to Meta ad image library ─────────────────────────
   let imageHash;
@@ -104,8 +99,7 @@ export default async function handler(req, res) {
   let creativeId;
   try {
     const creativeBody = {
-      name:         adName,
-      access_token: pageAccessToken,
+      name: adName,
       object_story_spec: {
         page_id:   pageId,
         link_data: {
@@ -118,9 +112,10 @@ export default async function handler(req, res) {
       },
     };
 
+    const creativeUrl = `${apiBase}/${adAccountId}/adcreatives?access_token=${encodeURIComponent(accessToken)}`;
     console.log('Meta creative request:', JSON.stringify(creativeBody));
 
-    const creativeRes = await fetch(`${apiBase}/${adAccountId}/adcreatives`, {
+    const creativeRes = await fetch(creativeUrl, {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify(creativeBody),
