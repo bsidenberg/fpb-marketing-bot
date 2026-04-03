@@ -36,9 +36,17 @@ export default async function handler(req, res) {
   }
 
   const accessToken  = process.env.META_ACCESS_TOKEN;
-  const adAccountId  = process.env.META_AD_ACCOUNT_ID;
-  const pageId       = process.env.META_PAGE_ID;
+  const rawAccountId = process.env.META_AD_ACCOUNT_ID || '';
+  const adAccountId  = rawAccountId.startsWith('act_') ? rawAccountId : `act_${rawAccountId}`;
+  const pageId       = String(process.env.META_PAGE_ID);
   const apiBase      = 'https://graph.facebook.com/v19.0';
+
+  const ctaMap = {
+    GET_QUOTE: 'GET_QUOTE', LEARN_MORE: 'LEARN_MORE',
+    CONTACT_US: 'CONTACT_US', SHOP_NOW: 'SHOP_NOW',
+    SIGN_UP: 'SIGN_UP', SUBSCRIBE: 'SUBSCRIBE',
+  };
+  const ctaType = ctaMap[callToAction] || 'LEARN_MORE';
 
   // ── STEP 1: Upload image to Meta ad image library ─────────────────────────
   let imageHash;
@@ -55,7 +63,7 @@ export default async function handler(req, res) {
       `${crlf}--${boundary}--${crlf}`,
     ].join('');
 
-    const uploadRes = await fetch(`${apiBase}/act_${adAccountId}/adimages`, {
+    const uploadRes = await fetch(`${apiBase}/${adAccountId}/adimages`, {
       method:  'POST',
       headers: {
         'Authorization': `Bearer ${accessToken}`,
@@ -89,22 +97,20 @@ export default async function handler(req, res) {
       name:         adName,
       access_token: accessToken,
       object_story_spec: {
-        page_id:   String(pageId),
+        page_id:   pageId,
         link_data: {
-          image_hash:  imageHash,
-          link:        'https://floridapolebarn.com',
-          message:     primaryText  || 'Florida Pole Barn Kits — Built for Florida.',
-          name:        headline     || 'Get Your Free Quote Today',
-          description: 'Hurricane-rated construction. Licensed & insured.',
-          call_to_action: {
-            type:  callToAction || 'LEARN_MORE',
-            value: { link: 'https://floridapolebarn.com' },
-          },
+          image_hash: imageHash,
+          link:       'https://floridapolebarn.com',
+          message:    primaryText || 'Florida Pole Barn Kits — Built for Florida.',
+          name:       headline    || 'Get Your Free Quote Today',
+          call_to_action: { type: ctaType },
         },
       },
     };
 
-    const creativeRes = await fetch(`${apiBase}/act_${adAccountId}/adcreatives`, {
+    console.log('Meta creative request:', JSON.stringify(creativeBody));
+
+    const creativeRes = await fetch(`${apiBase}/${adAccountId}/adcreatives`, {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify(creativeBody),
