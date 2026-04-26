@@ -9,13 +9,15 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // ── Supabase queue mock ───────────────────────────────────────────────────────
 
 const singleQueue = [];
-let lastInsertRow = null;
+let lastInsertRow  = null;
+let lastUpdatePatch = null;
 
 function makeChain() {
   const chain = {
     select:  () => makeChain(),
     eq:      () => makeChain(),
-    insert:  (row) => { lastInsertRow = row; return makeChain(); },
+    insert:  (row)   => { lastInsertRow   = row;   return makeChain(); },
+    update:  (patch) => { lastUpdatePatch = patch; return makeChain(); },
     limit:   () => makeChain(),
     order:   () => makeChain(),
     single:  async () => singleQueue.shift() ?? { data: null, error: null },
@@ -65,6 +67,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   singleQueue.length = 0;
   lastInsertRow      = null;
+  lastUpdatePatch    = null;
   delete process.env.LEADS_INGEST_SECRET;
 });
 
@@ -205,5 +208,105 @@ describe('POST /api/leads — normalization', () => {
 
     expect(res._statusCode).toBe(201);
     expect(res._body.source_type).toBe('gravity_forms');
+  });
+});
+
+// ── PATCH /api/leads — qualification update ───────────────────────────────────
+
+describe('PATCH /api/leads — qualification update', () => {
+  it('returns 400 when id is missing', async () => {
+    const req = makeReq({ method: 'PATCH', url: '/api/leads', query: {}, body: { qualification_status: 'qualified' } });
+    const res = makeRes();
+    await handler(req, res);
+    expect(res._statusCode).toBe(400);
+    expect(res._body.success).toBe(false);
+  });
+
+  it('returns 400 for invalid qualification_status', async () => {
+    const req = makeReq({ method: 'PATCH', url: '/api/leads', query: { id: 'lead-uuid' }, body: { qualification_status: 'nonsense' } });
+    const res = makeRes();
+    await handler(req, res);
+    expect(res._statusCode).toBe(400);
+    expect(res._body.error).toMatch(/Invalid qualification_status/);
+  });
+
+  it('returns 400 when no updatable fields are provided', async () => {
+    const req = makeReq({ method: 'PATCH', url: '/api/leads', query: { id: 'lead-uuid' }, body: {} });
+    const res = makeRes();
+    await handler(req, res);
+    expect(res._statusCode).toBe(400);
+    expect(res._body.error).toMatch(/No updatable fields/);
+  });
+
+  it('PATCH new -> qualified sets qualification_status and qualified_at', async () => {
+    const updatedRow = { id: 'lead-uuid', qualification_status: 'qualified', qualified_at: new Date().toISOString() };
+    queueResults({ data: updatedRow, error: null });
+
+    const req = makeReq({ method: 'PATCH', url: '/api/leads', query: { id: 'lead-uuid' }, body: { qualification_status: 'qualified' } });
+    const res = makeRes();
+    await handler(req, res);
+
+    expect(res._statusCode).toBe(200);
+    expect(res._body.success).toBe(true);
+    expect(lastUpdatePatch.qualification_status).toBe('qualified');
+    expect(lastUpdatePatch.qualified_at).toBeTruthy();
+    expect(lastUpdatePatch.booked_at).toBeUndefined();
+  });
+
+  it('PATCH -> booked sets booked_at, booked_revenue, gross_profit', async () => {
+    const updatedRow = { id: 'lead-uuid', qualification_status: 'booked', booked_revenue: 35000, gross_profit: 8000 };
+    queueResults({ data: updatedRow, error: null });
+
+    const req = makeReq({
+      method: 'PATCH',
+      url:    '/api/leads',
+      query:  { id: 'lead-uuid' },
+      body:   { qualification_status: 'booked', booked_revenue: '35000', gross_profit: '8000' },
+    });
+    const res = makeRes();
+    await handler(req, res);
+
+    expect(res._statusCode).toBe(200);
+    expect(lastUpdatePatch.qualification_status).toBe('booked');
+    expect(lastUpdatePatch.booked_at).toBeTruthy();
+    expect(lastUpdatePatch.booked_revenue).toBe(35000);
+    expect(lastUpdatePatch.gross_profit).toBe(8000);
+  });
+
+  it('PATCH -> lost sets lost_at', async () => {
+    queueResults({ data: { id: 'lead-uuid', qualification_status: 'lost' }, error: null });
+
+    const req = makeReq({ method: 'PATCH', url: '/api/leads', query: { id: 'lead-uuid' }, body: { qualification_status: 'lost', lost_reason: 'Price too high' } });
+    const res = makeRes();
+    await handler(req, res);
+
+    expect(res._statusCode).toBe(200);
+    expect(lastUpdatePatch.lost_at).toBeTruthy();
+    expect(lastUpdatePatch.lost_reason).toBe('Price too high');
+    expect(lastUpdatePatch.qualified_at).toBeUndefined();
+  });
+
+  it('PATCH notes-only persists notes', async () => {
+    queueResults({ data: { id: 'lead-uuid', notes: 'Interested in 30x40' }, error: null });
+
+    const req = makeReq({ method: 'PATCH', url: '/api/leads', query: { id: 'lead-uuid' }, body: { notes: 'Interested in 30x40' } });
+    const res = makeRes();
+    await handler(req, res);
+
+    expect(res._statusCode).toBe(200);
+    expect(lastUpdatePatch.notes).toBe('Interested in 30x40');
+    expect(lastUpdatePatch.qualification_status).toBeUndefined();
+  });
+
+  it('returns updated row in response', async () => {
+    const updatedRow = { id: 'lead-uuid', qualification_status: 'qualified', qualified_at: '2026-04-25T12:00:00Z', notes: 'Called back' };
+    queueResults({ data: updatedRow, error: null });
+
+    const req = makeReq({ method: 'PATCH', url: '/api/leads', query: { id: 'lead-uuid' }, body: { qualification_status: 'qualified' } });
+    const res = makeRes();
+    await handler(req, res);
+
+    expect(res._body.data.id).toBe('lead-uuid');
+    expect(res._body.data.qualification_status).toBe('qualified');
   });
 });

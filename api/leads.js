@@ -151,11 +151,14 @@ export default async function handler(req, res) {
   // Auth note: currently unauthenticated. Only call from dashboard.
   // Future: require Supabase Auth session.
   if (req.method === 'PATCH') {
+    // req.query.id is set by the Vercel rewrite (/api/leads/:id → /api/leads?id=:id).
+    // Fall back to path parsing for local dev / direct calls.
     const urlParts = (req.url || '').split('?')[0].split('/').filter(Boolean);
-    const id       = urlParts[urlParts.length - 1];
+    const pathId   = urlParts[urlParts.length - 1];
+    const id       = req.query?.id || (pathId !== 'leads' ? pathId : null);
 
-    if (!id || id === 'leads') {
-      return res.status(400).json({ success: false, error: 'Missing lead id in URL' });
+    if (!id) {
+      return res.status(400).json({ success: false, error: 'Missing lead id' });
     }
 
     const {

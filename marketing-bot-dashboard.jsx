@@ -1474,9 +1474,10 @@ function ActionCard({ payload }) {
 
 // ── Lead table with inline qualification editing ──────────────────────────────
 function LeadTable({ leads, onUpdate }) {
-  const [editing, setEditing] = useState(null); // lead id being edited
-  const [saving, setSaving]   = useState(null);
-  const [form, setForm]       = useState({});
+  const [editing, setEditing]   = useState(null); // lead id being edited
+  const [saving, setSaving]     = useState(null);
+  const [saveError, setSaveError] = useState(null);
+  const [form, setForm]         = useState({});
 
   const statuses = ['new','qualified','unqualified','booked','lost'];
   const statusColor = {
@@ -1502,10 +1503,11 @@ function LeadTable({ leads, onUpdate }) {
     });
   };
 
-  const cancelEdit = () => { setEditing(null); setForm({}); };
+  const cancelEdit = () => { setEditing(null); setForm({}); setSaveError(null); };
 
   const saveEdit = async (id) => {
     setSaving(id);
+    setSaveError(null);
     const body = {};
     if (form.qualification_status) body.qualification_status = form.qualification_status;
     if (form.booked_revenue !== '')  body.booked_revenue  = parseFloat(form.booked_revenue);
@@ -1513,14 +1515,22 @@ function LeadTable({ leads, onUpdate }) {
     if (form.notes !== '')           body.notes           = form.notes;
 
     try {
-      await fetch(`/api/leads/${id}`, {
+      // Use query param — routes to api/leads.js via Vercel rewrite
+      const res = await fetch(`/api/leads?id=${id}`, {
         method:  "PATCH",
         headers: { "Content-Type": "application/json" },
         body:    JSON.stringify(body),
       });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || `Save failed (${res.status})`);
+      }
       setEditing(null);
+      setSaveError(null);
       onUpdate();
-    } catch { /* swallow — user can retry */ }
+    } catch (err) {
+      setSaveError(err.message || "Save failed — please retry");
+    }
     setSaving(null);
   };
 
@@ -1663,6 +1673,13 @@ function LeadTable({ leads, onUpdate }) {
                   {saving === lead.id ? "Saving…" : "Save"}
                 </button>
               </div>
+
+              {/* Save error */}
+              {saveError && editing === lead.id && (
+                <div style={{ marginTop: 6, fontSize: 11, color: "#ef4444", fontFamily: F.mono }}>
+                  {saveError}
+                </div>
+              )}
             )}
           </div>
         );
