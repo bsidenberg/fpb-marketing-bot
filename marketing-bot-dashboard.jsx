@@ -1611,6 +1611,7 @@ function LeadTable({ leads, onUpdate }) {
 
             {/* Inline edit form */}
             {isEditing && (
+              <>
               <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
                 {/* Status select */}
                 <div>
@@ -1680,6 +1681,7 @@ function LeadTable({ leads, onUpdate }) {
                   {saveError}
                 </div>
               )}
+              </>
             )}
           </div>
         );
