@@ -747,24 +747,34 @@ function AdPreviewCard({ adPreview, processedImage, onApprove, autoApproveEnable
       const hasImg = adPreview.hasImage && processedImage;
       if (hasImg) {
         const ctaMap = { 'Get Quote': 'GET_QUOTE', 'Contact Us': 'CONTACT_US', 'Shop Now': 'SHOP_NOW' };
-        const res  = await fetch('/api/meta-creative', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
+        // Queue a pending action — do NOT call /api/meta-creative directly.
+        // The creative will only be published after human approval in AI Actions.
+        const res = await fetch('/api/actions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            imageBase64:  processedImage.base64,
-            mediaType:    processedImage.mediaType || 'image/jpeg',
-            format:       processedImage.format    || 'feed',
-            adName:       `FPB — ${adPreview.headline || 'Ad'} — ${new Date().toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}`,
-            headline:     adPreview.headline    || 'Get Your Free Quote Today',
-            primaryText:  adPreview.primaryText || 'Florida Pole Barn Kits — Built for Florida.',
-            callToAction: ctaMap[adPreview.cta] || 'LEARN_MORE',
+            channel:      'meta_ads',
+            action_type:  'publish_creative',
+            title:        `Publish: ${adPreview.headline || 'Ad Creative'}`,
+            description:  `Publish Meta ad creative. Headline: "${adPreview.headline || 'Get Your Free Quote Today'}". Format: ${processedImage.format || 'feed'}.`,
+            priority:     'high',
+            execution_data: {
+              imageBase64:  processedImage.base64,
+              mediaType:    processedImage.mediaType || 'image/jpeg',
+              format:       processedImage.format    || 'feed',
+              adName:       `FPB — ${adPreview.headline || 'Ad'} — ${new Date().toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}`,
+              headline:     adPreview.headline    || 'Get Your Free Quote Today',
+              primaryText:  adPreview.primaryText || 'Florida Pole Barn Kits — Built for Florida.',
+              callToAction: ctaMap[adPreview.cta] || 'LEARN_MORE',
+            },
           }),
         });
         const json = await res.json();
         if (json.success) {
-          setPublishResult(json);
-          if (onApprove) onApprove(json);
+          setPublishResult({ queued: true, actionId: json.data?.id });
+          if (onApprove) onApprove({ queued: true });
         } else {
-          setPublishError(json.error || 'Upload failed');
+          setPublishError(json.error || 'Failed to queue creative for approval');
         }
       } else {
         setPublishError('Google ad publishing coming soon — Meta ads require an image.');
@@ -924,9 +934,18 @@ function AdPreviewCard({ adPreview, processedImage, onApprove, autoApproveEnable
       <div style={{ marginTop: 12, background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: 8, padding: '14px 16px' }}>
         {publishResult ? (
           <div style={{ background: 'rgba(22,163,74,0.08)', border: '1px solid rgba(22,163,74,0.25)', borderRadius: 8, padding: '10px 12px' }}>
-            <div style={{ fontSize: 13, fontWeight: 600, color: '#16a34a', marginBottom: 4 }}>✓ Published to Meta</div>
-            <div style={{ fontFamily: 'monospace', fontSize: 10, color: '#6b7280', marginBottom: 6 }}>Creative ID: {publishResult.creativeId}</div>
-            <a href={publishResult.previewUrl} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, color: '#2563eb', textDecoration: 'underline' }}>View in Ads Manager →</a>
+            {publishResult.queued ? (
+              <>
+                <div style={{ fontSize: 13, fontWeight: 600, color: '#16a34a', marginBottom: 4 }}>✓ Queued for approval</div>
+                <div style={{ fontSize: 12, color: '#374151' }}>Creative is pending in the AI Actions tab. It will publish to Meta after you approve it there.</div>
+              </>
+            ) : (
+              <>
+                <div style={{ fontSize: 13, fontWeight: 600, color: '#16a34a', marginBottom: 4 }}>✓ Published to Meta</div>
+                <div style={{ fontFamily: 'monospace', fontSize: 10, color: '#6b7280', marginBottom: 6 }}>Creative ID: {publishResult.creativeId}</div>
+                <a href={publishResult.previewUrl} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, color: '#2563eb', textDecoration: 'underline' }}>View in Ads Manager →</a>
+              </>
+            )}
           </div>
         ) : (
           <>
@@ -1065,24 +1084,32 @@ function ImageProcessPanel({ msgId, originalImage, panelState, updatePanel }) {
     if (!result) return;
     updatePanel(msgId, { pushing: true, pushError: null, pushResult: null });
     try {
-      const res  = await fetch('/api/meta-creative', {
+      // Queue a pending action — do NOT call /api/meta-creative directly.
+      const res = await fetch('/api/actions', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({
-          imageBase64:  result.base64,
-          mediaType:    result.mediaType || 'image/jpeg',
-          format,
-          adName:       pushAdName   || `FPB ${format} Ad`,
-          headline:     pushHeadline || 'Get Your Free Quote Today',
-          primaryText:  pushBody     || 'Florida Pole Barn Kits — Built for Florida.',
-          callToAction: pushCta,
+          channel:      'meta_ads',
+          action_type:  'publish_creative',
+          title:        `Publish: ${pushAdName || `FPB ${format} Ad`}`,
+          description:  `Publish Meta ad creative from image processing panel. Format: ${format}.`,
+          priority:     'high',
+          execution_data: {
+            imageBase64:  result.base64,
+            mediaType:    result.mediaType || 'image/jpeg',
+            format,
+            adName:       pushAdName   || `FPB ${format} Ad`,
+            headline:     pushHeadline || 'Get Your Free Quote Today',
+            primaryText:  pushBody     || 'Florida Pole Barn Kits — Built for Florida.',
+            callToAction: pushCta,
+          },
         }),
       });
       const json = await res.json();
       if (json.success) {
-        updatePanel(msgId, { pushing: false, pushResult: json, pushOpen: false });
+        updatePanel(msgId, { pushing: false, pushResult: { queued: true, actionId: json.data?.id }, pushOpen: false });
       } else {
-        updatePanel(msgId, { pushing: false, pushError: `${json.error}${json.step ? ` (${json.step})` : ''}` });
+        updatePanel(msgId, { pushing: false, pushError: json.error || 'Failed to queue creative for approval' });
       }
     } catch (e) {
       updatePanel(msgId, { pushing: false, pushError: e.message });
@@ -1356,22 +1383,44 @@ function ActionCard({ payload }) {
   const handleConfirm = async () => {
     setStatus("executing");
     try {
-      const res = await fetch("/api/execute-action", {
+      // Step 1: Create a pending action row so this execution is auditable.
+      const createRes = await fetch("/api/actions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          platform:   payload.platform,
-          actionType: payload.action_type,
-          campaignId: payload.campaign_id,
+          channel:        payload.platform || "other",
+          action_type:    payload.action_type,
+          title:          (payload.action_type || "").replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase()),
+          description:    payload.description || "",
+          priority:       payload.priority || "medium",
+          execution_data: {
+            platform:      payload.platform,
+            campaign_id:   payload.campaign_id,
+            campaign_name: payload.campaign_name,
+          },
         }),
       });
-      const json = await res.json();
-      if (res.status === 400 || (json.success && !json.executed)) {
-        setStatus("done");
-      } else if (!res.ok) {
+      const createJson = await createRes.json();
+      if (!createRes.ok || !createJson.success) {
+        throw new Error(createJson.error || "Failed to queue action");
+      }
+      const actionId = createJson.data?.id;
+
+      // Step 2: Approve and execute via proxy (no client secret required).
+      const approveRes = await fetch("/api/approve-action", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ actionId }),
+      });
+      const json = await approveRes.json();
+      if (!approveRes.ok && approveRes.status !== 409) {
         throw new Error(json.error || "Execution failed");
-      } else {
+      } else if (json.requires_manual) {
         setStatus("done");
+        setErrorMsg("Applied — complete this change manually in the ad platform.");
+      } else {
+        setStatus(json.executed ? "done" : "error");
+        if (!json.executed) setErrorMsg(json.error || "Execution failed — check Automation Log");
       }
     } catch (err) {
       setStatus("error");
@@ -1423,6 +1472,205 @@ function ActionCard({ payload }) {
   );
 }
 
+// ── Lead table with inline qualification editing ──────────────────────────────
+function LeadTable({ leads, onUpdate }) {
+  const [editing, setEditing] = useState(null); // lead id being edited
+  const [saving, setSaving]   = useState(null);
+  const [form, setForm]       = useState({});
+
+  const statuses = ['new','qualified','unqualified','booked','lost'];
+  const statusColor = {
+    new:         C.textMuted,
+    qualified:   C.sapphire,
+    booked:      "#16a34a",
+    lost:        C.rose,
+    unqualified: C.textDim,
+  };
+  const confBadge = {
+    high:   { bg: "rgba(22,163,74,0.08)",  color: "#16a34a",  border: "rgba(22,163,74,0.2)"  },
+    medium: { bg: "rgba(37,99,235,0.08)",  color: C.sapphire, border: "rgba(37,99,235,0.2)"  },
+    low:    { bg: "rgba(107,114,128,0.08)", color: C.textMuted, border: "rgba(107,114,128,0.2)" },
+  };
+
+  const startEdit = (lead) => {
+    setEditing(lead.id);
+    setForm({
+      qualification_status: lead.qualification_status || 'new',
+      booked_revenue:       lead.booked_revenue ?? '',
+      gross_profit:         lead.gross_profit   ?? '',
+      notes:                lead.notes          ?? '',
+    });
+  };
+
+  const cancelEdit = () => { setEditing(null); setForm({}); };
+
+  const saveEdit = async (id) => {
+    setSaving(id);
+    const body = {};
+    if (form.qualification_status) body.qualification_status = form.qualification_status;
+    if (form.booked_revenue !== '')  body.booked_revenue  = parseFloat(form.booked_revenue);
+    if (form.gross_profit !== '')    body.gross_profit    = parseFloat(form.gross_profit);
+    if (form.notes !== '')           body.notes           = form.notes;
+
+    try {
+      await fetch(`/api/leads/${id}`, {
+        method:  "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify(body),
+      });
+      setEditing(null);
+      onUpdate();
+    } catch { /* swallow — user can retry */ }
+    setSaving(null);
+  };
+
+  return (
+    <div style={{ borderRadius: 10, border: `1px solid ${C.borderDim}`, overflow: "hidden" }}>
+      {leads.map((lead, i) => {
+        const isEditing = editing === lead.id;
+        const ts = lead.created_at
+          ? new Date(lead.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "2-digit" })
+          : "—";
+        const conf = confBadge[lead.attribution_confidence] || confBadge.low;
+
+        return (
+          <div key={lead.id || i} style={{
+            padding: "12px 18px",
+            borderBottom: i < leads.length - 1 ? `1px solid ${C.borderDim}` : "none",
+            background: isEditing ? "rgba(37,99,235,0.03)" : i % 2 === 1 ? C.bgOverlay : C.bgSurface,
+          }}>
+            {/* Row 1: metadata */}
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: isEditing ? 10 : 0, flexWrap: "wrap" }}>
+              <span style={{ fontFamily: F.mono, fontSize: 10, color: C.textDim, whiteSpace: "nowrap", minWidth: 56 }}>{ts}</span>
+
+              {/* Platform badge */}
+              <span style={{ fontSize: 10, fontFamily: F.mono, fontWeight: 600,
+                padding: "2px 7px", borderRadius: 99, background: "rgba(37,99,235,0.07)",
+                color: C.sapphire, border: "1px solid rgba(37,99,235,0.15)", whiteSpace: "nowrap" }}>
+                {lead.source_platform}
+              </span>
+
+              {/* Lead type */}
+              <span style={{ fontFamily: F.mono, fontSize: 9, textTransform: "uppercase", letterSpacing: "1px", color: C.textDim }}>
+                {lead.lead_type}
+              </span>
+
+              {/* Name */}
+              <span style={{ flex: 1, fontSize: 12, color: C.textSecondary, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 80 }}>
+                {lead.contact_name || lead.contact_phone || lead.campaign_name || "—"}
+              </span>
+
+              {/* Campaign */}
+              {lead.campaign_name && (
+                <span style={{ fontSize: 11, color: C.textMuted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 140 }}>
+                  {lead.campaign_name}
+                </span>
+              )}
+
+              {/* Revenue */}
+              {lead.booked_revenue && (
+                <span style={{ fontFamily: F.mono, fontSize: 12, color: "#16a34a", fontWeight: 700, whiteSpace: "nowrap" }}>
+                  ${parseFloat(lead.booked_revenue).toLocaleString()}
+                </span>
+              )}
+
+              {/* Attribution confidence */}
+              <span style={{ padding: "2px 8px", borderRadius: 99, fontSize: 9, fontFamily: F.mono,
+                background: conf.bg, color: conf.color, border: `1px solid ${conf.border}`, whiteSpace: "nowrap" }}>
+                {lead.attribution_confidence}
+              </span>
+
+              {/* Status */}
+              <span style={{ fontFamily: F.mono, fontSize: 10, fontWeight: 700, color: statusColor[lead.qualification_status] || C.textMuted, whiteSpace: "nowrap", minWidth: 72 }}>
+                {lead.qualification_status}
+              </span>
+
+              {/* Edit toggle */}
+              {!isEditing ? (
+                <button onClick={() => startEdit(lead)} style={{
+                  background: "transparent", border: `1px solid ${C.borderDim}`, borderRadius: 6,
+                  padding: "2px 9px", fontSize: 11, color: C.textMuted, cursor: "pointer",
+                }}>Edit</button>
+              ) : (
+                <button onClick={cancelEdit} style={{
+                  background: "transparent", border: `1px solid ${C.borderDim}`, borderRadius: 6,
+                  padding: "2px 9px", fontSize: 11, color: C.textMuted, cursor: "pointer",
+                }}>Cancel</button>
+              )}
+            </div>
+
+            {/* Inline edit form */}
+            {isEditing && (
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
+                {/* Status select */}
+                <div>
+                  <div style={{ fontFamily: F.mono, fontSize: 9, color: C.textDim, marginBottom: 4, textTransform: "uppercase" }}>Status</div>
+                  <select
+                    value={form.qualification_status}
+                    onChange={e => setForm(f => ({ ...f, qualification_status: e.target.value }))}
+                    style={{ fontFamily: F.sans, fontSize: 12, padding: "5px 8px", borderRadius: 6,
+                      border: `1px solid ${C.borderMed}`, background: C.bgSurface, color: C.textPrimary }}
+                  >
+                    {statuses.map(s => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                </div>
+
+                {/* Booked revenue */}
+                <div>
+                  <div style={{ fontFamily: F.mono, fontSize: 9, color: C.textDim, marginBottom: 4, textTransform: "uppercase" }}>Booked Revenue</div>
+                  <input
+                    type="number"
+                    placeholder="e.g. 35000"
+                    value={form.booked_revenue}
+                    onChange={e => setForm(f => ({ ...f, booked_revenue: e.target.value }))}
+                    style={{ fontFamily: F.mono, fontSize: 12, padding: "5px 8px", borderRadius: 6,
+                      border: `1px solid ${C.borderMed}`, background: C.bgSurface, color: C.textPrimary, width: 120 }}
+                  />
+                </div>
+
+                {/* Gross profit */}
+                <div>
+                  <div style={{ fontFamily: F.mono, fontSize: 9, color: C.textDim, marginBottom: 4, textTransform: "uppercase" }}>Gross Profit</div>
+                  <input
+                    type="number"
+                    placeholder="e.g. 8000"
+                    value={form.gross_profit}
+                    onChange={e => setForm(f => ({ ...f, gross_profit: e.target.value }))}
+                    style={{ fontFamily: F.mono, fontSize: 12, padding: "5px 8px", borderRadius: 6,
+                      border: `1px solid ${C.borderMed}`, background: C.bgSurface, color: C.textPrimary, width: 110 }}
+                  />
+                </div>
+
+                {/* Notes */}
+                <div style={{ flex: 1, minWidth: 160 }}>
+                  <div style={{ fontFamily: F.mono, fontSize: 9, color: C.textDim, marginBottom: 4, textTransform: "uppercase" }}>Notes</div>
+                  <input
+                    type="text"
+                    placeholder="e.g. Interested in 30x40 kit"
+                    value={form.notes}
+                    onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
+                    style={{ fontFamily: F.sans, fontSize: 12, padding: "5px 8px", borderRadius: 6,
+                      border: `1px solid ${C.borderMed}`, background: C.bgSurface, color: C.textPrimary, width: "100%" }}
+                  />
+                </div>
+
+                <button
+                  onClick={() => saveEdit(lead.id)}
+                  disabled={saving === lead.id}
+                  className="btn-approve"
+                  style={{ fontSize: 12, opacity: saving === lead.id ? 0.7 : 1 }}
+                >
+                  {saving === lead.id ? "Saving…" : "Save"}
+                </button>
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 // ── Main component ──
 export default function MarketingBotDashboard() {
   const [state, dispatch] = useReducer(reducer, initialState);
@@ -1451,6 +1699,12 @@ export default function MarketingBotDashboard() {
   const [logData, setLogData] = useState([]);
   const [logLoading, setLogLoading] = useState(false);
   const [logPlatform, setLogPlatform] = useState("all");
+
+  // ── Attribution tab state ──
+  const [outcomesData, setOutcomesData] = useState([]);
+  const [outcomesLoading, setOutcomesLoading] = useState(false);
+  const [leadsData, setLeadsData] = useState([]);
+  const [leadsLoading, setLeadsLoading] = useState(false);
 
   // ── Chat tab state ──
   const [chatMessages, setChatMessages] = useState([]);
@@ -1530,44 +1784,41 @@ export default function MarketingBotDashboard() {
     const id = action.id;
     setExecutingIds(prev => new Set(prev).add(id));
 
-    const platform   = normalizePlatform(action.platform);
     const actionType = action.action_type;
-    const campaignId = action.campaign_id;
 
     try {
-      const execRes = await fetch("/api/execute-action", {
+      // Use approve-action proxy — no secret required from the browser.
+      const execRes = await fetch("/api/approve-action", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ actionId: id, platform, actionType, campaignId }),
+        body: JSON.stringify({ actionId: id }),
       });
       const execJson = await execRes.json();
 
-      if (execRes.status === 400) {
-        // Unsupported platform or action type — expected for Meta etc. Fall back to PATCH.
-        await fetch(`/api/actions/${id}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ status: "approved" }),
-        });
-        showToast("✓ Approved (execution not supported yet for this action type)");
+      if (execRes.status === 409) {
+        showToast("Already executing or executed — refresh the Actions tab");
         setActionsData(prev => prev.filter(a => a.id !== id));
+      } else if (execRes.status === 400) {
+        // Truly unsupported type/platform — keep card, surface error
+        showToast(`Not supported: ${execJson.error || "unsupported action"}`);
       } else if (!execRes.ok) {
-        // 500 or unexpected — surface as failure, keep card
         throw new Error(execJson.error || "Execution request failed");
+      } else if (execJson.requires_manual) {
+        // Server recorded the approval; action needs manual platform work
+        showToast(`✓ Approved — apply manually in the ad platform (${actionType.replace(/_/g, " ")})`);
+        setActionsData(prev => prev.filter(a => a.id !== id));
       } else if (execJson.executed) {
-        // Execution succeeded
-        const label = actionType === "pause_campaign" ? "Campaign paused" : "Campaign enabled";
-        showToast(`✓ ${label}`);
+        const labelMap = {
+          pause_campaign:   "Campaign paused",
+          enable_campaign:  "Campaign enabled",
+          publish_creative: "Creative published to Meta",
+        };
+        showToast(`✓ ${labelMap[actionType] || "Done"}`);
         setActionsData(prev => prev.filter(a => a.id !== id));
       } else {
-        // 200 but executed:false (API-side failure logged) — fall back to PATCH
-        await fetch(`/api/actions/${id}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ status: "approved" }),
-        });
-        showToast("✓ Approved (execution not supported yet for this action type)");
-        setActionsData(prev => prev.filter(a => a.id !== id));
+        // 200 but executed:false — execution failed on the platform side; logged server-side
+        showToast(`Execution failed: ${execJson.error || "check Automation Log"}`);
+        // Do NOT remove card — let user retry or investigate
       }
     } catch {
       showToast("Execution failed — check Automation Log");
@@ -1625,6 +1876,34 @@ export default function MarketingBotDashboard() {
   useEffect(() => {
     if (state.activeTab === "log") fetchLog(logPlatform);
   }, [state.activeTab, logPlatform, fetchLog]);
+
+  // ── Attribution: fetch outcomes and recent leads ──
+  const fetchOutcomes = useCallback(async () => {
+    setOutcomesLoading(true);
+    try {
+      const res  = await fetch("/api/action-outcomes");
+      const json = await res.json();
+      setOutcomesData(json.success ? (json.data || []) : []);
+    } catch { setOutcomesData([]); }
+    finally  { setOutcomesLoading(false); }
+  }, []);
+
+  const fetchLeads = useCallback(async () => {
+    setLeadsLoading(true);
+    try {
+      const res  = await fetch("/api/leads?limit=20");
+      const json = await res.json();
+      setLeadsData(json.success ? (json.data || []) : []);
+    } catch { setLeadsData([]); }
+    finally  { setLeadsLoading(false); }
+  }, []);
+
+  useEffect(() => {
+    if (state.activeTab === "attribution") {
+      fetchOutcomes();
+      fetchLeads();
+    }
+  }, [state.activeTab, fetchOutcomes, fetchLeads]);
 
   // ── Chat: load history on mount ──
   const WELCOME_MSG = {
@@ -1788,8 +2067,9 @@ export default function MarketingBotDashboard() {
     { id: "channels",  label: "Channels",                  icon: <Icons.Globe /> },
     { id: "content",   label: "Content",                   icon: <Icons.Edit /> },
     { id: "intel",     label: "Intel",                     icon: <Icons.Eye /> },
-    { id: "log",       label: "Automation Log",            icon: <Icons.Clock /> },
-    { id: "setup",     label: "Setup Guide",               icon: <Icons.Settings /> },
+    { id: "log",         label: "Automation Log",            icon: <Icons.Clock /> },
+    { id: "attribution", label: "Attribution",              icon: <Icons.BarChart /> },
+    { id: "setup",       label: "Setup Guide",              icon: <Icons.Settings /> },
   ];
 
   return (
@@ -2960,6 +3240,152 @@ export default function MarketingBotDashboard() {
                   );
                 })}
               </div>
+            )}
+          </div>
+        )}
+
+        {/* ATTRIBUTION TAB */}
+        {state.activeTab === "attribution" && (
+          <div key="attribution" style={{ animation: "panelIn 0.22s ease" }}>
+            <div style={{ marginBottom: 20 }}>
+              <div style={{ fontFamily: F.serif, fontSize: 22, fontWeight: 700, color: C.textPrimary, marginBottom: 4 }}>Attribution</div>
+              <div style={{ fontSize: 13, color: C.textSecondary }}>
+                Before/after performance windows for executed actions. Results are directional — not causal.
+              </div>
+            </div>
+
+            {/* Outcomes section */}
+            <div style={{ fontFamily: F.mono, fontSize: 10, textTransform: "uppercase", letterSpacing: "1.5px", color: C.textMuted, marginBottom: 12 }}>
+              Action Outcomes
+            </div>
+
+            {outcomesLoading && [0, 1, 2].map(i => (
+              <div key={i} className="data-card" style={{ marginBottom: 8, padding: "14px 18px" }}>
+                <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+                  <div style={{ width: 80, height: 10, borderRadius: 4, background: C.borderDim }} />
+                  <div style={{ width: 120, height: 10, borderRadius: 4, background: C.borderDim }} />
+                  <div style={{ flex: 1, height: 10, borderRadius: 4, background: C.borderDim }} />
+                  <div style={{ width: 60, height: 18, borderRadius: 99, background: C.borderDim }} />
+                </div>
+              </div>
+            ))}
+
+            {!outcomesLoading && outcomesData.length === 0 && (
+              <div style={{ background: C.bgSurface, border: `1px solid ${C.borderDim}`, borderRadius: 10, padding: "40px 24px", textAlign: "center", marginBottom: 24 }}>
+                <div style={{ fontSize: 15, fontWeight: 600, color: C.textSecondary, marginBottom: 8 }}>No outcomes yet</div>
+                <div style={{ fontSize: 13, color: C.textMuted, maxWidth: 420, margin: "0 auto" }}>
+                  Outcomes are evaluated automatically once an action's post-window is complete (default: 7 days after execution).
+                  Run the daily cron or trigger <code style={{ fontFamily: F.mono, fontSize: 11 }}>/api/evaluate-outcomes</code> manually to populate.
+                </div>
+              </div>
+            )}
+
+            {!outcomesLoading && outcomesData.length > 0 && (
+              <div style={{ borderRadius: 10, border: `1px solid ${C.borderDim}`, overflow: "hidden", marginBottom: 32 }}>
+                {outcomesData.map((outcome, i) => {
+                  const confStyle = {
+                    high:              { bg: "rgba(22,163,74,0.08)",  color: "#16a34a", border: "rgba(22,163,74,0.2)"  },
+                    medium:            { bg: "rgba(37,99,235,0.08)",  color: C.sapphire, border: "rgba(37,99,235,0.2)"  },
+                    low:               { bg: "rgba(107,114,128,0.08)", color: C.textMuted, border: "rgba(107,114,128,0.2)" },
+                    insufficient_data: { bg: "rgba(107,114,128,0.06)", color: C.textDim, border: "rgba(107,114,128,0.15)" },
+                  }[outcome.confidence] || { bg: "rgba(107,114,128,0.08)", color: C.textMuted, border: "rgba(107,114,128,0.2)" };
+
+                  const cplBefore = outcome.cpl_before != null ? `$${parseFloat(outcome.cpl_before).toFixed(2)}` : "—";
+                  const cplAfter  = outcome.cpl_after  != null ? `$${parseFloat(outcome.cpl_after).toFixed(2)}`  : "—";
+                  const cplImproved = outcome.cpl_before != null && outcome.cpl_after != null && outcome.cpl_after < outcome.cpl_before;
+                  const cplWorse    = outcome.cpl_before != null && outcome.cpl_after != null && outcome.cpl_after > outcome.cpl_before;
+
+                  const ts = outcome.evaluated_at
+                    ? new Date(outcome.evaluated_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
+                    : "—";
+
+                  return (
+                    <div key={outcome.id || i} style={{
+                      padding: "16px 20px",
+                      borderBottom: i < outcomesData.length - 1 ? `1px solid ${C.borderDim}` : "none",
+                      background: i % 2 === 1 ? C.bgOverlay : C.bgSurface,
+                    }}>
+                      {/* Row 1: action type + campaign + confidence + date */}
+                      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8, flexWrap: "wrap" }}>
+                        <span style={{ fontFamily: F.mono, fontSize: 10, textTransform: "uppercase", letterSpacing: "1px", color: C.textDim }}>
+                          {(outcome.action_type || "").replace(/_/g, " ")}
+                        </span>
+                        {outcome.campaign_name && (
+                          <span style={{ fontSize: 12, color: C.textSecondary, fontWeight: 500 }}>
+                            · {outcome.campaign_name}
+                          </span>
+                        )}
+                        <span style={{ flex: 1 }} />
+                        <span style={{ fontFamily: F.mono, fontSize: 10, color: C.textDim }}>{ts}</span>
+                        <span style={{
+                          padding: "2px 9px", borderRadius: 99, fontSize: 10, fontFamily: F.mono, fontWeight: 600,
+                          background: confStyle.bg, color: confStyle.color, border: `1px solid ${confStyle.border}`,
+                        }}>
+                          {outcome.confidence}
+                        </span>
+                      </div>
+
+                      {/* Row 2: CPL before/after */}
+                      <div style={{ display: "flex", gap: 24, marginBottom: 8, flexWrap: "wrap" }}>
+                        {[
+                          { label: "CPL Before",  val: cplBefore,   color: C.textSecondary },
+                          { label: "CPL After",   val: cplAfter,    color: cplImproved ? "#16a34a" : cplWorse ? C.rose : C.textSecondary },
+                          { label: "Leads Before", val: outcome.leads_before ?? "—", color: C.textSecondary },
+                          { label: "Leads After",  val: outcome.leads_after  ?? "—", color: C.textSecondary },
+                        ].map(({ label, val, color }) => (
+                          <div key={label} style={{ textAlign: "center" }}>
+                            <div style={{ fontFamily: F.mono, fontSize: 9, color: C.textDim, textTransform: "uppercase", letterSpacing: "0.8px", marginBottom: 2 }}>{label}</div>
+                            <div style={{ fontSize: 15, fontWeight: 700, color, fontFamily: F.mono }}>{val}</div>
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* Row 3: conclusion */}
+                      {outcome.conclusion && (
+                        <div style={{ fontSize: 12, color: C.textSecondary, lineHeight: 1.5, borderTop: `1px solid ${C.borderDim}`, paddingTop: 8 }}>
+                          {outcome.conclusion}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Leads section */}
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+              <div style={{ fontFamily: F.mono, fontSize: 10, textTransform: "uppercase", letterSpacing: "1.5px", color: C.textMuted }}>
+                Recent Leads
+              </div>
+              <span style={{ fontFamily: F.sans, fontSize: 11, color: C.textDim }}>
+                — enter leads via webhook or qualify manually to enable CPL
+              </span>
+              <button
+                onClick={fetchLeads}
+                style={{ marginLeft: "auto", background: "transparent", border: `1px solid ${C.borderDim}`, borderRadius: 6, padding: "3px 10px", fontSize: 11, color: C.textMuted, cursor: "pointer" }}
+              >
+                Refresh
+              </button>
+            </div>
+
+            {leadsLoading && [0, 1, 2].map(i => (
+              <div key={i} className="data-card" style={{ marginBottom: 8, padding: "12px 16px" }}>
+                <div style={{ height: 10, borderRadius: 4, background: C.borderDim, width: "60%" }} />
+              </div>
+            ))}
+
+            {!leadsLoading && leadsData.length === 0 && (
+              <div style={{ background: C.bgSurface, border: `1px dashed ${C.borderMed}`, borderRadius: 10, padding: "32px 24px", textAlign: "center", marginBottom: 8 }}>
+                <div style={{ fontSize: 14, fontWeight: 600, color: C.textSecondary, marginBottom: 6 }}>No leads in the database</div>
+                <div style={{ fontSize: 12, color: C.textMuted, maxWidth: 460, margin: "0 auto", lineHeight: 1.7 }}>
+                  Send a webhook POST to <code style={{ fontFamily: F.mono, fontSize: 11 }}>/api/leads</code> with header <code style={{ fontFamily: F.mono, fontSize: 11 }}>x-leads-ingest-secret</code>.<br/>
+                  Supports Gravity Forms, CallRail, or generic JSON. Unknown fields are stored in raw_payload.
+                </div>
+              </div>
+            )}
+
+            {!leadsLoading && leadsData.length > 0 && (
+              <LeadTable leads={leadsData} onUpdate={fetchLeads} />
             )}
           </div>
         )}

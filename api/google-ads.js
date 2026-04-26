@@ -6,13 +6,6 @@ export default async function handler(req, res) {
 
   try {
     // Step 1: Get fresh access token using refresh token
-    console.log('=== TOKEN REQUEST DEBUG ===');
-    console.log('Client ID being used:', process.env.GOOGLE_ADS_CLIENT_ID?.substring(0, 30) + '...');
-    console.log('Client Secret length:', process.env.GOOGLE_ADS_CLIENT_SECRET?.length);
-    console.log('Client Secret first 10 chars:', process.env.GOOGLE_ADS_CLIENT_SECRET?.substring(0, 10));
-    console.log('Refresh Token first 20 chars:', process.env.GOOGLE_ADS_REFRESH_TOKEN?.substring(0, 20));
-    console.log('Refresh Token length:', process.env.GOOGLE_ADS_REFRESH_TOKEN?.length);
-
     const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -25,7 +18,6 @@ export default async function handler(req, res) {
     });
     const tokenJson = await tokenResponse.json();
     console.log('Token refresh status:', tokenResponse.status);
-    console.log('Token refresh response:', JSON.stringify(tokenJson));
 
     if (!tokenJson.access_token) {
       return res.status(200).json({
@@ -88,11 +80,9 @@ export default async function handler(req, res) {
     );
 
     console.log('Google Ads response status:', adsResponse.status);
-    console.log('Google Ads response headers:', JSON.stringify(Object.fromEntries(adsResponse.headers.entries())));
 
     const rawText = await adsResponse.text();
-    console.log('Google Ads status:', adsResponse.status);
-    console.log('Google Ads response preview:', rawText.substring(0, 800));
+    if (!adsResponse.ok) console.log('Google Ads error body:', rawText.substring(0, 400));
 
     if (!adsResponse.ok) {
       return res.status(200).json({

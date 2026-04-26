@@ -1,4 +1,5 @@
 import supabase from './lib/supabase.js';
+import { writeCampaignDailyStats } from './lib/campaign-stats.js';
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -227,13 +228,33 @@ export default async function handler(req, res) {
       metadata:    { google_available: !!googleData, meta_available: !!metaData, total: totalCount, inserted: insertedCount, skipped: skippedCount },
     });
 
-    // 5. Save performance snapshot
+    // 5. Save performance snapshot (keep for backwards compatibility)
     await supabase.from('performance_snapshots').insert({
       snapshot_at:  startedAt,
       google_data:  googleData  || null,
       meta_data:    metaData    || null,
       actions_created: insertedCount,
     });
+
+    // 6. Write per-campaign daily stats for attribution
+    const today = startedAt.slice(0, 10);
+    const statsPromises = [];
+    if (googleData?.campaigns?.length > 0) {
+      statsPromises.push(writeCampaignDailyStats(googleData.campaigns, 'google_ads', today));
+    }
+    if (metaData?.campaigns?.length > 0) {
+      statsPromises.push(writeCampaignDailyStats(metaData.campaigns, 'meta_ads', today));
+    }
+    if (statsPromises.length > 0) {
+      const statsResults = await Promise.all(statsPromises);
+      const statsWritten = statsResults.reduce((sum, r) => sum + (r.written || 0), 0);
+      const statsErrors  = statsResults.flatMap(r => r.errors || []);
+      if (statsErrors.length > 0) {
+        console.error('[campaign_daily_stats] write errors:', statsErrors);
+      } else {
+        console.log(`[campaign_daily_stats] wrote ${statsWritten} rows for ${today}`);
+      }
+    }
 
     return res.status(200).json({
       success: true,

@@ -4,6 +4,20 @@
 
 import supabase from './lib/supabase.js';
 
+// ── Shared auth helper (used by all write/mutation endpoints) ─────────────────
+function requireExecuteSecret(req, res) {
+  const secret = process.env.EXECUTE_SECRET;
+  if (!secret) {
+    console.warn('[SECURITY] EXECUTE_SECRET not set — mutation endpoint is unprotected');
+    return true; // allow through; set EXECUTE_SECRET in Vercel to enforce
+  }
+  if (req.headers['x-execute-secret'] !== secret) {
+    res.status(401).json({ success: false, error: 'Unauthorized' });
+    return false;
+  }
+  return true;
+}
+
 const CORS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
@@ -20,6 +34,7 @@ export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ success: false, error: 'Method not allowed' });
   }
+  if (!requireExecuteSecret(req, res)) return;
 
   const {
     imageBase64,
