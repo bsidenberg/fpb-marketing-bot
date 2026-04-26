@@ -76,6 +76,25 @@ describe('parseUtmFromUrl', () => {
     expect(utms.utm_source).toBe('facebook');
     expect(utms.utm_medium).toBe('paid_social');
   });
+
+  it('parses gclid from URL', () => {
+    const url = 'https://floridapolebarn.com/?utm_source=google&gclid=abc123XYZ';
+    const utms = parseUtmFromUrl(url);
+    expect(utms.gclid).toBe('abc123XYZ');
+    expect(utms.utm_source).toBe('google');
+  });
+
+  it('parses fbclid from URL', () => {
+    const url = 'https://floridapolebarn.com/?utm_source=facebook&fbclid=fb456';
+    const utms = parseUtmFromUrl(url);
+    expect(utms.fbclid).toBe('fb456');
+  });
+
+  it('returns null gclid and fbclid when absent', () => {
+    const utms = parseUtmFromUrl('https://floridapolebarn.com/?utm_source=google');
+    expect(utms.gclid).toBeNull();
+    expect(utms.fbclid).toBeNull();
+  });
 });
 
 // ── detectSource ────────────────────────────────────────────────────────────
@@ -193,6 +212,103 @@ describe('normalizeGeneric', () => {
       contact_name: 'Fred',
     };
     const result = normalizeGeneric(body);
+    expect(result.source_platform).toBe('meta');
+  });
+
+  it('parses UTMs from source_url (primary FPB/Gravity Forms field)', () => {
+    const body = {
+      name: 'Test Lead',
+      email: 'test@example.com',
+      source_url: 'https://floridapolebarn.com/contact/?utm_source=google&utm_medium=cpc&utm_campaign=test_campaign&utm_content=test_ad',
+    };
+    const result = normalizeGeneric(body);
+    expect(result.utm_source).toBe('google');
+    expect(result.utm_medium).toBe('cpc');
+    expect(result.utm_campaign).toBe('test_campaign');
+    expect(result.utm_content).toBe('test_ad');
+    expect(result.source_platform).toBe('google');
+    expect(result.attribution_confidence).toBe('medium');
+  });
+
+  it('exact FPB test payload — full UTM + gclid flow', () => {
+    const body = {
+      name: 'Test Lead',
+      email: 'test@example.com',
+      phone: '555-555-5555',
+      message: 'Testing FPB lead ingestion',
+      source_url: 'https://floridapolebarns.com/contact/?utm_source=google&utm_medium=cpc&utm_campaign=test_campaign&utm_content=test_ad&gclid=test-gclid-123',
+      campaign_name: 'Test Campaign',
+      lead_type: 'form',
+    };
+    const result = normalizeGeneric(body);
+    expect(result.source_platform).toBe('google');
+    expect(result.utm_source).toBe('google');
+    expect(result.utm_medium).toBe('cpc');
+    expect(result.utm_campaign).toBe('test_campaign');
+    expect(result.utm_content).toBe('test_ad');
+    expect(result.gclid).toBe('test-gclid-123');
+    expect(result.attribution_confidence).toBe('medium');
+    expect(result.contact_name).toBe('Test Lead');
+    expect(result.contact_email).toBe('test@example.com');
+    expect(result.notes).toBe('Testing FPB lead ingestion');
+  });
+
+  it('maps source_platform to google from gclid alone (no utm_source)', () => {
+    const body = {
+      source_url: 'https://floridapolebarn.com/?gclid=abc123',
+      contact_name: 'NoUtm',
+    };
+    const result = normalizeGeneric(body);
+    expect(result.source_platform).toBe('google');
+    expect(result.gclid).toBe('abc123');
+    expect(result.attribution_confidence).toBe('medium');
+  });
+
+  it('maps source_platform to meta from fbclid alone (no utm_source)', () => {
+    const body = {
+      source_url: 'https://floridapolebarn.com/?fbclid=fb789',
+      contact_name: 'FbOnly',
+    };
+    const result = normalizeGeneric(body);
+    expect(result.source_platform).toBe('meta');
+    expect(result.fbclid).toBe('fb789');
+    expect(result.attribution_confidence).toBe('medium');
+  });
+
+  it('parses UTMs from page_url when source_url absent', () => {
+    const body = {
+      page_url: 'https://floridapolebarn.com/?utm_source=google&utm_medium=cpc',
+      contact_name: 'PageUrl',
+    };
+    const result = normalizeGeneric(body);
+    expect(result.utm_source).toBe('google');
+    expect(result.source_platform).toBe('google');
+  });
+
+  it('parses UTMs from referrer_url when other URL fields absent', () => {
+    const body = {
+      referrer_url: 'https://floridapolebarn.com/?utm_source=meta',
+      contact_name: 'Referrer',
+    };
+    const result = normalizeGeneric(body);
+    expect(result.utm_source).toBe('meta');
+    expect(result.source_platform).toBe('meta');
+  });
+
+  it('sets attribution_confidence low when no UTMs and no click IDs', () => {
+    const body = { contact_name: 'No Attribution' };
+    const result = normalizeGeneric(body);
+    expect(result.attribution_confidence).toBe('low');
+    expect(result.source_platform).toBe('unknown');
+  });
+
+  it('prefers flat body utm_source over URL-parsed utm_source', () => {
+    const body = {
+      utm_source: 'meta',
+      source_url: 'https://floridapolebarn.com/?utm_source=google',
+    };
+    const result = normalizeGeneric(body);
+    expect(result.utm_source).toBe('meta');
     expect(result.source_platform).toBe('meta');
   });
 });

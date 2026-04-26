@@ -30,12 +30,12 @@ export function mapSourcePlatform(raw) {
 // ── UTM parsing ───────────────────────────────────────────────────────────────
 
 /**
- * Parse UTM params from a URL string.
+ * Parse UTM params and click IDs from a URL string.
  * @param {string|null} url
- * @returns {{ utm_source, utm_medium, utm_campaign, utm_content, utm_term }}
+ * @returns {{ utm_source, utm_medium, utm_campaign, utm_content, utm_term, gclid, fbclid }}
  */
 export function parseUtmFromUrl(url) {
-  const empty = { utm_source: null, utm_medium: null, utm_campaign: null, utm_content: null, utm_term: null };
+  const empty = { utm_source: null, utm_medium: null, utm_campaign: null, utm_content: null, utm_term: null, gclid: null, fbclid: null };
   if (!url) return empty;
   try {
     // Handle URLs that may be relative or missing protocol
@@ -47,6 +47,8 @@ export function parseUtmFromUrl(url) {
       utm_campaign: params.get('utm_campaign') || null,
       utm_content:  params.get('utm_content')  || null,
       utm_term:     params.get('utm_term')     || null,
+      gclid:        params.get('gclid')        || null,
+      fbclid:       params.get('fbclid')       || null,
     };
   } catch {
     return empty;
@@ -97,7 +99,12 @@ export function normalizeGravityForms(body) {
   const utm_content  = getField('utm_content')  || utms.utm_content;
   const utm_term     = getField('utm_term')     || utms.utm_term;
 
-  const rawSource    = utm_source || getField('source', 'traffic_source');
+  // Click IDs from flat fields or URL
+  const gclid  = getField('gclid')  || utms.gclid  || null;
+  const fbclid = getField('fbclid') || utms.fbclid || null;
+
+  const rawSource    = utm_source || getField('source', 'traffic_source')
+                     || (gclid ? 'google' : null) || (fbclid ? 'facebook' : null);
   const source_platform = mapSourcePlatform(rawSource);
 
   return {
@@ -112,9 +119,11 @@ export function normalizeGravityForms(body) {
     utm_campaign,
     utm_content,
     utm_term,
+    gclid,
+    fbclid,
     keyword:           utm_term,
     notes,
-    attribution_confidence: utm_source ? 'medium' : 'low',
+    attribution_confidence: utm_source || gclid || fbclid ? 'medium' : 'low',
     external_id:       getField('entry_id', 'id', 'lead_id'),
   };
 }
@@ -128,8 +137,12 @@ export function normalizeGravityForms(body) {
 export function normalizeCallRail(body) {
   const utms = parseUtmFromUrl(body.landing_page_url || body.referrer);
 
-  const rawSource    = body.utm_source || utms.utm_source
-                    || body.source     || body.tracking_source;
+  const utm_source   = body.utm_source   || utms.utm_source   || null;
+  const gclid        = body.gclid        || utms.gclid        || null;
+  const fbclid       = body.fbclid       || utms.fbclid       || null;
+
+  const rawSource    = utm_source || body.source || body.tracking_source
+                    || (gclid ? 'google' : null) || (fbclid ? 'facebook' : null);
   const source_platform = mapSourcePlatform(rawSource);
 
   return {
@@ -140,15 +153,17 @@ export function normalizeCallRail(body) {
     contact_location:  body.caller_city
                         ? `${body.caller_city}${body.caller_state ? ', ' + body.caller_state : ''}`
                         : null,
-    utm_source:        body.utm_source    || utms.utm_source,
+    utm_source,
     utm_medium:        body.utm_medium    || utms.utm_medium,
     utm_campaign:      body.utm_campaign  || utms.utm_campaign,
     utm_content:       body.utm_content   || utms.utm_content,
     utm_term:          body.utm_term      || utms.utm_term,
+    gclid,
+    fbclid,
     keyword:           body.keyword       || body.utm_term || utms.utm_term,
     campaign_name:     body.tracking_source || null,
     notes:             body.note          || body.transcription || null,
-    attribution_confidence: body.utm_source ? 'high' : source_platform !== 'unknown' ? 'medium' : 'low',
+    attribution_confidence: utm_source ? 'high' : source_platform !== 'unknown' ? 'medium' : 'low',
     external_id:       body.id ? String(body.id) : null,
   };
 }
@@ -160,10 +175,25 @@ export function normalizeCallRail(body) {
  * @returns {object} normalized fields
  */
 export function normalizeGeneric(body) {
-  const utms = parseUtmFromUrl(body.landing_page_url || body.page_url || body.referrer);
+  // Check all common URL field names — source_url is the primary FPB/Gravity Forms field
+  const utms = parseUtmFromUrl(
+    body.source_url || body.landing_page_url || body.page_url || body.referrer_url || body.referrer
+  );
 
-  const rawSource    = body.source_platform || body.utm_source || body.source
-                    || utms.utm_source;
+  // Resolve UTMs: prefer flat body fields, fall back to URL-parsed values
+  const utm_source   = body.utm_source   || utms.utm_source   || null;
+  const utm_medium   = body.utm_medium   || utms.utm_medium   || null;
+  const utm_campaign = body.utm_campaign || utms.utm_campaign || null;
+  const utm_content  = body.utm_content  || utms.utm_content  || null;
+  const utm_term     = body.utm_term     || utms.utm_term     || null;
+
+  // Click IDs — body flat fields take precedence over URL-parsed
+  const gclid  = body.gclid  || utms.gclid  || null;
+  const fbclid = body.fbclid || utms.fbclid || null;
+
+  // gclid is a definitive Google paid signal even without utm_source
+  const rawSource = body.source_platform || utm_source || body.source
+                  || (gclid ? 'google' : null) || (fbclid ? 'facebook' : null);
   const source_platform = mapSourcePlatform(rawSource) !== 'unknown'
     ? mapSourcePlatform(rawSource)
     : (body.source_platform || 'unknown');
@@ -181,16 +211,18 @@ export function normalizeGeneric(body) {
     ad_name:           body.ad_name       || null,
     ad_set_id:         body.ad_set_id     || null,
     ad_set_name:       body.ad_set_name   || null,
-    keyword:           body.keyword       || body.utm_term || utms.utm_term || null,
-    utm_source:        body.utm_source    || utms.utm_source,
-    utm_medium:        body.utm_medium    || utms.utm_medium,
-    utm_campaign:      body.utm_campaign  || utms.utm_campaign,
-    utm_content:       body.utm_content   || utms.utm_content,
-    utm_term:          body.utm_term      || utms.utm_term,
+    keyword:           body.keyword       || utm_term   || null,
+    utm_source,
+    utm_medium,
+    utm_campaign,
+    utm_content,
+    utm_term,
+    gclid,
+    fbclid,
     estimated_value:   body.estimated_value ? parseFloat(body.estimated_value) : null,
     notes:             body.notes || body.message || null,
     attribution_confidence: body.attribution_confidence ||
-      (body.utm_source || body.campaign_id ? 'medium' : 'low'),
+      (utm_source || gclid || fbclid || body.campaign_id ? 'medium' : 'low'),
     external_id:       body.external_id || body.id || null,
   };
 }
