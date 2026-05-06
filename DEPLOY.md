@@ -21,7 +21,13 @@ Set all of the following in the Vercel project settings before deploying to prod
 ### Lead Ingestion
 | Variable | Description |
 |---|---|
-| `LEADS_INGEST_SECRET` | Required. Random 32+ character secret sent as `x-leads-ingest-secret` header with every webhook POST to `/api/leads`. If not set, the endpoint warns in logs and accepts any POST — set before going live. Generate with `openssl rand -hex 32`. |
+| `LEADS_INGEST_SECRET` | Required. Secret sent as `x-leads-ingest-secret` header with every webhook POST to `/api/leads`. If not set, the endpoint warns in logs and accepts any POST — set before going live. |
+
+> **Cross-project requirement:** This exact value must be set in **two places**:
+> 1. **Vercel** — `LEADS_INGEST_SECRET` environment variable in the marketing bot project settings. Redeploy after changing.
+> 2. **FPB website (WordPress)** — as the `x-leads-ingest-secret` request header value in each Gravity Forms webhook and in the CallRail webhook secret header. Update these before rotating the secret.
+>
+> If the values don't match, all form and call webhooks will be rejected with 401.
 
 ### Attribution
 | Variable | Description |
