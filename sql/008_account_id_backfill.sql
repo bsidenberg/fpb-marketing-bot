@@ -14,10 +14,10 @@
 --   * sql/007_ai_analysis_runs.sql has been applied
 --
 -- Tables that exist in Supabase but were NOT in committed migration files
--- (actions, automation_log, performance_snapshots, chat_messages) have
--- their ALTER statements at the bottom of this file as commented MANUAL
--- APPLY blocks. Those should be applied immediately before Stage A2
--- begins, or during Stage A1 only if Brian explicitly approves.
+-- (actions, automation_log, performance_snapshots) have their ALTER
+-- statements at the bottom of this file as commented MANUAL APPLY blocks.
+-- Those should be applied immediately before Stage A2 begins, or during
+-- Stage A1 only if Brian explicitly approves.
 --
 -- This migration is intended to be applied ONCE. ADD COLUMN IF NOT EXISTS
 -- and CREATE INDEX IF NOT EXISTS make most steps re-runnable, but the
@@ -170,8 +170,6 @@ create unique index campaign_daily_stats_account_platform_campaign_date_uidx
 --   * performance_snapshots → NULLABLE (preserves history regardless of
 --                             account presence; some early snapshots
 --                             pre-date account scoping)
---   * chat_messages         → NULLABLE (chat sessions may not always be
---                             tied to a single account)
 -- ============================================================
 
 /*
@@ -207,15 +205,11 @@ alter table performance_snapshots
   foreign key (account_id) references accounts(id) on delete restrict;
 create index if not exists performance_snapshots_account_id_idx on performance_snapshots (account_id);
 
--- chat_messages (NULLABLE)
-alter table chat_messages add column if not exists account_id uuid;
-update chat_messages
-  set account_id = (select id from accounts where slug = 'fpb')
-  where account_id is null;
-alter table chat_messages
-  add constraint chat_messages_account_id_fkey
-  foreign key (account_id) references accounts(id) on delete restrict;
-create index if not exists chat_messages_account_id_idx on chat_messages (account_id);
+-- chat_messages: REMOVED — the table does not exist in production
+-- Supabase. (api/chat.js references it, but it was never created.) If
+-- the chat feature is built in a future phase, the table should be
+-- created with an account_id column from the start, not retrofitted
+-- via this migration.
 */
 
 -- ============================================================
@@ -293,10 +287,11 @@ create index if not exists chat_messages_account_id_idx on chat_messages (accoun
 --                                        api/performance-snapshots.js:80-90)
 --   Plan: MANUAL APPLY block above (account_id NULLABLE).
 --
--- chat_messages  (NOT IN COMMITTED SQL)
---   Inferred columns:
---     id (assumed PK), role, content, message_type, session_id,
---     image_data, action_payload, created_at (assumed)
---                                       (api/chat.js:274-279, 345-360)
---   Plan: MANUAL APPLY block above (account_id NULLABLE).
+-- chat_messages  (NOT IN COMMITTED SQL — does not exist in production)
+--   Originally inferred from api/chat.js:274-279, 345-360. Verified
+--   during Phase 1 Stage A1 MANUAL APPLY that the table was never
+--   actually created in production Supabase. The MANUAL APPLY block
+--   for chat_messages was therefore removed from this migration.
+--   If the chat feature ships in a future phase, the table should be
+--   created with an account_id column from the start.
 -- ============================================================
