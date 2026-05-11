@@ -1,5 +1,51 @@
 import { useState, useEffect, useReducer, useCallback, useRef } from "react";
 
+// ── Stage B2: account-aware fetch wrapper ──
+// Appends ?account=<slug> to the URL so backend routes resolve the right
+// account context. Falls back to 'fpb' if no slug provided (preserves
+// Stage B1 default behavior). Use this anywhere we used to call plain fetch.
+function accountFetch(url, options = {}, accountSlug = 'fpb') {
+  const slug = accountSlug || 'fpb';
+  const sep = url.includes('?') ? '&' : '?';
+  const finalUrl = `${url}${sep}account=${encodeURIComponent(slug)}`;
+  return fetch(finalUrl, options);
+}
+
+// ── Stage B2: AccountSelector — header dropdown / label ──
+// Behavior tiers:
+//   0 active accounts → render nothing (loading or unconfigured state)
+//   1 active account  → render as a static .stat-chip label (no point
+//                       in a dropdown with one option)
+//   2+ active accounts → render as a styled <select> dropdown, options
+//                        rendered in the order returned by /api/accounts
+//                        (listActiveAccounts orders by created_at asc).
+function AccountSelector({ accounts, selectedSlug, onChange }) {
+  if (!accounts || accounts.length === 0) return null;
+
+  if (accounts.length === 1) {
+    return (
+      <div className="stat-chip stat-chip-account" title="Active account">
+        {accounts[0].name}
+      </div>
+    );
+  }
+
+  return (
+    <select
+      className="stat-chip stat-chip-account stat-chip-select"
+      value={selectedSlug}
+      onChange={(e) => onChange(e.target.value)}
+      aria-label="Active account"
+    >
+      {accounts.map(account => (
+        <option key={account.slug} value={account.slug}>
+          {account.name}
+        </option>
+      ))}
+    </select>
+  );
+}
+
 // ── Design tokens ──
 const C = {
   bgBase:    "#f3f4f6",   // Gray-100 page bg
@@ -150,6 +196,104 @@ const GLOBAL_CSS = `
     background: linear-gradient(225deg, rgba(255,255,255,0.04), transparent);
     border-bottom-left-radius: 60px;
     pointer-events: none;
+  }
+
+  /* Stage B2: MTD Spend vs Cap panel. Mirrors .metric-card chrome
+     (white card on the Overview tab's light theme) but lays out
+     horizontally for the spend-vs-cap headline + progress bar +
+     per-platform breakdown. */
+  .mtd-panel {
+    background: #ffffff;
+    border: 1px solid #d1d5db;
+    border-radius: 16px;
+    padding: 20px 22px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    font-family: 'Inter', system-ui, sans-serif;
+    color: #3a3a3a;
+  }
+  .mtd-loading {
+    font-family: 'DM Mono', monospace;
+    font-size: 11px;
+    color: #6b7280;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+  }
+  .mtd-title {
+    font-family: 'DM Mono', monospace;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    color: #6b7280;
+    margin-bottom: 10px;
+  }
+  .mtd-amount {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+  .mtd-spend {
+    font-family: 'Inter', system-ui, sans-serif;
+    font-size: 28px;
+    font-weight: 700;
+    color: #3a3a3a;
+    letter-spacing: -0.5px;
+    line-height: 1;
+  }
+  .mtd-separator {
+    font-family: 'DM Mono', monospace;
+    font-size: 12px;
+    color: #9ca3af;
+  }
+  .mtd-cap {
+    font-family: 'Inter', system-ui, sans-serif;
+    font-size: 16px;
+    font-weight: 500;
+    color: #6b7280;
+  }
+  .mtd-pct {
+    margin-left: auto;
+    font-family: 'DM Mono', monospace;
+    font-size: 11px;
+    color: #6b7280;
+    background: #f3f4f6;
+    padding: 3px 8px;
+    border-radius: 8px;
+  }
+  .mtd-bar {
+    height: 8px;
+    background: #f3f4f6;
+    border-radius: 4px;
+    overflow: hidden;
+    margin-bottom: 14px;
+  }
+  .mtd-bar-fill {
+    height: 100%;
+    background: #16a34a;       /* green-600 — normal (<75%) */
+    transition: width 0.3s ease, background 0.3s ease;
+  }
+  .mtd-bar-fill.over-75 { background: #f59e0b; }   /* amber-500 — warning */
+  .mtd-bar-fill.over-90 { background: #dc2626; }   /* red-600 — danger */
+  .mtd-by-platform {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-family: 'DM Mono', monospace;
+    font-size: 12px;
+    color: #6b7280;
+    padding-top: 4px;
+    border-top: 1px solid #e5e7eb;
+  }
+  .mtd-platform-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 4px 0;
+  }
+  .mtd-platform-name { color: #6b7280; }
+  .mtd-platform-spend {
+    color: #3a3a3a;
+    font-weight: 500;
   }
 
   .data-card {
@@ -353,6 +497,40 @@ const GLOBAL_CSS = `
     border-radius: 20px; padding: 5px 13px;
     font-family: 'DM Mono', monospace; font-size: 11px; color: #d1d5db;
     display: flex; align-items: center; gap: 6px;
+  }
+
+  /* Stage B2: account chip variants. .stat-chip-account is the shared
+     base for both the single-account label and the multi-account select.
+     .stat-chip-select adds appearance:none + a custom chevron so the
+     <select> reads as a chip. Native option popup styling is left
+     to the OS — that's acceptable for a multi-tenant dashboard. */
+  .stat-chip-account {
+    text-transform: none;
+    letter-spacing: 0;
+  }
+  .stat-chip-select {
+    cursor: pointer;
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    padding-right: 26px;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath fill='%23d1d5db' d='M0 0l5 6 5-6z'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 10px center;
+    color: #d1d5db;
+    font-family: 'DM Mono', monospace;
+    font-size: 11px;
+    line-height: 1.2;
+  }
+  .stat-chip-select:focus {
+    outline: 1px solid rgba(192,39,45,0.5);
+    outline-offset: 1px;
+  }
+  /* Options render in the native OS popup; force readable colors so
+     selection isn't invisible on dark-mode hosts. */
+  .stat-chip-select option {
+    color: #1a2444;
+    background: #ffffff;
   }
 
   @keyframes dotPulse {
@@ -718,7 +896,7 @@ function CampaignsTable({ campaigns }) {
 }
 
 // ── Ad preview card ──
-function AdPreviewCard({ adPreview, processedImage, onApprove, autoApproveEnabled, onAutoApproveToggle }) {
+function AdPreviewCard({ adPreview, processedImage, onApprove, autoApproveEnabled, onAutoApproveToggle, accountSlug = 'fpb', account = null }) {
   const [activeTab,    setActiveTab]    = useState(adPreview?.formats?.[0] || 'meta_feed');
   const [publishing,   setPublishing]   = useState(false);
   const [publishResult,setPublishResult]= useState(null);
@@ -749,7 +927,7 @@ function AdPreviewCard({ adPreview, processedImage, onApprove, autoApproveEnable
         const ctaMap = { 'Get Quote': 'GET_QUOTE', 'Contact Us': 'CONTACT_US', 'Shop Now': 'SHOP_NOW' };
         // Queue a pending action — do NOT call /api/meta-creative directly.
         // The creative will only be published after human approval in AI Actions.
-        const res = await fetch('/api/actions', {
+        const res = await accountFetch('/api/actions', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -762,13 +940,15 @@ function AdPreviewCard({ adPreview, processedImage, onApprove, autoApproveEnable
               imageBase64:  processedImage.base64,
               mediaType:    processedImage.mediaType || 'image/jpeg',
               format:       processedImage.format    || 'feed',
-              adName:       `FPB — ${adPreview.headline || 'Ad'} — ${new Date().toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}`,
+              adName:       `${account?.name || 'FPB'} — ${adPreview.headline || 'Ad'} — ${new Date().toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}`,
               headline:     adPreview.headline    || 'Get Your Free Quote Today',
-              primaryText:  adPreview.primaryText || 'Florida Pole Barn Kits — Built for Florida.',
+              primaryText:  adPreview.primaryText || (account?.name
+                ? `${account.name} — Built for ${account.primary_location || 'Florida'}.`
+                : 'Florida Pole Barn Kits — Built for Florida.'),
               callToAction: ctaMap[adPreview.cta] || 'LEARN_MORE',
             },
           }),
-        });
+        }, accountSlug);
         const json = await res.json();
         if (json.success) {
           setPublishResult({ queued: true, actionId: json.data?.id });
@@ -792,7 +972,9 @@ function AdPreviewCard({ adPreview, processedImage, onApprove, autoApproveEnable
     ? adPreview.formats
     : ['meta_feed', 'meta_story', 'google_search', 'google_display'];
   const headline    = adPreview.headline    || 'Pole Barn Kits — Built for Florida';
-  const primaryText = adPreview.primaryText || 'Florida Pole Barn Kits — Licensed & insured. Free quotes statewide.';
+  const primaryText = adPreview.primaryText || (account?.name
+    ? `${account.name} — Licensed & insured. Free quotes statewide.`
+    : 'Florida Pole Barn Kits — Licensed & insured. Free quotes statewide.');
   const description = adPreview.description || 'Hurricane-rated. AG-exempt available.';
   const cta         = adPreview.cta         || 'Learn More';
   const displayUrl  = adPreview.displayUrl  || 'floridapolebarn.com';
@@ -825,7 +1007,7 @@ function AdPreviewCard({ adPreview, processedImage, onApprove, autoApproveEnable
           <div style={{ padding: '10px 12px', display: 'flex', alignItems: 'center', gap: 8 }}>
             <div style={{ width: 36, height: 36, borderRadius: '50%', background: '#e4e6ea', flexShrink: 0 }} />
             <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 13, fontWeight: 700, color: '#050505' }}>Florida Pole Barn</div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: '#050505' }}>{account?.name || 'Florida Pole Barn'}</div>
               <div style={{ fontSize: 11, color: '#65676b' }}>Sponsored · 🌐</div>
             </div>
             <div style={{ color: '#65676b', fontSize: 18, cursor: 'pointer' }}>•••</div>
@@ -866,7 +1048,7 @@ function AdPreviewCard({ adPreview, processedImage, onApprove, autoApproveEnable
             <div style={{ position: 'absolute', top: 16, left: 8, right: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
               <div style={{ width: 24, height: 24, borderRadius: '50%', background: 'rgba(255,255,255,0.3)', border: '1.5px solid #fff', flexShrink: 0 }} />
               <div>
-                <div style={{ fontSize: 10, fontWeight: 700, color: '#fff' }}>Florida Pole Barn</div>
+                <div style={{ fontSize: 10, fontWeight: 700, color: '#fff' }}>{account?.name || 'Florida Pole Barn'}</div>
                 <div style={{ fontSize: 9, color: 'rgba(255,255,255,0.7)' }}>Sponsored</div>
               </div>
             </div>
@@ -921,7 +1103,7 @@ function AdPreviewCard({ adPreview, processedImage, onApprove, autoApproveEnable
             </div>
             <div style={{ flex: 1, background: '#fff', padding: '8px 10px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
               <div>
-                <div style={{ fontSize: 12, fontWeight: 700, color: '#3a3a3a' }}>Florida Pole Barn</div>
+                <div style={{ fontSize: 12, fontWeight: 700, color: '#3a3a3a' }}>{account?.name || 'Florida Pole Barn'}</div>
                 <div style={{ fontSize: 11, color: '#3a3a3a', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{headline}</div>
               </div>
               <button style={{ width: '100%', padding: '5px 0', background: '#c0272d', color: '#fff', border: 'none', borderRadius: 3, fontSize: 10, fontWeight: 700, cursor: 'pointer' }}>{cta}</button>
@@ -1009,7 +1191,7 @@ function AdPreviewCard({ adPreview, processedImage, onApprove, autoApproveEnable
 }
 
 // ── Image processing panel ──
-function ImageProcessPanel({ msgId, originalImage, panelState, updatePanel }) {
+function ImageProcessPanel({ msgId, originalImage, panelState, updatePanel, accountSlug = 'fpb', account = null }) {
   const format    = panelState?.format    ?? 'feed';
   const overlayOn = panelState?.overlayOn ?? false;
   const overlayText = panelState?.overlayText ?? '';
@@ -1021,7 +1203,7 @@ function ImageProcessPanel({ msgId, originalImage, panelState, updatePanel }) {
 
   // Push-to-Meta form state
   const pushOpen      = panelState?.pushOpen      ?? false;
-  const pushAdName    = panelState?.pushAdName    ?? `FPB ${format.charAt(0).toUpperCase() + format.slice(1)} — ${new Date().toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}`;
+  const pushAdName    = panelState?.pushAdName    ?? `${account?.name || 'FPB'} ${format.charAt(0).toUpperCase() + format.slice(1)} — ${new Date().toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}`;
   const pushHeadline  = panelState?.pushHeadline  ?? '';
   const pushBody      = panelState?.pushBody      ?? '';
   const pushCta       = panelState?.pushCta       ?? 'LEARN_MORE';
@@ -1056,11 +1238,18 @@ function ImageProcessPanel({ msgId, originalImage, panelState, updatePanel }) {
     };
 
     try {
-      const res  = await fetch('/api/image-process', {
+      // /api/image-process is account-agnostic today (stateless image bytes
+      // in → bytes out). Sending both query param and header is forward-compat
+      // belt-and-suspenders for a future per-account variant — backend
+      // currently ignores both, so no behavior change.
+      const res  = await accountFetch('/api/image-process', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'x-account-slug': accountSlug,
+        },
         body: JSON.stringify(body),
-      });
+      }, accountSlug);
       const json = await res.json();
       if (json.success) {
         updatePanel(msgId, { processing: false, result: json.processedImage });
@@ -1076,7 +1265,7 @@ function ImageProcessPanel({ msgId, originalImage, panelState, updatePanel }) {
     if (!result) return;
     const a = document.createElement('a');
     a.href = `data:image/jpeg;base64,${result.base64}`;
-    a.download = `fpb-ad-${format}-${Date.now()}.jpg`;
+    a.download = `${accountSlug || 'fpb'}-ad-${format}-${Date.now()}.jpg`;
     a.click();
   };
 
@@ -1085,26 +1274,28 @@ function ImageProcessPanel({ msgId, originalImage, panelState, updatePanel }) {
     updatePanel(msgId, { pushing: true, pushError: null, pushResult: null });
     try {
       // Queue a pending action — do NOT call /api/meta-creative directly.
-      const res = await fetch('/api/actions', {
+      const res = await accountFetch('/api/actions', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({
           channel:      'meta_ads',
           action_type:  'publish_creative',
-          title:        `Publish: ${pushAdName || `FPB ${format} Ad`}`,
+          title:        `Publish: ${pushAdName || `${account?.name || 'FPB'} ${format} Ad`}`,
           description:  `Publish Meta ad creative from image processing panel. Format: ${format}.`,
           priority:     'high',
           execution_data: {
             imageBase64:  result.base64,
             mediaType:    result.mediaType || 'image/jpeg',
             format,
-            adName:       pushAdName   || `FPB ${format} Ad`,
+            adName:       pushAdName   || `${account?.name || 'FPB'} ${format} Ad`,
             headline:     pushHeadline || 'Get Your Free Quote Today',
-            primaryText:  pushBody     || 'Florida Pole Barn Kits — Built for Florida.',
+            primaryText:  pushBody     || (account?.name
+              ? `${account.name} — Built for ${account.primary_location || 'Florida'}.`
+              : 'Florida Pole Barn Kits — Built for Florida.'),
             callToAction: pushCta,
           },
         }),
-      });
+      }, accountSlug);
       const json = await res.json();
       if (json.success) {
         updatePanel(msgId, { pushing: false, pushResult: { queued: true, actionId: json.data?.id }, pushOpen: false });
@@ -1368,7 +1559,7 @@ function ImageProcessPanel({ msgId, originalImage, panelState, updatePanel }) {
 }
 
 // ── Chat action card ──
-function ActionCard({ payload }) {
+function ActionCard({ payload, accountSlug = 'fpb' }) {
   const [status, setStatus] = useState("idle"); // idle | executing | done | error
   const [errorMsg, setErrorMsg] = useState(null);
 
@@ -1384,7 +1575,7 @@ function ActionCard({ payload }) {
     setStatus("executing");
     try {
       // Step 1: Create a pending action row so this execution is auditable.
-      const createRes = await fetch("/api/actions", {
+      const createRes = await accountFetch("/api/actions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1399,7 +1590,7 @@ function ActionCard({ payload }) {
             campaign_name: payload.campaign_name,
           },
         }),
-      });
+      }, accountSlug);
       const createJson = await createRes.json();
       if (!createRes.ok || !createJson.success) {
         throw new Error(createJson.error || "Failed to queue action");
@@ -1407,11 +1598,11 @@ function ActionCard({ payload }) {
       const actionId = createJson.data?.id;
 
       // Step 2: Approve and execute via proxy (no client secret required).
-      const approveRes = await fetch("/api/approve-action", {
+      const approveRes = await accountFetch("/api/approve-action", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ actionId }),
-      });
+      }, accountSlug);
       const json = await approveRes.json();
       if (!approveRes.ok && approveRes.status !== 409) {
         throw new Error(json.error || "Execution failed");
@@ -1473,7 +1664,7 @@ function ActionCard({ payload }) {
 }
 
 // ── Lead table with inline qualification editing ──────────────────────────────
-function LeadTable({ leads, onUpdate }) {
+function LeadTable({ leads, onUpdate, accountSlug = 'fpb' }) {
   const [editing, setEditing]   = useState(null); // lead id being edited
   const [saving, setSaving]     = useState(null);
   const [saveError, setSaveError] = useState(null);
@@ -1516,11 +1707,11 @@ function LeadTable({ leads, onUpdate }) {
 
     try {
       // Use query param — routes to api/leads.js via Vercel rewrite
-      const res = await fetch(`/api/leads?id=${id}`, {
+      const res = await accountFetch(`/api/leads?id=${id}`, {
         method:  "PATCH",
         headers: { "Content-Type": "application/json" },
         body:    JSON.stringify(body),
-      });
+      }, accountSlug);
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.error || `Save failed (${res.status})`);
@@ -1714,6 +1905,10 @@ export default function MarketingBotDashboard() {
   const [snapshotData, setSnapshotData] = useState(null);
   const [snapshotLoading, setSnapshotLoading] = useState(false);
 
+  // ── Stage B2: MTD spend vs cap (Overview panel) ──
+  const [budgetData, setBudgetData] = useState(null);
+  const [budgetLoading, setBudgetLoading] = useState(false);
+
   // ── Automation Log tab state ──
   const [logData, setLogData] = useState([]);
   const [logLoading, setLogLoading] = useState(false);
@@ -1739,6 +1934,42 @@ export default function MarketingBotDashboard() {
   const chatBottomRef = useRef(null);
   const fileInputRef = useRef(null);
 
+  // ── Stage B2: account context ──
+  // selectedAccountSlug controls which account every fetch site targets.
+  // Default 'fpb' preserves Stage B1 behavior. Persisted across sessions
+  // via localStorage. activeAccounts populates the header dropdown and
+  // provides selectedAccount for brand-string substitutions.
+  const [selectedAccountSlug, setSelectedAccountSlug] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('selected_account_slug') || 'fpb';
+    }
+    return 'fpb';
+  });
+  const [activeAccounts, setActiveAccounts] = useState([]);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('selected_account_slug', selectedAccountSlug);
+    }
+  }, [selectedAccountSlug]);
+
+  useEffect(() => {
+    fetch('/api/accounts')
+      .then(r => r.json())
+      .then(json => {
+        if (json.success && Array.isArray(json.data)) {
+          setActiveAccounts(json.data.filter(a => a.status === 'active'));
+        }
+      })
+      .catch(err => {
+        console.error('[dashboard] failed to load accounts', err);
+      });
+  }, []);
+
+  // Derived: full account row for the current selection (or null while loading)
+  const selectedAccount =
+    activeAccounts.find(a => a.slug === selectedAccountSlug) || null;
+
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 60000);
     const p = setInterval(() => setBotPulse(v => !v), 2000);
@@ -1751,8 +1982,8 @@ export default function MarketingBotDashboard() {
     setLiveDataError(null);
     try {
       const [gRes, fbRes] = await Promise.all([
-        fetch('/api/google-ads'),
-        fetch('/api/facebook-ads'),
+        accountFetch('/api/google-ads', {}, selectedAccountSlug),
+        accountFetch('/api/facebook-ads', {}, selectedAccountSlug),
       ]);
       const gData = await gRes.json();
       const fbData = await fbRes.json();
@@ -1773,7 +2004,7 @@ export default function MarketingBotDashboard() {
   const fetchActions = useCallback(async (status) => {
     setActionsLoading(true);
     try {
-      const res = await fetch(`/api/actions?status=${status}`);
+      const res = await accountFetch(`/api/actions?status=${status}`, {}, selectedAccountSlug);
       const json = await res.json();
       setActionsData(json.success ? (json.data || []) : []);
     } catch {
@@ -1781,11 +2012,11 @@ export default function MarketingBotDashboard() {
     } finally {
       setActionsLoading(false);
     }
-  }, []);
+  }, [selectedAccountSlug]);
 
   useEffect(() => {
     if (state.activeTab === "actions") fetchActions(actionsFilter);
-  }, [state.activeTab, actionsFilter, fetchActions]);
+  }, [state.activeTab, actionsFilter, fetchActions, selectedAccountSlug]);
 
   const normalizePlatform = (p) => {
     if (!p) return null;
@@ -1807,11 +2038,11 @@ export default function MarketingBotDashboard() {
 
     try {
       // Use approve-action proxy — no secret required from the browser.
-      const execRes = await fetch("/api/approve-action", {
+      const execRes = await accountFetch("/api/approve-action", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ actionId: id }),
-      });
+      }, selectedAccountSlug);
       const execJson = await execRes.json();
 
       if (execRes.status === 409) {
@@ -1851,11 +2082,11 @@ export default function MarketingBotDashboard() {
     setActionsData(prev => prev.filter(a => a.id !== id));
     showToast("Action rejected");
     try {
-      await fetch(`/api/actions/${id}`, {
+      await accountFetch(`/api/actions/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: "rejected" }),
-      });
+      }, selectedAccountSlug);
     } catch { /* optimistic applied — ignore */ }
   };
 
@@ -1863,7 +2094,7 @@ export default function MarketingBotDashboard() {
   const fetchSnapshot = useCallback(async () => {
     setSnapshotLoading(true);
     try {
-      const res = await fetch("/api/performance-snapshots");
+      const res = await accountFetch("/api/performance-snapshots", {}, selectedAccountSlug);
       const json = await res.json();
       setSnapshotData(json.success ? json.data : null);
     } catch {
@@ -1871,18 +2102,35 @@ export default function MarketingBotDashboard() {
     } finally {
       setSnapshotLoading(false);
     }
-  }, []);
+  }, [selectedAccountSlug]);
+
+  // ── Stage B2: MTD spend vs cap fetch ──
+  const fetchBudget = useCallback(async () => {
+    setBudgetLoading(true);
+    try {
+      const res = await accountFetch("/api/account-budget", {}, selectedAccountSlug);
+      const json = await res.json();
+      setBudgetData(json.success ? json.data : null);
+    } catch {
+      setBudgetData(null);
+    } finally {
+      setBudgetLoading(false);
+    }
+  }, [selectedAccountSlug]);
 
   useEffect(() => {
-    if (state.activeTab === "overview") fetchSnapshot();
-  }, [state.activeTab, fetchSnapshot]);
+    if (state.activeTab === "overview") {
+      fetchSnapshot();
+      fetchBudget();
+    }
+  }, [state.activeTab, fetchSnapshot, fetchBudget, selectedAccountSlug]);
 
   // ── Automation Log fetch ──
   const fetchLog = useCallback(async (platform) => {
     setLogLoading(true);
     try {
       const params = platform !== "all" ? `?platform=${platform}` : "";
-      const res = await fetch(`/api/automation-log${params}`);
+      const res = await accountFetch(`/api/automation-log${params}`, {}, selectedAccountSlug);
       const json = await res.json();
       setLogData(json.success ? (json.data || []) : []);
     } catch {
@@ -1890,49 +2138,54 @@ export default function MarketingBotDashboard() {
     } finally {
       setLogLoading(false);
     }
-  }, []);
+  }, [selectedAccountSlug]);
 
   useEffect(() => {
     if (state.activeTab === "log") fetchLog(logPlatform);
-  }, [state.activeTab, logPlatform, fetchLog]);
+  }, [state.activeTab, logPlatform, fetchLog, selectedAccountSlug]);
 
   // ── Attribution: fetch outcomes and recent leads ──
   const fetchOutcomes = useCallback(async () => {
     setOutcomesLoading(true);
     try {
-      const res  = await fetch("/api/action-outcomes");
+      const res  = await accountFetch("/api/action-outcomes", {}, selectedAccountSlug);
       const json = await res.json();
       setOutcomesData(json.success ? (json.data || []) : []);
     } catch { setOutcomesData([]); }
     finally  { setOutcomesLoading(false); }
-  }, []);
+  }, [selectedAccountSlug]);
 
   const fetchLeads = useCallback(async () => {
     setLeadsLoading(true);
     try {
-      const res  = await fetch("/api/leads?limit=20");
+      const res  = await accountFetch("/api/leads?limit=20", {}, selectedAccountSlug);
       const json = await res.json();
       setLeadsData(json.success ? (json.data || []) : []);
     } catch { setLeadsData([]); }
     finally  { setLeadsLoading(false); }
-  }, []);
+  }, [selectedAccountSlug]);
 
   useEffect(() => {
     if (state.activeTab === "attribution") {
       fetchOutcomes();
       fetchLeads();
     }
-  }, [state.activeTab, fetchOutcomes, fetchLeads]);
+  }, [state.activeTab, fetchOutcomes, fetchLeads, selectedAccountSlug]);
 
   // ── Chat: load history on mount ──
+  // Welcome message reads from the selected account at render time so it
+  // updates when the user switches accounts (the effect deps already
+  // include selectedAccountSlug via Sub-Task 4).
   const WELCOME_MSG = {
     id: "welcome", role: "assistant", message_type: "text",
-    content: "Hi! I'm your FPB marketing AI. Ask me about your ad performance, campaign strategy, or request changes to your campaigns.",
+    content: selectedAccount?.name
+      ? `Hi! I'm your ${selectedAccount.name} marketing AI. Ask me about your ad performance, campaign strategy, or request changes to your campaigns.`
+      : "Hi! I'm your FPB marketing AI. Ask me about your ad performance, campaign strategy, or request changes to your campaigns.",
   };
   useEffect(() => {
     (async () => {
       try {
-        const res  = await fetch(`/api/chat?sessionId=${chatSessionId}`);
+        const res  = await accountFetch(`/api/chat?sessionId=${chatSessionId}`, {}, selectedAccountSlug);
         const json = await res.json();
         if (json.success && json.messages?.length > 0) {
           setChatMessages(json.messages);
@@ -1943,7 +2196,7 @@ export default function MarketingBotDashboard() {
         setChatMessages([WELCOME_MSG]);
       }
     })();
-  }, [chatSessionId]); // eslint-disable-line
+  }, [chatSessionId, selectedAccountSlug]); // eslint-disable-line
 
   // ── Chat: auto-scroll ──
   useEffect(() => {
@@ -1999,11 +2252,11 @@ export default function MarketingBotDashboard() {
       const body1 = { message: msg, sessionId: chatSessionId, conversationHistory: history };
       if (imageSnapshot) body1.imageData = { base64: imageSnapshot.base64, mediaType: imageSnapshot.mediaType };
 
-      const res1 = await fetch("/api/chat", {
+      const res1 = await accountFetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body1),
-      });
+      }, selectedAccountSlug);
       const json1 = await res1.json();
 
       if (json1.type === "fetching") {
@@ -2013,11 +2266,11 @@ export default function MarketingBotDashboard() {
         const body2 = { message: msg, sessionId: chatSessionId, conversationHistory: history, includeAdData: true };
         if (imageSnapshot) body2.imageData = { base64: imageSnapshot.base64, mediaType: imageSnapshot.mediaType };
 
-        const res2 = await fetch("/api/chat", {
+        const res2 = await accountFetch("/api/chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(body2),
-        });
+        }, selectedAccountSlug);
         const json2 = await res2.json();
         setChatFetching(false);
 
@@ -2111,8 +2364,8 @@ export default function MarketingBotDashboard() {
           </div>
           <div>
             <div style={{ fontFamily: F.serif, fontSize: 16, fontWeight: 700, letterSpacing: "-0.01em", lineHeight: 1.15 }}>
-              <span style={{ color: C.textPrimary }}>FPB</span>
-              <span style={{ color: C.gold }}>AI</span>
+              <span style={{ color: C.textPrimary }}>{selectedAccount?.name || 'FPB'}</span>
+              <span style={{ color: C.gold }}>&nbsp;AI</span>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 5, marginTop: 2 }}>
               <span className="pip" />
@@ -2124,6 +2377,11 @@ export default function MarketingBotDashboard() {
         </div>
 
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <AccountSelector
+            accounts={activeAccounts}
+            selectedSlug={selectedAccountSlug}
+            onChange={setSelectedAccountSlug}
+          />
           <div className="stat-chip">
             <span style={{ width: 6, height: 6, borderRadius: "50%", background: C.emerald, boxShadow: `0 0 7px ${C.emerald}`, display: "inline-block" }} />
             LIVE
@@ -2321,6 +2579,63 @@ export default function MarketingBotDashboard() {
                 </span>
               </div>
             </div>
+
+            {/* ── Stage B2: MTD Spend vs Cap panel ── */}
+            {budgetLoading && !budgetData && (
+              <div className="mtd-panel" style={{ marginTop: 16 }}>
+                <div className="mtd-loading">Loading budget data…</div>
+              </div>
+            )}
+            {budgetData && (() => {
+              const total = Number(budgetData.mtd_spend_total) || 0;
+              const cap   = budgetData.monthly_spend_cap;
+              const hasCap = cap != null && Number.isFinite(Number(cap));
+              const pct   = hasCap && Number(cap) > 0
+                ? Math.min(100, (total / Number(cap)) * 100)
+                : 0;
+              const fillClass =
+                pct > 90 ? "mtd-bar-fill over-90" :
+                pct > 75 ? "mtd-bar-fill over-75" :
+                "mtd-bar-fill";
+              const fmtUSD = (n) => `$${Number(n || 0).toLocaleString("en-US", {
+                minimumFractionDigits: 2, maximumFractionDigits: 2,
+              })}`;
+              const platformLabel = (p) =>
+                p === "google_ads" ? "Google Ads" :
+                p === "meta_ads"   ? "Meta Ads"   :
+                p;
+
+              return (
+                <div className="mtd-panel" style={{ marginTop: 16 }}>
+                  <div className="mtd-title">MTD Spend vs Cap</div>
+                  <div className="mtd-amount">
+                    <span className="mtd-spend">{fmtUSD(total)}</span>
+                    <span className="mtd-separator">of</span>
+                    <span className="mtd-cap">
+                      {hasCap ? fmtUSD(cap) : "no cap set"}
+                    </span>
+                    {hasCap && (
+                      <span className="mtd-pct">{pct.toFixed(0)}%</span>
+                    )}
+                  </div>
+                  {hasCap && (
+                    <div className="mtd-bar">
+                      <div className={fillClass} style={{ width: `${pct}%` }} />
+                    </div>
+                  )}
+                  {Object.keys(budgetData.mtd_spend_by_platform || {}).length > 0 && (
+                    <div className="mtd-by-platform">
+                      {Object.entries(budgetData.mtd_spend_by_platform).map(([platform, spend]) => (
+                        <div key={platform} className="mtd-platform-row">
+                          <span className="mtd-platform-name">{platformLabel(platform)}</span>
+                          <span className="mtd-platform-spend">{fmtUSD(spend)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
           </div>
         )}
 
@@ -2761,6 +3076,8 @@ export default function MarketingBotDashboard() {
                               originalImage={origImage}
                               panelState={imagePanels[msg.id]}
                               updatePanel={updatePanel}
+                              accountSlug={selectedAccountSlug}
+                              account={selectedAccount}
                             />
                           </div>
                         </div>
@@ -2774,7 +3091,7 @@ export default function MarketingBotDashboard() {
                         <div style={{ maxWidth: "80%" }}>
                           <div style={{ fontFamily: F.mono, fontSize: 9, textTransform: "uppercase", letterSpacing: "1.5px", color: C.textDim, marginBottom: 5 }}>AI Assistant</div>
                           <div className="chat-bubble-assistant" style={{ marginBottom: 8 }}>{msg.content}</div>
-                          <ActionCard payload={msg.action_payload} />
+                          <ActionCard payload={msg.action_payload} accountSlug={selectedAccountSlug} />
                           {msg.adPreview && (
                             <AdPreviewCard
                               adPreview={msg.adPreview}
@@ -2782,6 +3099,8 @@ export default function MarketingBotDashboard() {
                               onApprove={() => {}}
                               autoApproveEnabled={autoApproveEnabled}
                               onAutoApproveToggle={handleAutoApproveToggle}
+                              accountSlug={selectedAccountSlug}
+                              account={selectedAccount}
                             />
                           )}
                         </div>
@@ -2801,6 +3120,8 @@ export default function MarketingBotDashboard() {
                             originalImage={origImage}
                             panelState={imagePanels[msg.id]}
                             updatePanel={updatePanel}
+                            accountSlug={selectedAccountSlug}
+                            account={selectedAccount}
                           />
                         )}
                         {msg.adPreview && (
@@ -2810,6 +3131,8 @@ export default function MarketingBotDashboard() {
                             onApprove={() => {}}
                             autoApproveEnabled={autoApproveEnabled}
                             onAutoApproveToggle={handleAutoApproveToggle}
+                            accountSlug={selectedAccountSlug}
+                            account={selectedAccount}
                           />
                         )}
                       </div>
@@ -3404,7 +3727,7 @@ export default function MarketingBotDashboard() {
             )}
 
             {!leadsLoading && leadsData.length > 0 && (
-              <LeadTable leads={leadsData} onUpdate={fetchLeads} />
+              <LeadTable leads={leadsData} onUpdate={fetchLeads} accountSlug={selectedAccountSlug} />
             )}
           </div>
         )}
