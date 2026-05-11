@@ -11,11 +11,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const singleQueue = [];
 let lastInsertRow  = null;
 let lastUpdatePatch = null;
+let eqCalls        = []; // track .eq(col, val) calls so tests can verify scoping
 
 function makeChain() {
   const chain = {
     select:  () => makeChain(),
-    eq:      () => makeChain(),
+    eq:      (col, val) => { eqCalls.push([col, val]); return makeChain(); },
     insert:  (row)   => { lastInsertRow   = row;   return makeChain(); },
     update:  (patch) => { lastUpdatePatch = patch; return makeChain(); },
     limit:   () => makeChain(),
@@ -30,6 +31,79 @@ function makeChain() {
 vi.mock('../api/lib/supabase.js', () => ({
   default: { from: () => makeChain() },
 }));
+
+// ── Accounts helper mock ──────────────────────────────────────────────────────
+// Tests control resolution by mutating module-scope state below. The mock
+// mirrors the real helper's contract: resolveAccountFromRequest throws for
+// 400/403; getAccountBySlug never throws and returns null for missing.
+
+const DEFAULT_FPB_ACCOUNT = { id: 'fpb-uuid', slug: 'fpb', status: 'active' };
+let mockAccount      = DEFAULT_FPB_ACCOUNT; // what getAccountBySlug + resolveAccountFromRequest return on success
+let mockResolveError = null;                // what resolveAccountFromRequest throws (Error w/ statusCode)
+
+function setMockAccount(account) {
+  mockAccount      = account;
+  mockResolveError = null;
+}
+
+function setMockResolveError(statusCode, message) {
+  const err = new Error(message);
+  err.statusCode = statusCode;
+  mockResolveError = err;
+}
+
+vi.mock('../api/lib/accounts.js', () => {
+  const getAccountSlugFromRequest = (req) =>
+    req?.query?.account || req?.headers?.['x-account-slug'] || 'fpb';
+  const getAccountBySlug = async (slug) =>
+    (mockAccount?.slug === slug ? mockAccount : null);
+  const resolveAccountFromRequest = async () => {
+    if (mockResolveError) throw mockResolveError;
+    return mockAccount;
+  };
+  return {
+    FPB_DEFAULT_SLUG: 'fpb',
+    resolveAccountFromRequest,
+    getAccountSlugFromRequest,
+    getAccountBySlug,
+    resolveForRead: async (req, res) => {
+      const slug = getAccountSlugFromRequest(req);
+      const account = await getAccountBySlug(slug);
+      if (!account) {
+        res.status(400).json({
+          success: false,
+          error:   `Account slug not found: ${slug}`,
+          code:    'INVALID_ACCOUNT',
+        });
+        return null;
+      }
+      return account;
+    },
+    resolveForWrite: async (req, res) => {
+      let account;
+      try {
+        account = await resolveAccountFromRequest(req);
+      } catch (err) {
+        const code = err.statusCode === 400 ? 'INVALID_ACCOUNT' : 'ACCOUNT_ARCHIVED';
+        res.status(err.statusCode || 500).json({
+          success: false,
+          error:   err.message,
+          code,
+        });
+        return null;
+      }
+      if (account.status === 'inactive') {
+        res.status(403).json({
+          success: false,
+          error:   `Account is inactive: ${account.slug}`,
+          code:    'ACCOUNT_INACTIVE',
+        });
+        return null;
+      }
+      return account;
+    },
+  };
+});
 
 import handler from '../api/leads.js';
 
@@ -68,6 +142,9 @@ beforeEach(() => {
   singleQueue.length = 0;
   lastInsertRow      = null;
   lastUpdatePatch    = null;
+  eqCalls            = [];
+  mockAccount        = DEFAULT_FPB_ACCOUNT;
+  mockResolveError   = null;
   delete process.env.LEADS_INGEST_SECRET;
 });
 
@@ -240,7 +317,10 @@ describe('PATCH /api/leads — qualification update', () => {
 
   it('PATCH new -> qualified sets qualification_status and qualified_at', async () => {
     const updatedRow = { id: 'lead-uuid', qualification_status: 'qualified', qualified_at: new Date().toISOString() };
-    queueResults({ data: updatedRow, error: null });
+    queueResults(
+      { data: { id: 'lead-uuid', account_id: 'fpb-uuid' }, error: null }, // ownership fetch
+      { data: updatedRow, error: null },                                  // update result
+    );
 
     const req = makeReq({ method: 'PATCH', url: '/api/leads', query: { id: 'lead-uuid' }, body: { qualification_status: 'qualified' } });
     const res = makeRes();
@@ -255,7 +335,10 @@ describe('PATCH /api/leads — qualification update', () => {
 
   it('PATCH -> booked sets booked_at, booked_revenue, gross_profit', async () => {
     const updatedRow = { id: 'lead-uuid', qualification_status: 'booked', booked_revenue: 35000, gross_profit: 8000 };
-    queueResults({ data: updatedRow, error: null });
+    queueResults(
+      { data: { id: 'lead-uuid', account_id: 'fpb-uuid' }, error: null },
+      { data: updatedRow, error: null },
+    );
 
     const req = makeReq({
       method: 'PATCH',
@@ -274,7 +357,10 @@ describe('PATCH /api/leads — qualification update', () => {
   });
 
   it('PATCH -> lost sets lost_at', async () => {
-    queueResults({ data: { id: 'lead-uuid', qualification_status: 'lost' }, error: null });
+    queueResults(
+      { data: { id: 'lead-uuid', account_id: 'fpb-uuid' }, error: null },
+      { data: { id: 'lead-uuid', qualification_status: 'lost' }, error: null },
+    );
 
     const req = makeReq({ method: 'PATCH', url: '/api/leads', query: { id: 'lead-uuid' }, body: { qualification_status: 'lost', lost_reason: 'Price too high' } });
     const res = makeRes();
@@ -287,7 +373,10 @@ describe('PATCH /api/leads — qualification update', () => {
   });
 
   it('PATCH notes-only persists notes', async () => {
-    queueResults({ data: { id: 'lead-uuid', notes: 'Interested in 30x40' }, error: null });
+    queueResults(
+      { data: { id: 'lead-uuid', account_id: 'fpb-uuid' }, error: null },
+      { data: { id: 'lead-uuid', notes: 'Interested in 30x40' }, error: null },
+    );
 
     const req = makeReq({ method: 'PATCH', url: '/api/leads', query: { id: 'lead-uuid' }, body: { notes: 'Interested in 30x40' } });
     const res = makeRes();
@@ -300,7 +389,10 @@ describe('PATCH /api/leads — qualification update', () => {
 
   it('returns updated row in response', async () => {
     const updatedRow = { id: 'lead-uuid', qualification_status: 'qualified', qualified_at: '2026-04-25T12:00:00Z', notes: 'Called back' };
-    queueResults({ data: updatedRow, error: null });
+    queueResults(
+      { data: { id: 'lead-uuid', account_id: 'fpb-uuid' }, error: null },
+      { data: updatedRow, error: null },
+    );
 
     const req = makeReq({ method: 'PATCH', url: '/api/leads', query: { id: 'lead-uuid' }, body: { qualification_status: 'qualified' } });
     const res = makeRes();
@@ -308,5 +400,111 @@ describe('PATCH /api/leads — qualification update', () => {
 
     expect(res._body.data.id).toBe('lead-uuid');
     expect(res._body.data.qualification_status).toBe('qualified');
+  });
+});
+
+// ── Account scoping (Stage B1) ───────────────────────────────────────────────
+
+describe('POST /api/leads — account scoping', () => {
+  it('POST without account header defaults to FPB', async () => {
+    queueResults({ data: [], error: null });                                        // dedup: none
+    queueResults({ data: { id: 'fpb-lead', qualification_status: 'new' }, error: null }); // insert
+
+    const req = makeReq({ headers: {}, body: { contact_email: 'default@fpb.com' } });
+    const res = makeRes();
+    await handler(req, res);
+
+    expect(res._statusCode).toBe(201);
+    expect(lastInsertRow.account_id).toBe('fpb-uuid');
+    expect(lastInsertRow.client_key).toBe('fpb');
+    expect(lastInsertRow.dedup_key).toMatch(/^fpb::email::default@fpb\.com::/);
+  });
+
+  it('POST with x-account-slug: weld inserts row with weld account_id and weld-prefixed dedup_key', async () => {
+    setMockAccount({ id: 'weld-uuid', slug: 'weld', status: 'active' });
+    queueResults({ data: [], error: null });
+    queueResults({ data: { id: 'weld-lead', qualification_status: 'new' }, error: null });
+
+    const req = makeReq({
+      headers: { 'x-account-slug': 'weld' },
+      body:    { contact_email: 'lead@weld.com' },
+    });
+    const res = makeRes();
+    await handler(req, res);
+
+    expect(res._statusCode).toBe(201);
+    expect(lastInsertRow.account_id).toBe('weld-uuid');
+    expect(lastInsertRow.client_key).toBe('weld');
+    expect(lastInsertRow.dedup_key).toMatch(/^weld::email::lead@weld\.com::/);
+  });
+
+  it('POST with unknown slug returns 400 INVALID_ACCOUNT', async () => {
+    setMockResolveError(400, 'Account slug not found: bogus');
+
+    const req = makeReq({ headers: { 'x-account-slug': 'bogus' }, body: { contact_email: 'x@y.com' } });
+    const res = makeRes();
+    await handler(req, res);
+
+    expect(res._statusCode).toBe(400);
+    expect(res._body.code).toBe('INVALID_ACCOUNT');
+    expect(lastInsertRow).toBeNull();
+  });
+
+  it('POST when account is archived returns 403 ACCOUNT_ARCHIVED', async () => {
+    setMockResolveError(403, 'Account is archived: oldco');
+
+    const req = makeReq({ headers: { 'x-account-slug': 'oldco' }, body: { contact_email: 'x@y.com' } });
+    const res = makeRes();
+    await handler(req, res);
+
+    expect(res._statusCode).toBe(403);
+    expect(res._body.code).toBe('ACCOUNT_ARCHIVED');
+    expect(lastInsertRow).toBeNull();
+  });
+
+  it('POST when account is inactive returns 403 ACCOUNT_INACTIVE', async () => {
+    setMockAccount({ id: 'pause-uuid', slug: 'pause', status: 'inactive' });
+
+    const req = makeReq({ headers: { 'x-account-slug': 'pause' }, body: { contact_email: 'x@y.com' } });
+    const res = makeRes();
+    await handler(req, res);
+
+    expect(res._statusCode).toBe(403);
+    expect(res._body.code).toBe('ACCOUNT_INACTIVE');
+    expect(lastInsertRow).toBeNull();
+  });
+});
+
+describe('GET /api/leads — account scoping', () => {
+  it('GET filters results by account_id', async () => {
+    queueResults({ data: [{ id: 'lead-1', account_id: 'fpb-uuid' }], error: null });
+
+    const req = makeReq({ method: 'GET', headers: {}, query: {} });
+    const res = makeRes();
+    await handler(req, res);
+
+    expect(res._statusCode).toBe(200);
+    expect(res._body.success).toBe(true);
+    expect(eqCalls).toContainEqual(['account_id', 'fpb-uuid']);
+  });
+});
+
+describe('PATCH /api/leads — account scoping', () => {
+  it('returns 403 ACCOUNT_MISMATCH when lead belongs to a different account', async () => {
+    // Caller's account is FPB by default; lead's account is weld.
+    queueResults({ data: { id: 'lead-uuid', account_id: 'weld-uuid' }, error: null });
+
+    const req = makeReq({
+      method: 'PATCH',
+      url:    '/api/leads',
+      query:  { id: 'lead-uuid' },
+      body:   { qualification_status: 'qualified' },
+    });
+    const res = makeRes();
+    await handler(req, res);
+
+    expect(res._statusCode).toBe(403);
+    expect(res._body.code).toBe('ACCOUNT_MISMATCH');
+    expect(lastUpdatePatch).toBeNull(); // never reached the update path
   });
 });

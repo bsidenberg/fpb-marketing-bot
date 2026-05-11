@@ -1,13 +1,57 @@
+// ============================================================
+// api/facebook-ads.js — read-only Meta Ads campaign data
+//
+// GET /api/facebook-ads
+//   Optional: ?account=<slug> or x-account-slug header (defaults to 'fpb')
+//
+// Stage B1 retrofit:
+//   • Access token + ad account ID now come from ad_platform_connections
+//     via getConnectionForAccount.
+//   • Reads allowed for archived/inactive accounts (per policy).
+//   • Missing connection: 404 CONNECTION_NOT_FOUND.
+//   • Connection missing required resolved_* field: 503 CONNECTION_INCOMPLETE.
+// ============================================================
+
+import {
+  resolveForRead,
+  getConnectionForAccount,
+  checkConnectionFields,
+} from './lib/accounts.js';
+
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-account-slug');
   if (req.method === 'OPTIONS') return res.status(200).end();
 
+  const account = await resolveForRead(req, res);
+  if (!account) return;
+
+  const connection = await getConnectionForAccount(account.id, 'meta_ads');
+  if (!connection) {
+    return res.status(404).json({
+      success: false,
+      error:   `No meta_ads connection configured for account ${account.slug}`,
+      code:    'CONNECTION_NOT_FOUND',
+    });
+  }
+
+  const missing = checkConnectionFields(connection, 'meta_ads');
+  if (missing) {
+    return res.status(503).json({
+      success: false,
+      error:   `meta_ads connection for ${account.slug} is incomplete: ${missing}`,
+      code:    'CONNECTION_INCOMPLETE',
+    });
+  }
+
   try {
-    const accessToken = process.env.META_ACCESS_TOKEN;
-    const adAccountId = process.env.META_AD_ACCOUNT_ID;
-    const apiVersion = 'v19.0';
-    const baseUrl = `https://graph.facebook.com/${apiVersion}`;
+    const accessToken = connection.resolved_access_token;
+    // Defensive prefix handling — env var may or may not include 'act_'
+    const rawAccountId = connection.resolved_account_id_external;
+    const adAccountId  = rawAccountId.startsWith('act_') ? rawAccountId.slice(4) : rawAccountId;
+    const apiVersion   = 'v19.0';
+    const baseUrl      = `https://graph.facebook.com/${apiVersion}`;
 
     // Fetch account-level insights for last 30 days
     const insightsUrl = `${baseUrl}/act_${adAccountId}/insights?fields=spend,clicks,impressions,actions,action_values,ctr,cpc,cpp,reach,frequency&date_preset=last_30d&access_token=${accessToken}`;
@@ -45,8 +89,6 @@ export default async function handler(req, res) {
     const cpl = conversions > 0 ? (spend / conversions).toFixed(2) : null;
 
     const rawCampaigns = campaignsData.data || [];
-    console.log('Raw campaigns count:', rawCampaigns.length);
-    console.log('First campaign sample:', JSON.stringify(rawCampaigns[0], null, 2));
 
     const campaigns = rawCampaigns.map(campaign => {
       // insights can be nested as campaign.insights.data[0] or campaign.insights
@@ -85,12 +127,6 @@ export default async function handler(req, res) {
           : null,
       };
     });
-
-    // Log all action types found for debugging
-    const allActionTypes = rawCampaigns
-      .flatMap(c => c.insights?.data?.[0]?.actions || [])
-      .map(a => a.action_type);
-    console.log('All action types found:', [...new Set(allActionTypes)]);
 
     res.status(200).json({
       success: true,

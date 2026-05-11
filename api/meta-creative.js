@@ -1,10 +1,40 @@
-// Required env var: META_PAGE_ID — your Facebook Page ID
-// Find it at: facebook.com/your-page → About → Page transparency → Page ID
-// Add to Vercel: Settings → Environment Variables → META_PAGE_ID
+// ============================================================
+// api/meta-creative.js — upload an image to Meta and create an ad creative
+//
+// POST /api/meta-creative
+//   Auth: x-execute-secret (server-only — see DEPLOY.md)
+//   Optional: ?account=<slug> or x-account-slug header (defaults to 'fpb')
+//
+// Stage B1 retrofit:
+//   • Account-scoped via resolveForWrite (rejects archived/inactive with 403).
+//   • Access token + ad account ID now come from ad_platform_connections
+//     via getConnectionForAccount. Hardcoded META_ACCESS_TOKEN /
+//     META_AD_ACCOUNT_ID env vars are no longer read on this path.
+//   • Missing connection: 404 CONNECTION_NOT_FOUND.
+//     Connection missing required resolved_* field: 503 CONNECTION_INCOMPLETE.
+//   • automation_log insert now carries account_id.
+//
+// META_PAGE_ID remains env-resolved for now. A future stage will move it
+// to ad_platform_connections.metadata once we have a per-account page map.
+// ============================================================
 
 import supabase from './lib/supabase.js';
+import {
+  resolveForWrite,
+  getConnectionForAccount,
+  checkConnectionFields,
+} from './lib/accounts.js';
 
-// ── Shared auth helper (used by all write/mutation endpoints) ─────────────────
+const CORS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type, x-execute-secret, x-account-slug',
+};
+
+function cors(res) {
+  Object.entries(CORS).forEach(([k, v]) => res.setHeader(k, v));
+}
+
 function requireExecuteSecret(req, res) {
   const secret = process.env.EXECUTE_SECRET;
   if (!secret) {
@@ -18,16 +48,6 @@ function requireExecuteSecret(req, res) {
   return true;
 }
 
-const CORS = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type',
-};
-
-function cors(res) {
-  Object.entries(CORS).forEach(([k, v]) => res.setHeader(k, v));
-}
-
 export default async function handler(req, res) {
   cors(res);
   if (req.method === 'OPTIONS') return res.status(200).end();
@@ -35,6 +55,9 @@ export default async function handler(req, res) {
     return res.status(405).json({ success: false, error: 'Method not allowed' });
   }
   if (!requireExecuteSecret(req, res)) return;
+
+  const account = await resolveForWrite(req, res);
+  if (!account) return;
 
   const {
     imageBase64,
@@ -50,8 +73,25 @@ export default async function handler(req, res) {
     return res.status(400).json({ success: false, error: 'Missing imageBase64' });
   }
 
-  const accessToken  = process.env.META_ACCESS_TOKEN;
-  const rawAccountId = process.env.META_AD_ACCOUNT_ID || '';
+  const connection = await getConnectionForAccount(account.id, 'meta_ads');
+  if (!connection) {
+    return res.status(404).json({
+      success: false,
+      error:   `No meta_ads connection configured for account ${account.slug}`,
+      code:    'CONNECTION_NOT_FOUND',
+    });
+  }
+  const missing = checkConnectionFields(connection, 'meta_ads');
+  if (missing) {
+    return res.status(503).json({
+      success: false,
+      error:   `meta_ads connection for ${account.slug} is incomplete: ${missing}`,
+      code:    'CONNECTION_INCOMPLETE',
+    });
+  }
+
+  const accessToken  = connection.resolved_access_token;
+  const rawAccountId = connection.resolved_account_id_external;
   const adAccountId  = rawAccountId.startsWith('act_') ? rawAccountId : `act_${rawAccountId}`;
   const pageId       = String(process.env.META_PAGE_ID);
   const apiBase      = 'https://graph.facebook.com/v19.0';
@@ -152,9 +192,10 @@ export default async function handler(req, res) {
     return res.status(500).json({ success: false, error: err.message, step: 'create_creative' });
   }
 
-  // ── STEP 3: Log to automation_log ─────────────────────────────────────────
+  // ── STEP 3: Log to automation_log (account-scoped) ────────────────────────
   try {
     await supabase.from('automation_log').insert({
+      account_id:  account.id,
       event_type:  'creative_uploaded',
       platform:    'meta_ads',
       status:      'complete',

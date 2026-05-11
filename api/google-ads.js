@@ -1,23 +1,66 @@
-// Updated: force redeploy
+// ============================================================
+// api/google-ads.js — read-only Google Ads campaign data
+//
+// GET /api/google-ads
+//   Optional: ?account=<slug> or x-account-slug header (defaults to 'fpb')
+//
+// Stage B1 retrofit:
+//   • Customer ID, manager ID, and refresh token now come from
+//     ad_platform_connections via getConnectionForAccount.
+//   • Hardcoded '8325311811' / '5435219372' fallbacks removed.
+//   • Reads are allowed for archived/inactive accounts (per policy).
+//   • Missing connection: 404 CONNECTION_NOT_FOUND.
+//   • Connection missing required resolved_* field: 503 CONNECTION_INCOMPLETE.
+//   • OAuth client_id / client_secret / developer_token remain global env
+//     (shared developer credentials, not per-account).
+// ============================================================
+
+import {
+  resolveForRead,
+  getConnectionForAccount,
+  checkConnectionFields,
+} from './lib/accounts.js';
+
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-account-slug');
   if (req.method === 'OPTIONS') return res.status(200).end();
 
+  const account = await resolveForRead(req, res);
+  if (!account) return;
+
+  const connection = await getConnectionForAccount(account.id, 'google_ads');
+  if (!connection) {
+    return res.status(404).json({
+      success: false,
+      error:   `No google_ads connection configured for account ${account.slug}`,
+      code:    'CONNECTION_NOT_FOUND',
+    });
+  }
+
+  const missing = checkConnectionFields(connection, 'google_ads');
+  if (missing) {
+    return res.status(503).json({
+      success: false,
+      error:   `google_ads connection for ${account.slug} is incomplete: ${missing}`,
+      code:    'CONNECTION_INCOMPLETE',
+    });
+  }
+
   try {
-    // Step 1: Get fresh access token using refresh token
+    // Step 1: Get fresh access token using the connection's refresh token
     const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
-        client_id: process.env.GOOGLE_ADS_CLIENT_ID,
+        client_id:     process.env.GOOGLE_ADS_CLIENT_ID,
         client_secret: process.env.GOOGLE_ADS_CLIENT_SECRET,
-        refresh_token: process.env.GOOGLE_ADS_REFRESH_TOKEN,
-        grant_type: 'refresh_token',
+        refresh_token: connection.resolved_refresh_token,
+        grant_type:    'refresh_token',
       }),
     });
     const tokenJson = await tokenResponse.json();
-    console.log('Token refresh status:', tokenResponse.status);
 
     if (!tokenJson.access_token) {
       return res.status(200).json({
@@ -30,10 +73,10 @@ export default async function handler(req, res) {
     }
 
     const access_token = tokenJson.access_token;
-
-    const customerId = process.env.GOOGLE_ADS_CUSTOMER_ID
-      ? process.env.GOOGLE_ADS_CUSTOMER_ID.replace(/-/g, '')
-      : '8325311811';
+    const customerId   = connection.resolved_account_id_external.replace(/-/g, '');
+    const managerId    = connection.resolved_manager_account_id
+      ? connection.resolved_manager_account_id.replace(/-/g, '')
+      : undefined;
 
     // Step 2: Query campaign performance for last 30 days
     const query = `
@@ -56,34 +99,22 @@ export default async function handler(req, res) {
     `;
 
     const apiUrl = `https://googleads.googleapis.com/v23/customers/${customerId}/googleAds:search`;
-    console.log('=== GOOGLE ADS DEBUG ===');
-    console.log('API URL:', apiUrl);
-    console.log('Customer ID:', customerId);
-    console.log('Manager ID:', process.env.GOOGLE_ADS_MANAGER_ID);
-    console.log('Dev token present:', !!process.env.GOOGLE_ADS_DEVELOPER_TOKEN);
-    console.log('Access token present:', !!access_token);
 
     const adsResponse = await fetch(
       apiUrl,
       {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${access_token}`,
-          'developer-token': process.env.GOOGLE_ADS_DEVELOPER_TOKEN,
-          'login-customer-id': process.env.GOOGLE_ADS_MANAGER_ID
-            ? process.env.GOOGLE_ADS_MANAGER_ID.replace(/-/g, '')
-            : '5435219372',
-          'Content-Type': 'application/json',
+          'Authorization':     `Bearer ${access_token}`,
+          'developer-token':   process.env.GOOGLE_ADS_DEVELOPER_TOKEN,
+          'login-customer-id': managerId,
+          'Content-Type':      'application/json',
         },
         body: JSON.stringify({ query }),
       }
     );
 
-    console.log('Google Ads response status:', adsResponse.status);
-
     const rawText = await adsResponse.text();
-    if (!adsResponse.ok) console.log('Google Ads error body:', rawText.substring(0, 400));
-
     if (!adsResponse.ok) {
       return res.status(200).json({
         success: false,

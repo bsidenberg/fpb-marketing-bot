@@ -1,3 +1,25 @@
+// ============================================================
+// api/create-facebook-campaign.js — create a paused campaign + ad set
+//
+// POST /api/create-facebook-campaign
+//   Auth: x-execute-secret (server-only — see DEPLOY.md)
+//   Optional: ?account=<slug> or x-account-slug header (defaults to 'fpb')
+//
+// Stage B1 retrofit:
+//   • Account-scoped via resolveForWrite (rejects archived/inactive with 403).
+//   • Access token + ad account ID now come from ad_platform_connections
+//     via getConnectionForAccount. META_ACCESS_TOKEN / META_AD_ACCOUNT_ID
+//     env vars are no longer read on this path.
+//   • Missing connection: 404 CONNECTION_NOT_FOUND.
+//     Connection missing required resolved_* field: 503 CONNECTION_INCOMPLETE.
+// ============================================================
+
+import {
+  resolveForWrite,
+  getConnectionForAccount,
+  checkConnectionFields,
+} from './lib/accounts.js';
+
 function requireExecuteSecret(req, res) {
   const secret = process.env.EXECUTE_SECRET;
   if (!secret) {
@@ -14,16 +36,39 @@ function requireExecuteSecret(req, res) {
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-execute-secret, x-account-slug');
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
   if (!requireExecuteSecret(req, res)) return;
 
+  const account = await resolveForWrite(req, res);
+  if (!account) return;
+
+  const connection = await getConnectionForAccount(account.id, 'meta_ads');
+  if (!connection) {
+    return res.status(404).json({
+      success: false,
+      error:   `No meta_ads connection configured for account ${account.slug}`,
+      code:    'CONNECTION_NOT_FOUND',
+    });
+  }
+  const missing = checkConnectionFields(connection, 'meta_ads');
+  if (missing) {
+    return res.status(503).json({
+      success: false,
+      error:   `meta_ads connection for ${account.slug} is incomplete: ${missing}`,
+      code:    'CONNECTION_INCOMPLETE',
+    });
+  }
+
   try {
-    const { campaignName, objective, dailyBudget, adSetName, targeting, adName, adCopy, imageUrl, linkUrl } = req.body;
-    const accessToken = process.env.META_ACCESS_TOKEN;
-    const adAccountId = process.env.META_AD_ACCOUNT_ID;
-    const apiVersion = 'v19.0';
-    const baseUrl = `https://graph.facebook.com/${apiVersion}`;
+    const { campaignName, objective, dailyBudget, adSetName, targeting } = req.body;
+    const accessToken  = connection.resolved_access_token;
+    const rawAccountId = connection.resolved_account_id_external;
+    // Defensive prefix handling — connection value may or may not include 'act_'
+    const adAccountId  = rawAccountId.startsWith('act_') ? rawAccountId.slice(4) : rawAccountId;
+    const apiVersion   = 'v19.0';
+    const baseUrl      = `https://graph.facebook.com/${apiVersion}`;
 
     // Step 1: Create Campaign
     const campaignRes = await fetch(`${baseUrl}/act_${adAccountId}/campaigns`, {

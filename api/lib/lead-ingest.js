@@ -267,34 +267,42 @@ export function normalizePayload(body) {
 // ── Deduplication ─────────────────────────────────────────────────────────────
 
 /**
- * Build a deduplication key for a lead.
+ * Build a deduplication key for a lead, scoped to an account.
+ *
+ * Stage B1 prefixed every dedup key with `${accountSlug}::` so the same
+ * email or phone can be a fresh lead for a different account on the same
+ * day without colliding.
  *
  * Strategy (conservative — prefer false negatives over false positives):
- *   1. If external_id provided, use source_type::external_id
- *   2. If email provided, use email::YYYY-MM-DD
- *   3. If phone provided, use phone::YYYY-MM-DD (digits only)
+ *   1. If external_id provided, use {slug}::{source_type}::{external_id}
+ *   2. If email provided,        use {slug}::email::{email}::YYYY-MM-DD
+ *   3. If phone provided,        use {slug}::phone::{digits}::YYYY-MM-DD
  *   4. Otherwise null (cannot dedup)
  *
+ * @param {string} accountSlug — required, throws if missing or empty
  * @param {object} normalized — output of normalizePayload
  * @param {string} source_type
  * @param {string} [dateStr] — YYYY-MM-DD, defaults to today
  * @returns {string|null}
  */
-export function buildDedupKey(normalized, source_type, dateStr) {
+export function buildDedupKey(accountSlug, normalized, source_type, dateStr) {
+  if (!accountSlug || typeof accountSlug !== 'string' || accountSlug.trim() === '') {
+    throw new Error('buildDedupKey requires accountSlug as the first argument');
+  }
   const day = dateStr || new Date().toISOString().slice(0, 10);
 
   if (normalized.external_id) {
-    return `${source_type}::${normalized.external_id}`;
+    return `${accountSlug}::${source_type}::${normalized.external_id}`;
   }
 
   if (normalized.contact_email) {
     const email = normalized.contact_email.toLowerCase().trim();
-    return `email::${email}::${day}`;
+    return `${accountSlug}::email::${email}::${day}`;
   }
 
   if (normalized.contact_phone) {
     const digits = normalized.contact_phone.replace(/\D/g, '');
-    if (digits.length >= 7) return `phone::${digits}::${day}`;
+    if (digits.length >= 7) return `${accountSlug}::phone::${digits}::${day}`;
   }
 
   return null;

@@ -12,6 +12,15 @@
 //   - Uses unique index on (action_id, metric_window_after_start) to prevent
 //     double-writes (idempotent)
 //
+// Stage B1 retrofit (Sub-Task 9):
+//   • Account-scoped throughout. Closes Sub-Task 7 deferred holes:
+//       — countLeads filters by account_id (was: client_key='fpb')
+//       — performance_snapshots fallback filters by account_id
+//       — action_outcomes upsert includes account_id
+//   • ENABLE_MULTI_ACCOUNT_CRON gates the per-account loop.
+//     Default false → only FPB. Same flag as cron-analyze.
+//   • Per-account error isolation: one account's failure doesn't stop others.
+//
 // What it does NOT do:
 //   - Does not touch the approval flow
 //   - Does not modify actions table
@@ -29,8 +38,18 @@ import {
   buildConclusion,
 } from './lib/attribution.js';
 import { getCampaignSpend } from './lib/campaign-stats.js';
+import {
+  getAccountBySlug,
+  listActiveAccounts,
+  FPB_DEFAULT_SLUG,
+} from './lib/accounts.js';
 
 const WINDOW_DAYS = parseInt(process.env.OUTCOME_WINDOW_DAYS || '7', 10);
+
+// Read flag inside handler so tests can flip it per-test
+function isMultiAccountCronEnabled() {
+  return process.env.ENABLE_MULTI_ACCOUNT_CRON === 'true';
+}
 
 function isAuthorized(req) {
   const cronHeader  = req.headers['x-vercel-cron'];
@@ -47,8 +66,15 @@ function toDate(d) {
   return d.toISOString().slice(0, 10);
 }
 
-/** Count leads from the leads table within a window for a campaign. */
-async function countLeads(campaignId, platform, startDate, endDate) {
+/**
+ * Count leads from the leads table within a window for a campaign,
+ * scoped to one account.
+ *
+ * Stage B1 Sub-Task 9: filter is now `.eq('account_id', accountId)`.
+ * The previous `.eq('client_key', 'fpb')` filter is gone — it would have
+ * mixed accounts together once multiple slugs existed in `client_key`.
+ */
+async function countLeads(campaignId, accountId, platform, startDate, endDate) {
   if (!campaignId) return { total: null, qualified: null };
 
   const platformKey = platform === 'google_ads' ? 'google' : 'meta';
@@ -56,7 +82,7 @@ async function countLeads(campaignId, platform, startDate, endDate) {
   const { data, error } = await supabase
     .from('leads')
     .select('id, qualification_status')
-    .eq('client_key', 'fpb')
+    .eq('account_id', accountId)
     .eq('source_platform', platformKey)
     .eq('campaign_id', campaignId)
     .gte('created_at', new Date(startDate).toISOString())
@@ -71,22 +97,28 @@ async function countLeads(campaignId, platform, startDate, endDate) {
 }
 
 /**
- * Get the spend for a campaign in a date window.
+ * Get the spend for a campaign in a date window, scoped to one account.
  * Prefers campaign_daily_stats (precise) — falls back to performance_snapshots
  * (approximate) only if daily stats are unavailable.
+ *
+ * Stage B1 Sub-Task 9: the performance_snapshots fallback is now also
+ * account-scoped via `.eq('account_id', accountId)`. Without this filter,
+ * a multi-account install would mix snapshots from different accounts.
+ *
  * @returns {{ spend: number|null, source: 'daily_stats'|'snapshots'|'none' }}
  */
-async function getSpendWithSource(campaignId, platform, startDate, endDate) {
+async function getSpendWithSource(campaignId, accountId, platform, startDate, endDate) {
   if (!campaignId) return { spend: null, source: 'none' };
 
   // ── Preferred: campaign_daily_stats ────────────────────────────────────────
-  const dailySpend = await getCampaignSpend(campaignId, platform, startDate, endDate);
+  const dailySpend = await getCampaignSpend(campaignId, accountId, platform, startDate, endDate);
   if (dailySpend != null) return { spend: dailySpend, source: 'daily_stats' };
 
-  // ── Fallback: performance_snapshots ────────────────────────────────────────
+  // ── Fallback: performance_snapshots (now account-scoped) ──────────────────
   const { data, error } = await supabase
     .from('performance_snapshots')
     .select('*')
+    .eq('account_id', accountId)
     .gte('created_at', new Date(startDate).toISOString())
     .lt('created_at', new Date(endDate).toISOString())
     .order('created_at', { ascending: false })
@@ -112,13 +144,7 @@ async function getSpendWithSource(campaignId, platform, startDate, endDate) {
   return { spend: totalSpend / count, source: 'snapshots' };
 }
 
-/** Convenience wrapper: return spend only (backwards-compatible) */
-async function getSpendEstimate(campaignId, platform, startDate, endDate) {
-  const { spend } = await getSpendWithSource(campaignId, platform, startDate, endDate);
-  return spend;
-}
-
-async function evaluateAction(action, dryRun) {
+async function evaluateAction(action, account, dryRun) {
   const executedAt = action.executed_at || action.reviewed_at;
   if (!executedAt) return { skipped: true, reason: 'No executed_at timestamp' };
 
@@ -129,17 +155,18 @@ async function evaluateAction(action, dryRun) {
 
   const campaignId = action.execution_data?.campaign_id || null;
   const platform   = action.channel === 'google_ads' ? 'google_ads' : 'meta_ads';
+  const accountId  = account.id;
 
   // Gather before metrics
   const [spendBeforeResult, leadsBefore] = await Promise.all([
-    isManual ? Promise.resolve({ spend: null, source: 'none' }) : getSpendWithSource(campaignId, platform, toDate(before.start), toDate(before.end)),
-    isManual ? Promise.resolve({ total: null, qualified: null }) : countLeads(campaignId, platform, toDate(before.start), toDate(before.end)),
+    isManual ? Promise.resolve({ spend: null, source: 'none' }) : getSpendWithSource(campaignId, accountId, platform, toDate(before.start), toDate(before.end)),
+    isManual ? Promise.resolve({ total: null, qualified: null }) : countLeads(campaignId, accountId, platform, toDate(before.start), toDate(before.end)),
   ]);
 
   // Gather after metrics
   const [spendAfterResult, leadsAfter] = await Promise.all([
-    isManual ? Promise.resolve({ spend: null, source: 'none' }) : getSpendWithSource(campaignId, platform, toDate(after.start), toDate(after.end)),
-    isManual ? Promise.resolve({ total: null, qualified: null }) : countLeads(campaignId, platform, toDate(after.start), toDate(after.end)),
+    isManual ? Promise.resolve({ spend: null, source: 'none' }) : getSpendWithSource(campaignId, accountId, platform, toDate(after.start), toDate(after.end)),
+    isManual ? Promise.resolve({ total: null, qualified: null }) : countLeads(campaignId, accountId, platform, toDate(after.start), toDate(after.end)),
   ]);
 
   const spendBefore = spendBeforeResult.spend;
@@ -164,7 +191,8 @@ async function evaluateAction(action, dryRun) {
 
   const row = {
     action_id:                         action.id,
-    client_key:                        'fpb',
+    account_id:                        accountId,
+    client_key:                        account.slug,  // kept in sync with slug; not authoritative
     platform,
     campaign_id:                       campaignId,
     campaign_name:                     action.execution_data?.campaign_name || null,
@@ -215,6 +243,71 @@ async function evaluateAction(action, dryRun) {
   };
 }
 
+/**
+ * Evaluate all eligible actions for one account.
+ * Returns a per-account summary suitable for the multi-account aggregate.
+ */
+async function evaluateForAccount(account, { dryRun, specificId }) {
+  const cutoff = new Date(Date.now() - WINDOW_DAYS * 86400000).toISOString();
+
+  let query = supabase
+    .from('actions')
+    .select('id, account_id, action_type, channel, execution_data, executed_at, reviewed_at')
+    .eq('account_id', account.id)
+    .eq('execution_result', 'success')
+    .lt('executed_at', cutoff)
+    .order('executed_at', { ascending: false })
+    .limit(50);
+
+  if (specificId) {
+    query = supabase
+      .from('actions')
+      .select('id, account_id, action_type, channel, execution_data, executed_at, reviewed_at')
+      .eq('id', specificId)
+      .eq('account_id', account.id)
+      .eq('execution_result', 'success');
+  }
+
+  const { data: actions, error: fetchErr } = await query;
+
+  if (fetchErr) {
+    return { account: account.slug, status: 'failed', error: fetchErr.message };
+  }
+
+  if (!actions || actions.length === 0) {
+    return {
+      account:   account.slug,
+      status:    'succeeded',
+      evaluated: 0,
+      skipped:   0,
+      message:   'No executed actions found that are old enough for post-window evaluation.',
+    };
+  }
+
+  // Skip manual types — they cannot be auto-verified
+  const toEvaluate    = actions.filter(a => !MANUAL_TYPES.includes(a.action_type));
+  const manualSkipped = actions.length - toEvaluate.length;
+
+  const results = [];
+  for (const action of toEvaluate) {
+    const result = await evaluateAction(action, account, dryRun);
+    results.push(result);
+  }
+
+  const evaluated = results.filter(r => !r.skipped && !r.error).length;
+  const skipped   = results.filter(r => r.skipped).length + manualSkipped;
+  const errors    = results.filter(r => r.error);
+
+  return {
+    account:   account.slug,
+    status:    'succeeded',
+    evaluated,
+    skipped,
+    errors:    errors.length > 0 ? errors : undefined,
+    results,
+  };
+}
+
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   if (req.method === 'OPTIONS') return res.status(200).end();
@@ -226,64 +319,51 @@ export default async function handler(req, res) {
     return res.status(401).json({ success: false, error: 'Unauthorized' });
   }
 
-  const dryRun      = req.query?.dry_run === 'true';
-  const specificId  = req.query?.action_id || null;
+  const dryRun       = req.query?.dry_run === 'true';
+  const specificId   = req.query?.action_id || null;
+  const multiAccount = isMultiAccountCronEnabled();
 
-  // Find executed actions old enough to have a completed post-window
-  // (executed at least WINDOW_DAYS ago, so post window is potentially done)
-  const cutoff = new Date(Date.now() - WINDOW_DAYS * 86400000).toISOString();
-
-  let query = supabase
-    .from('actions')
-    .select('id, action_type, channel, execution_data, executed_at, reviewed_at')
-    .eq('execution_result', 'success')
-    .lt('executed_at', cutoff)
-    .order('executed_at', { ascending: false })
-    .limit(50);
-
-  if (specificId) {
-    query = supabase
-      .from('actions')
-      .select('id, action_type, channel, execution_data, executed_at, reviewed_at')
-      .eq('id', specificId)
-      .eq('execution_result', 'success');
-  }
-
-  const { data: actions, error: fetchErr } = await query;
-
-  if (fetchErr) {
-    return res.status(500).json({ success: false, error: fetchErr.message });
-  }
-
-  if (!actions || actions.length === 0) {
-    return res.status(200).json({
-      success: true,
-      evaluated: 0,
-      skipped:   0,
-      message:   'No executed actions found that are old enough for post-window evaluation.',
+  // ── Resolve which accounts to process ────────────────────────────────────
+  let accounts = [];
+  try {
+    if (multiAccount) {
+      accounts = await listActiveAccounts();
+    } else {
+      const fpb = await getAccountBySlug(FPB_DEFAULT_SLUG);
+      if (fpb) accounts = [fpb];
+    }
+  } catch (err) {
+    return res.status(500).json({
+      success: false,
+      error:   `Failed to load accounts: ${err.message}`,
     });
   }
 
-  // Skip manual types — they cannot be auto-verified
-  const toEvaluate = actions.filter(a => !MANUAL_TYPES.includes(a.action_type));
-  const manualSkipped = actions.length - toEvaluate.length;
-
-  const results = [];
-  for (const action of toEvaluate) {
-    const result = await evaluateAction(action, dryRun);
-    results.push(result);
+  // ── Per-account loop with error isolation ────────────────────────────────
+  const accountResults = [];
+  for (const account of accounts) {
+    try {
+      const result = await evaluateForAccount(account, { dryRun, specificId });
+      accountResults.push(result);
+    } catch (err) {
+      console.error(`[evaluate-outcomes] account=${account.slug} failed:`, err.message);
+      accountResults.push({ account: account.slug, status: 'failed', error: err.message });
+    }
   }
 
-  const evaluated = results.filter(r => !r.skipped && !r.error).length;
-  const skipped   = results.filter(r => r.skipped).length + manualSkipped;
-  const errors    = results.filter(r => r.error);
+  const totalEvaluated = accountResults.reduce((sum, r) => sum + (r.evaluated || 0), 0);
+  const totalSkipped   = accountResults.reduce((sum, r) => sum + (r.skipped   || 0), 0);
+  const errors         = accountResults.flatMap(r => r.errors || []).concat(
+    accountResults.filter(r => r.status === 'failed').map(r => ({ account: r.account, error: r.error }))
+  );
 
   return res.status(200).json({
-    success: true,
-    evaluated,
-    skipped,
-    errors:   errors.length > 0 ? errors : undefined,
-    dry_run:  dryRun,
-    results,
+    success:       true,
+    evaluated:     totalEvaluated,
+    skipped:       totalSkipped,
+    errors:        errors.length > 0 ? errors : undefined,
+    dry_run:       dryRun,
+    multi_account: multiAccount,
+    results:       accountResults,
   });
 }

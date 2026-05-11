@@ -4,18 +4,26 @@
 // Called by analyze-ads.js after fetching Google/Meta data.
 // Uses upsert on (platform, campaign_id, date) — safe to call
 // multiple times per day (idempotent, last-write-wins).
+//
+// Stage B1: account-scoped. Both functions require account context
+// and throw if it's missing — no fallback to hardcoded 'fpb'.
 // ============================================================
 
 import supabase from './supabase.js';
 
 /**
  * Write campaign-level daily stats to campaign_daily_stats.
+ *
  * @param {Array}  campaigns  — array of campaign objects from google-ads or facebook-ads APIs
  * @param {string} platform   — 'google_ads' | 'meta_ads'
  * @param {string} dateStr    — YYYY-MM-DD for the stat date (defaults to today UTC)
+ * @param {{id: string, slug: string}} account — required; rows are tagged with account.id and client_key=account.slug
  * @returns {{ written: number, errors: string[] }}
  */
-export async function writeCampaignDailyStats(campaigns, platform, dateStr) {
+export async function writeCampaignDailyStats(campaigns, platform, dateStr, account) {
+  if (!account || !account.id || !account.slug) {
+    throw new Error('writeCampaignDailyStats requires account with id and slug');
+  }
   const date = dateStr || new Date().toISOString().slice(0, 10);
 
   if (!campaigns || campaigns.length === 0) {
@@ -23,9 +31,10 @@ export async function writeCampaignDailyStats(campaigns, platform, dateStr) {
   }
 
   const rows = campaigns.map(c => ({
-    client_key:   'fpb',
+    account_id:    account.id,
+    client_key:    account.slug,  // kept in sync with slug; not authoritative
     platform,
-    campaign_id:  String(c.id || c.campaign_id || ''),
+    campaign_id:   String(c.id || c.campaign_id || ''),
     campaign_name: c.name || c.campaign_name || null,
     date,
     spend:       c.spend        != null ? parseFloat(c.spend)       : null,
@@ -57,20 +66,31 @@ export async function writeCampaignDailyStats(campaigns, platform, dateStr) {
 }
 
 /**
- * Sum spend for a campaign over a date range from campaign_daily_stats.
+ * Sum spend for a campaign over a date range from campaign_daily_stats,
+ * scoped to a single account.
+ *
+ * Returns null if campaignId is falsy. Throws if accountId is missing — the
+ * caller should always know which account it's querying.
+ *
  * Returns null if no rows found (caller should fall back to performance_snapshots).
+ *
  * @param {string} campaignId
+ * @param {string} accountId  — required when campaignId is provided
  * @param {string} platform   — 'google_ads' | 'meta_ads'
  * @param {string} startDate  — YYYY-MM-DD inclusive
  * @param {string} endDate    — YYYY-MM-DD exclusive
  * @returns {number|null}
  */
-export async function getCampaignSpend(campaignId, platform, startDate, endDate) {
+export async function getCampaignSpend(campaignId, accountId, platform, startDate, endDate) {
   if (!campaignId) return null;
+  if (!accountId) {
+    throw new Error('getCampaignSpend requires accountId when campaignId is provided');
+  }
 
   const { data, error } = await supabase
     .from('campaign_daily_stats')
     .select('spend, conversions')
+    .eq('account_id', accountId)
     .eq('campaign_id', campaignId)
     .eq('platform', platform)
     .gte('date', startDate)

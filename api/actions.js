@@ -1,10 +1,11 @@
 import supabase from './lib/supabase.js';
 import { validateStatusPatch } from './lib/action-states.js';
+import { resolveForRead, resolveForWrite } from './lib/accounts.js';
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, PATCH, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type',
+  'Access-Control-Allow-Headers': 'Content-Type, x-account-slug',
 };
 
 function cors(res) {
@@ -15,13 +16,17 @@ export default async function handler(req, res) {
   cors(res);
   if (req.method === 'OPTIONS') return res.status(200).end();
 
-  // GET — list actions by status
+  // GET — list actions by status (read; archived/inactive allowed)
   if (req.method === 'GET') {
+    const account = await resolveForRead(req, res);
+    if (!account) return;
+
     const status = req.query?.status || 'pending';
 
     const { data, error } = await supabase
       .from('actions')
       .select('*')
+      .eq('account_id', account.id)
       .eq('status', status)
       .order('created_at', { ascending: false });
 
@@ -29,7 +34,7 @@ export default async function handler(req, res) {
     return res.status(200).json({ success: true, data });
   }
 
-  // PATCH /api/actions/:id — update status
+  // PATCH /api/actions/:id — update status (write; ownership-checked)
   if (req.method === 'PATCH') {
     // Extract id from URL path: /api/actions/123
     const urlParts = (req.url || '').split('?')[0].split('/').filter(Boolean);
@@ -41,15 +46,26 @@ export default async function handler(req, res) {
       return res.status(400).json({ success: false, error: 'Missing action id in URL' });
     }
 
-    // ── Fetch current row for transition validation ───────────────────────────
+    const account = await resolveForWrite(req, res);
+    if (!account) return;
+
+    // ── Fetch current row for transition validation + ownership check ─────────
     const { data: current, error: fetchErr } = await supabase
       .from('actions')
-      .select('id, status, execution_result')
+      .select('id, account_id, status, execution_result')
       .eq('id', id)
       .single();
 
     if (fetchErr || !current) {
       return res.status(404).json({ success: false, error: 'Action not found' });
+    }
+
+    if (current.account_id !== account.id) {
+      return res.status(403).json({
+        success: false,
+        error:   'Action belongs to a different account',
+        code:    'ACCOUNT_MISMATCH',
+      });
     }
 
     const { valid, error: validationError } = validateStatusPatch(current, status);
@@ -72,8 +88,11 @@ export default async function handler(req, res) {
     return res.status(200).json({ success: true, data });
   }
 
-  // POST — create a new pending action (when body has action_type but no action field)
+  // POST — create a new pending action (write; rejects inactive/archived)
   if (req.method === 'POST' && req.body?.action_type && !req.body?.action) {
+    const account = await resolveForWrite(req, res);
+    if (!account) return;
+
     const {
       channel       = 'other',
       action_type,
@@ -87,6 +106,7 @@ export default async function handler(req, res) {
     const { data, error } = await supabase
       .from('actions')
       .insert({
+        account_id:     account.id,
         channel,
         action_type,
         title,
@@ -104,6 +124,9 @@ export default async function handler(req, res) {
   }
 
   // POST — legacy approve/reject/execute via body action field
+  // NOTE: legacy path sets status='executed' which bypasses validateStatusPatch.
+  // Stage B1 keeps this behavior (per "no auth gap fixes" constraint) but
+  // adds an ownership check so it can't mutate another account's actions.
   if (req.method === 'POST') {
     const { action, id } = req.body || {};
 
@@ -114,6 +137,27 @@ export default async function handler(req, res) {
 
     if (!newStatus) {
       return res.status(400).json({ success: false, error: `Unknown action: ${action}` });
+    }
+
+    const account = await resolveForWrite(req, res);
+    if (!account) return;
+
+    const { data: existing, error: fetchErr } = await supabase
+      .from('actions')
+      .select('id, account_id')
+      .eq('id', id)
+      .single();
+
+    if (fetchErr || !existing) {
+      return res.status(404).json({ success: false, error: 'Action not found' });
+    }
+
+    if (existing.account_id !== account.id) {
+      return res.status(403).json({
+        success: false,
+        error:   'Action belongs to a different account',
+        code:    'ACCOUNT_MISMATCH',
+      });
     }
 
     const extra = action === 'execute'

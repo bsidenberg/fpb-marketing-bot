@@ -7,6 +7,22 @@
 //
 // This module has no HTTP dependencies — it accepts plain data and
 // returns { httpStatus, body } objects that the caller converts to responses.
+//
+// Stage B1 retrofit:
+//   • Every executor takes (action, { account, connection }).
+//   • `connection` is the row produced by api/lib/accounts.js
+//     getConnectionForAccount, with env: references already resolved into
+//     resolved_* fields.
+//   • Executors fail fast (throw) when required resolved_* fields are
+//     missing. NO fallback to global env vars — that would silently mask
+//     misconfigured connections.
+//   • acquireLockAndExecute does a TOCTOU re-check after its preflight
+//     fetch (caller already verified, this is belt-and-suspenders).
+//
+// Globals that intentionally stay in env (not in ad_platform_connections):
+//   • GOOGLE_ADS_CLIENT_ID, GOOGLE_ADS_CLIENT_SECRET — shared developer credentials
+//   • GOOGLE_ADS_DEVELOPER_TOKEN — shared developer credential
+//   • META_PAGE_ID — page IDs are not in the schema (Phase 4 gap)
 // ============================================================
 
 import supabase from './supabase.js';
@@ -27,10 +43,11 @@ export function normalizePlatform(platform) {
 }
 
 // ── Audit log helper ─────────────────────────────────────────────────────────
-async function writeLog({ actionId, actionType, platform, status, description, metadata, now }) {
+async function writeLog({ actionId, accountId, actionType, platform, status, description, metadata, now }) {
   try {
     await supabase.from('automation_log').insert({
-      event_type:  actionType,
+      account_id: accountId,
+      event_type: actionType,
       platform,
       status,
       description,
@@ -46,14 +63,19 @@ async function writeLog({ actionId, actionType, platform, status, description, m
 }
 
 // ── Google Ads helpers ────────────────────────────────────────────────────────
-async function getGoogleAccessToken() {
+// Stage B1: refreshToken is now a parameter (was process.env.GOOGLE_ADS_REFRESH_TOKEN).
+// Client_id / secret remain global — shared developer creds, not per-account.
+async function getGoogleAccessToken(refreshToken) {
+  if (!refreshToken) {
+    throw new Error('getGoogleAccessToken requires a refresh token');
+  }
   const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({
       client_id:     process.env.GOOGLE_ADS_CLIENT_ID,
       client_secret: process.env.GOOGLE_ADS_CLIENT_SECRET,
-      refresh_token: process.env.GOOGLE_ADS_REFRESH_TOKEN,
+      refresh_token: refreshToken,
       grant_type:    'refresh_token',
     }),
   });
@@ -62,12 +84,31 @@ async function getGoogleAccessToken() {
   return json.access_token;
 }
 
-export async function executeGoogle(campaignId, actionType) {
-  const customerId = process.env.GOOGLE_ADS_CUSTOMER_ID
-    ? process.env.GOOGLE_ADS_CUSTOMER_ID.replace(/-/g, '')
-    : '8325311811';
+export async function executeGoogle(action, { account, connection }) {
+  if (!connection) {
+    throw new Error(`executeGoogle requires a google_ads connection (account=${account?.slug ?? 'unknown'})`);
+  }
+  if (!connection.resolved_account_id_external) {
+    throw new Error(`Google Ads connection missing customer ID for account ${account.slug}`);
+  }
+  if (!connection.resolved_refresh_token) {
+    throw new Error(`Google Ads connection missing refresh token for account ${account.slug}`);
+  }
+
+  const customerId       = connection.resolved_account_id_external.replace(/-/g, '');
+  const managerAccountId = connection.resolved_manager_account_id
+    ? connection.resolved_manager_account_id.replace(/-/g, '')
+    : undefined;
+  const refreshToken     = connection.resolved_refresh_token;
+
+  const actionType = action.action_type;
+  const campaignId = action.execution_data?.campaign_id;
+  if (!campaignId) {
+    throw new Error('executeGoogle requires action.execution_data.campaign_id');
+  }
+
   const status      = actionType === 'pause_campaign' ? 'PAUSED' : 'ENABLED';
-  const accessToken = await getGoogleAccessToken();
+  const accessToken = await getGoogleAccessToken(refreshToken);
 
   const url = `https://googleads.googleapis.com/v19/customers/${customerId}/campaigns:mutate`;
   const res = await fetch(url, {
@@ -75,10 +116,8 @@ export async function executeGoogle(campaignId, actionType) {
     headers: {
       Authorization:       `Bearer ${accessToken}`,
       'developer-token':   process.env.GOOGLE_ADS_DEVELOPER_TOKEN,
-      'login-customer-id': process.env.GOOGLE_ADS_MANAGER_ID
-        ? process.env.GOOGLE_ADS_MANAGER_ID.replace(/-/g, '')
-        : undefined,
-      'Content-Type': 'application/json',
+      'login-customer-id': managerAccountId,
+      'Content-Type':      'application/json',
     },
     body: JSON.stringify({
       operations: [{
@@ -93,10 +132,23 @@ export async function executeGoogle(campaignId, actionType) {
 }
 
 // ── Meta campaign status ──────────────────────────────────────────────────────
-export async function executeMeta(campaignId, actionType) {
-  const status      = actionType === 'pause_campaign' ? 'PAUSED' : 'ACTIVE';
-  const accessToken = process.env.META_ACCESS_TOKEN;
-  const url         = new URL(`https://graph.facebook.com/v19.0/${campaignId}`);
+export async function executeMeta(action, { account, connection }) {
+  if (!connection) {
+    throw new Error(`executeMeta requires a meta_ads connection (account=${account?.slug ?? 'unknown'})`);
+  }
+  if (!connection.resolved_access_token) {
+    throw new Error(`Meta Ads connection missing access token for account ${account.slug}`);
+  }
+
+  const accessToken = connection.resolved_access_token;
+  const actionType  = action.action_type;
+  const campaignId  = action.execution_data?.campaign_id;
+  if (!campaignId) {
+    throw new Error('executeMeta requires action.execution_data.campaign_id');
+  }
+
+  const status = actionType === 'pause_campaign' ? 'PAUSED' : 'ACTIVE';
+  const url    = new URL(`https://graph.facebook.com/v19.0/${campaignId}`);
   url.searchParams.set('access_token', accessToken);
   url.searchParams.set('status', status);
 
@@ -107,7 +159,18 @@ export async function executeMeta(campaignId, actionType) {
 }
 
 // ── Meta creative publish ─────────────────────────────────────────────────────
-export async function executePublishCreative(executionData) {
+export async function executePublishCreative(action, { account, connection }) {
+  if (!connection) {
+    throw new Error(`executePublishCreative requires a meta_ads connection (account=${account?.slug ?? 'unknown'})`);
+  }
+  if (!connection.resolved_access_token) {
+    throw new Error(`Meta Ads connection missing access token for account ${account.slug}`);
+  }
+  if (!connection.resolved_account_id_external) {
+    throw new Error(`Meta Ads connection missing ad account ID for account ${account.slug}`);
+  }
+
+  const executionData = action.execution_data || {};
   const {
     imageBase64,
     format       = 'feed',
@@ -115,14 +178,15 @@ export async function executePublishCreative(executionData) {
     headline     = 'Get Your Free Quote Today',
     primaryText  = 'Florida Pole Barn Kits — Built for Florida.',
     callToAction = 'LEARN_MORE',
-  } = executionData || {};
+  } = executionData;
 
   if (!imageBase64) throw new Error('Missing imageBase64 in execution_data');
 
-  const accessToken  = process.env.META_ACCESS_TOKEN;
-  const rawAccountId = process.env.META_AD_ACCOUNT_ID || '';
+  const accessToken  = connection.resolved_access_token;
+  const rawAccountId = connection.resolved_account_id_external;
+  // Defensive prefix handling — env var may be stored with or without 'act_'
   const adAccountId  = rawAccountId.startsWith('act_') ? rawAccountId : `act_${rawAccountId}`;
-  const pageId       = String(process.env.META_PAGE_ID);
+  const pageId       = String(process.env.META_PAGE_ID); // global env — Phase 4 gap
   const apiBase      = 'https://graph.facebook.com/v19.0';
   const ctaMap       = {
     GET_QUOTE: 'GET_QUOTE', LEARN_MORE: 'LEARN_MORE',
@@ -183,17 +247,31 @@ export async function executePublishCreative(executionData) {
 }
 
 // ── Meta campaign creation ────────────────────────────────────────────────────
-export async function executeCreateMetaCampaign(executionData) {
+export async function executeCreateMetaCampaign(action, { account, connection }) {
+  if (!connection) {
+    throw new Error(`executeCreateMetaCampaign requires a meta_ads connection (account=${account?.slug ?? 'unknown'})`);
+  }
+  if (!connection.resolved_access_token) {
+    throw new Error(`Meta Ads connection missing access token for account ${account.slug}`);
+  }
+  if (!connection.resolved_account_id_external) {
+    throw new Error(`Meta Ads connection missing ad account ID for account ${account.slug}`);
+  }
+
+  const executionData = action.execution_data || {};
   const {
     campaignName = 'FPB Campaign',
     objective    = 'LEAD_GENERATION',
     dailyBudget  = 50,
     adSetName,
     targeting,
-  } = executionData || {};
+  } = executionData;
 
-  const accessToken = process.env.META_ACCESS_TOKEN;
-  const adAccountId = process.env.META_AD_ACCOUNT_ID;
+  const accessToken = connection.resolved_access_token;
+  // NOTE: pre-existing inconsistency vs executePublishCreative — this function
+  // unconditionally prepends 'act_' below, expecting the resolved value to be raw.
+  // Stage B1 preserves the existing behavior. Don't try to "fix" the discrepancy.
+  const adAccountId = connection.resolved_account_id_external;
   const apiBase     = 'https://graph.facebook.com/v19.0';
 
   // Create campaign — always PAUSED; must be manually activated in Ads Manager
@@ -246,25 +324,46 @@ export async function executeCreateMetaCampaign(executionData) {
 /**
  * The main execution path for DB-backed actions.
  *
- * 1. Atomically claims the action with an idempotency lock (execution_result: null → 'executing').
- *    Accepts status 'pending' or 'approved'.
- * 2. Dispatches to the appropriate platform function.
- * 3. Updates the action row and writes automation_log.
+ * Caller MUST:
+ *   1. Resolve a caller account from request.
+ *   2. Verify action.account_id === account.id (ownership).
+ *   3. Resolve a connection for the action's platform (or null for manual types).
+ *   4. Pass { account, connection } as the second arg.
  *
- * Returns { httpStatus, body } — the caller converts to HTTP response.
+ * This function:
+ *   1. Atomically claims the action with an idempotency lock
+ *      (execution_result: null → 'executing'). Accepts status pending/approved.
+ *   2. Re-asserts ownership (TOCTOU defense — throws if account_id changed
+ *      since caller's check). This is a "should never happen" invariant.
+ *   3. Dispatches to the appropriate platform function with { account, connection }.
+ *   4. Updates the action row and writes automation_log (with account_id).
+ *
+ * Returns { httpStatus, body } — caller converts to HTTP response.
+ *
+ * Throws (rather than returning a structured response) ONLY on TOCTOU mismatch.
+ * The route handler's outer try/catch (or platform error handler) converts to 500.
  */
-export async function acquireLockAndExecute(actionId) {
+export async function acquireLockAndExecute(actionId, { account, connection }) {
+  if (!account) {
+    throw new Error('acquireLockAndExecute requires { account } context');
+  }
   const now = new Date().toISOString();
 
   // Fetch current state so we can validate before acquiring the lock
   const { data: current, error: fetchErr } = await supabase
     .from('actions')
-    .select('status, execution_result, action_type, channel, execution_data')
+    .select('account_id, status, execution_result, action_type, channel, execution_data')
     .eq('id', actionId)
     .single();
 
   if (fetchErr || !current) {
     return { httpStatus: 404, body: { success: false, error: 'Action not found' } };
+  }
+
+  // TOCTOU defense — caller already verified ownership, but the row could
+  // change between the caller's read and ours. Fail loudly if so.
+  if (current.account_id !== account.id) {
+    throw new Error('Account mismatch detected after preflight (TOCTOU defense)');
   }
 
   // Manual-type gate — record approval intent but never execute
@@ -277,7 +376,7 @@ export async function acquireLockAndExecute(actionId) {
     }).eq('id', actionId);
 
     await writeLog({
-      actionId, now,
+      actionId, accountId: account.id, now,
       actionType: current.action_type,
       platform:   normalizePlatform(current.channel) === 'google' ? 'google_ads' : 'meta_ads',
       status:     'complete',
@@ -317,7 +416,7 @@ export async function acquireLockAndExecute(actionId) {
     .eq('id', actionId)
     .in('status', [STATUS.PENDING, STATUS.APPROVED])
     .is('execution_result', null)
-    .select('action_type, channel, execution_data')
+    .select('account_id, action_type, channel, execution_data')
     .single();
 
   // PGRST116 = no rows matched the WHERE (already locked or executed)
@@ -340,14 +439,14 @@ export async function acquireLockAndExecute(actionId) {
 
   try {
     if (actionType === 'publish_creative') {
-      extraMeta = await executePublishCreative(executionData);
+      extraMeta = await executePublishCreative(locked, { account, connection });
     } else if (actionType === 'create_meta_campaign') {
-      extraMeta = await executeCreateMetaCampaign(executionData);
+      extraMeta = await executeCreateMetaCampaign(locked, { account, connection });
     } else if (normalizedPlatform === 'google' && campaignId) {
-      await executeGoogle(campaignId, actionType);
+      await executeGoogle(locked, { account, connection });
       extraMeta = { campaign_id: campaignId };
     } else if (normalizedPlatform === 'meta' && campaignId) {
-      await executeMeta(campaignId, actionType);
+      await executeMeta(locked, { account, connection });
       extraMeta = { campaign_id: campaignId };
     } else {
       throw new Error(`No executor for action_type=${actionType} platform=${normalizedPlatform}`);
@@ -369,7 +468,7 @@ export async function acquireLockAndExecute(actionId) {
   // ── Audit log ─────────────────────────────────────────────────────────────────
   const succeeded = !executionError;
   await writeLog({
-    actionId, now,
+    actionId, accountId: account.id, now,
     actionType,
     platform:    supabasePlatform,
     status:      succeeded ? 'complete' : 'error',
@@ -391,8 +490,16 @@ export async function acquireLockAndExecute(actionId) {
  * Execute directly without a DB action row or idempotency guarantee.
  * Used only for inline chat ActionCard confirmations.
  * No lock, no state tracking — fire and log.
+ *
+ * Stage B1: takes { account, connection } from caller. There is no DB row,
+ * so the caller resolves both from the request envelope (query/header for
+ * account, getConnectionForAccount for connection). Internally constructs a
+ * synthetic action shape so executors only ever work with action-shaped inputs.
  */
-export async function executeTransient({ platform, actionType, campaignId }) {
+export async function executeTransient({ platform, actionType, campaignId }, { account, connection }) {
+  if (!account) {
+    throw new Error('executeTransient requires { account } context');
+  }
   const normalizedPlatform = normalizePlatform(platform);
   const now = new Date().toISOString();
 
@@ -415,15 +522,21 @@ export async function executeTransient({ platform, actionType, campaignId }) {
     return { httpStatus: 400, body: { success: false, error: 'Missing campaignId' } };
   }
 
+  // Synthetic action so executors have a uniform contract whether DB-backed or not
+  const action = {
+    action_type:    actionType,
+    execution_data: { campaign_id: campaignId },
+  };
+
   const supabasePlatform = normalizedPlatform === 'google' ? 'google_ads' : 'meta_ads';
   let executionError = null;
   let extraMeta      = {};
 
   try {
     if (normalizedPlatform === 'google') {
-      await executeGoogle(campaignId, actionType);
+      await executeGoogle(action, { account, connection });
     } else {
-      await executeMeta(campaignId, actionType);
+      await executeMeta(action, { account, connection });
     }
     extraMeta = { campaign_id: campaignId };
   } catch (err) {
@@ -431,7 +544,7 @@ export async function executeTransient({ platform, actionType, campaignId }) {
   }
 
   await writeLog({
-    actionId: null, now,
+    actionId: null, accountId: account.id, now,
     actionType,
     platform:    supabasePlatform,
     status:      executionError ? 'error' : 'complete',
@@ -450,11 +563,11 @@ export async function executeTransient({ platform, actionType, campaignId }) {
 // ── Internal helpers ──────────────────────────────────────────────────────────
 function buildSuccessDesc(actionType, meta) {
   switch (actionType) {
-    case 'pause_campaign':      return `Campaign paused (ID: ${meta.campaign_id})`;
-    case 'enable_campaign':     return `Campaign enabled (ID: ${meta.campaign_id})`;
-    case 'publish_creative':    return `Creative published to Meta (creative ID: ${meta.creative_id})`;
+    case 'pause_campaign':       return `Campaign paused (ID: ${meta.campaign_id})`;
+    case 'enable_campaign':      return `Campaign enabled (ID: ${meta.campaign_id})`;
+    case 'publish_creative':     return `Creative published to Meta (creative ID: ${meta.creative_id})`;
     case 'create_meta_campaign': return `Meta campaign created in PAUSED state (campaign ID: ${meta.campaign_id}, ad set ID: ${meta.ad_set_id})`;
-    default:                    return `${actionType} completed`;
+    default:                     return `${actionType} completed`;
   }
 }
 
@@ -462,7 +575,6 @@ function buildSuccessDesc(actionType, meta) {
 function flattenMeta(meta) {
   const out = {};
   for (const [k, v] of Object.entries(meta)) {
-    // Keep snake_case as-is; convert camelCase keys from older helpers if any slip through
     out[k] = v;
   }
   return out;

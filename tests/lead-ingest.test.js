@@ -338,32 +338,47 @@ describe('buildDedupKey', () => {
   const day = '2026-04-25';
 
   it('uses external_id when present', () => {
-    const key = buildDedupKey({ external_id: 'cr-123' }, 'callrail', day);
-    expect(key).toBe('callrail::cr-123');
+    const key = buildDedupKey('fpb', { external_id: 'cr-123' }, 'callrail', day);
+    expect(key).toBe('fpb::callrail::cr-123');
   });
 
   it('uses email+date when no external_id', () => {
-    const key = buildDedupKey({ contact_email: 'Bob@Example.COM' }, 'generic', day);
-    expect(key).toBe(`email::bob@example.com::${day}`);
+    const key = buildDedupKey('fpb', { contact_email: 'Bob@Example.COM' }, 'generic', day);
+    expect(key).toBe(`fpb::email::bob@example.com::${day}`);
   });
 
   it('uses phone+date when no email', () => {
-    const key = buildDedupKey({ contact_phone: '(321) 555-1234' }, 'callrail', day);
-    expect(key).toBe(`phone::3215551234::${day}`);
+    const key = buildDedupKey('fpb', { contact_phone: '(321) 555-1234' }, 'callrail', day);
+    expect(key).toBe(`fpb::phone::3215551234::${day}`);
   });
 
   it('returns null when no dedup signal', () => {
-    const key = buildDedupKey({ contact_name: 'Anonymous' }, 'generic', day);
+    const key = buildDedupKey('fpb', { contact_name: 'Anonymous' }, 'generic', day);
     expect(key).toBeNull();
   });
 
   it('ignores phone with fewer than 7 digits', () => {
-    const key = buildDedupKey({ contact_phone: '555' }, 'generic', day);
+    const key = buildDedupKey('fpb', { contact_phone: '555' }, 'generic', day);
     expect(key).toBeNull();
   });
 
   it('prefers external_id over email', () => {
-    const key = buildDedupKey({ external_id: 'gf-42', contact_email: 'x@y.com' }, 'gravity_forms', day);
-    expect(key).toBe('gravity_forms::gf-42');
+    const key = buildDedupKey('fpb', { external_id: 'gf-42', contact_email: 'x@y.com' }, 'gravity_forms', day);
+    expect(key).toBe('fpb::gravity_forms::gf-42');
+  });
+
+  it('produces a slug-prefixed key for non-FPB accounts (account isolation)', () => {
+    const fpbKey  = buildDedupKey('fpb',  { contact_email: 'Same@Customer.com' }, 'generic', day);
+    const weldKey = buildDedupKey('weld', { contact_email: 'Same@Customer.com' }, 'generic', day);
+    expect(fpbKey).toBe(`fpb::email::same@customer.com::${day}`);
+    expect(weldKey).toBe(`weld::email::same@customer.com::${day}`);
+    expect(fpbKey).not.toBe(weldKey);
+  });
+
+  it('throws when accountSlug is missing or empty', () => {
+    expect(() => buildDedupKey(undefined, { contact_email: 'x@y.com' }, 'generic', day)).toThrow(/accountSlug/);
+    expect(() => buildDedupKey(null,      { contact_email: 'x@y.com' }, 'generic', day)).toThrow(/accountSlug/);
+    expect(() => buildDedupKey('',        { contact_email: 'x@y.com' }, 'generic', day)).toThrow(/accountSlug/);
+    expect(() => buildDedupKey('   ',     { contact_email: 'x@y.com' }, 'generic', day)).toThrow(/accountSlug/);
   });
 });

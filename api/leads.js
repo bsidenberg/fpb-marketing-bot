@@ -23,11 +23,12 @@
 
 import supabase from './lib/supabase.js';
 import { normalizePayload, buildDedupKey } from './lib/lead-ingest.js';
+import { resolveForRead, resolveForWrite } from './lib/accounts.js';
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
   'Access-Control-Allow-Methods': 'GET, POST, PATCH, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, x-leads-ingest-secret',
+  'Access-Control-Allow-Headers': 'Content-Type, x-leads-ingest-secret, x-account-slug',
 };
 
 function cors(res) {
@@ -56,14 +57,18 @@ export default async function handler(req, res) {
   cors(res);
   if (req.method === 'OPTIONS') return res.status(200).end();
 
-  // ── GET — list leads ────────────────────────────────────────────────────────
+  // ── GET — list leads (read path; archived/inactive accounts allowed) ──────
   if (req.method === 'GET') {
+    const account = await resolveForRead(req, res);
+    if (!account) return;
+
     const rawLimit = parseInt(req.query?.limit || '50', 10);
     const limit    = Math.min(Math.max(rawLimit, 1), 200);
 
     let query = supabase
       .from('leads')
       .select('*')
+      .eq('account_id', account.id)
       .order('created_at', { ascending: false })
       .limit(limit);
 
@@ -82,17 +87,20 @@ export default async function handler(req, res) {
     return res.status(200).json({ success: true, data });
   }
 
-  // ── POST — create a lead ────────────────────────────────────────────────────
+  // ── POST — create a lead (write path; rejects inactive/archived) ─────────
   if (req.method === 'POST') {
     if (!requireIngestSecret(req, res)) return;
+
+    const account = await resolveForWrite(req, res);
+    if (!account) return;
 
     const body = req.body || {};
 
     // Normalize the payload — handles Gravity Forms, CallRail, generic
     const { normalized, source_type } = normalizePayload(body);
 
-    // Deduplication: check for an existing lead with the same key today
-    const dedupKey = buildDedupKey(normalized, source_type);
+    // Deduplication: account-scoped key prevents cross-account false dupes
+    const dedupKey = buildDedupKey(account.slug, normalized, source_type);
     if (dedupKey) {
       const { data: existing } = await supabase
         .from('leads')
@@ -129,7 +137,8 @@ export default async function handler(req, res) {
     const { external_id, ...mergedClean } = merged;
 
     const row = {
-      client_key:            'fpb',
+      account_id:            account.id,
+      client_key:            account.slug,  // kept in sync with slug; not authoritative
       qualification_status:  'new',
       dedup_key:             dedupKey,
       ingest_source:         source_type,  // 'gravity_forms' | 'callrail' | 'generic'
@@ -147,8 +156,8 @@ export default async function handler(req, res) {
     return res.status(201).json({ success: true, data, source_type });
   }
 
-  // ── PATCH — update qualification/revenue ────────────────────────────────────
-  // Auth note: currently unauthenticated. Only call from dashboard.
+  // ── PATCH — update qualification/revenue (write path, ownership-checked) ──
+  // Auth note: still unauthenticated session-wise. Only call from dashboard.
   // Future: require Supabase Auth session.
   if (req.method === 'PATCH') {
     // req.query.id is set by the Vercel rewrite (/api/leads/:id → /api/leads?id=:id).
@@ -161,6 +170,7 @@ export default async function handler(req, res) {
       return res.status(400).json({ success: false, error: 'Missing lead id' });
     }
 
+    // Validate input first so bad payloads fail fast before any DB I/O.
     const {
       qualification_status,
       booked_revenue,
@@ -195,6 +205,29 @@ export default async function handler(req, res) {
 
     if (Object.keys(patch).length === 0) {
       return res.status(400).json({ success: false, error: 'No updatable fields provided' });
+    }
+
+    // Resolve caller's account (rejects inactive/archived).
+    const account = await resolveForWrite(req, res);
+    if (!account) return;
+
+    // Verify the lead belongs to the caller's account before mutating.
+    const { data: existing, error: fetchErr } = await supabase
+      .from('leads')
+      .select('id, account_id')
+      .eq('id', id)
+      .single();
+
+    if (fetchErr || !existing) {
+      return res.status(404).json({ success: false, error: 'Lead not found' });
+    }
+
+    if (existing.account_id !== account.id) {
+      return res.status(403).json({
+        success: false,
+        error:   'Lead belongs to a different account',
+        code:    'ACCOUNT_MISMATCH',
+      });
     }
 
     const { data, error } = await supabase

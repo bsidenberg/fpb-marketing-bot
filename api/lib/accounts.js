@@ -291,3 +291,112 @@ export async function getConnectionForAccount(accountId, platform) {
     resolved_manager_account_id:  resolveEnvReference(data.manager_account_id),
   };
 }
+
+// ── HTTP route handler helpers ────────────────────────────────────────
+//
+// resolveForRead / resolveForWrite respond on `res` with the project's
+// standard error envelope and return null on failure, so callers can do:
+//
+//     const account = await resolveForRead(req, res);
+//     if (!account) return;
+//
+// They are HTTP-route concerns — do NOT call from cron loops or
+// pure-logic tests. Use getAccountBySlug / resolveAccountFromRequest
+// directly there.
+//
+// Sub-Task 11 hoisted these out of 8 individual route files. The bodies
+// are byte-identical to the original route-local copies, so error codes
+// and response shapes are preserved.
+
+/**
+ * Resolve an account for a READ endpoint.
+ *
+ * Allows archived and inactive accounts (read-only dashboards still
+ * need to render historical data). Slug resolution: query > header >
+ * FPB default.
+ *
+ * Returns the account row, or null after writing a 400 INVALID_ACCOUNT
+ * response.
+ *
+ * @param {object} req
+ * @param {object} res
+ * @returns {Promise<object|null>}
+ */
+export async function resolveForRead(req, res) {
+  const slug = getAccountSlugFromRequest(req);
+  const account = await getAccountBySlug(slug);
+  if (!account) {
+    res.status(400).json({
+      success: false,
+      error:   `Account slug not found: ${slug}`,
+      code:    'INVALID_ACCOUNT',
+    });
+    return null;
+  }
+  return account;
+}
+
+/**
+ * Resolve an account for a WRITE endpoint.
+ *
+ * Rejects:
+ *   - unknown slug              → 400 INVALID_ACCOUNT
+ *   - archived account          → 403 ACCOUNT_ARCHIVED
+ *   - inactive account          → 403 ACCOUNT_INACTIVE
+ *
+ * Returns the account row, or null after writing the appropriate error
+ * response.
+ *
+ * @param {object} req
+ * @param {object} res
+ * @returns {Promise<object|null>}
+ */
+export async function resolveForWrite(req, res) {
+  let account;
+  try {
+    account = await resolveAccountFromRequest(req);
+  } catch (err) {
+    const code = err.statusCode === 400 ? 'INVALID_ACCOUNT' : 'ACCOUNT_ARCHIVED';
+    res.status(err.statusCode || 500).json({
+      success: false,
+      error:   err.message,
+      code,
+    });
+    return null;
+  }
+  if (account.status === 'inactive') {
+    res.status(403).json({
+      success: false,
+      error:   `Account is inactive: ${account.slug}`,
+      code:    'ACCOUNT_INACTIVE',
+    });
+    return null;
+  }
+  return account;
+}
+
+/**
+ * Validate that a connection row has the resolved_* fields required for
+ * the given platform.
+ *
+ * Returns null when the connection is usable, or a short string
+ * describing what's missing (suitable for embedding in a 503
+ * CONNECTION_INCOMPLETE error message).
+ *
+ * Supported platforms: 'google_ads', 'meta_ads'.
+ *
+ * @param {object|null} connection
+ * @param {'google_ads'|'meta_ads'} platform
+ * @returns {string|null}
+ */
+export function checkConnectionFields(connection, platform) {
+  if (!connection) return 'no connection row';
+  if (platform === 'google_ads') {
+    if (!connection.resolved_account_id_external) return 'missing customer ID';
+    if (!connection.resolved_refresh_token)       return 'missing refresh token';
+  } else if (platform === 'meta_ads') {
+    if (!connection.resolved_access_token)        return 'missing access token';
+    if (!connection.resolved_account_id_external) return 'missing ad account ID';
+  }
+  return null;
+}

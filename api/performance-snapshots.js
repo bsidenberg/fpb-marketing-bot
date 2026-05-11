@@ -1,9 +1,27 @@
+// ============================================================
+// api/performance-snapshots.js — read-only ad performance feed
+//
+// GET /api/performance-snapshots
+//   Returns the most recent snapshot for the resolved account.
+// GET /api/performance-snapshots?history=true
+//   Returns the last 30 snapshots for the resolved account.
+//
+//   Optional: ?account=<slug> or x-account-slug header (defaults to 'fpb')
+//
+// Stage B1 retrofit:
+//   • Account-scoped via resolveForRead (archived/inactive allowed —
+//     dashboards still need to render history).
+//   • Both branches filter by account_id so each account only sees its own
+//     snapshots.
+// ============================================================
+
 import supabase from './lib/supabase.js';
+import { resolveForRead } from './lib/accounts.js';
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type',
+  'Access-Control-Allow-Headers': 'Content-Type, x-account-slug',
 };
 
 function cors(res) {
@@ -48,12 +66,16 @@ export default async function handler(req, res) {
     return res.status(405).json({ success: false, error: 'Method not allowed' });
   }
 
+  const account = await resolveForRead(req, res);
+  if (!account) return;
+
   const history = req.query?.history === 'true';
 
   if (history) {
     const { data, error } = await supabase
       .from('performance_snapshots')
       .select('*')
+      .eq('account_id', account.id)
       .order('created_at', { ascending: false })
       .limit(30);
 
@@ -61,16 +83,17 @@ export default async function handler(req, res) {
     return res.status(200).json({ success: true, data });
   }
 
-  // Most recent snapshot
+  // Most recent snapshot for this account
   const { data, error } = await supabase
     .from('performance_snapshots')
     .select('*')
+    .eq('account_id', account.id)
     .order('created_at', { ascending: false })
     .limit(1)
     .single();
 
   if (error) {
-    // No rows yet — return empty structure
+    // No rows yet for this account — return empty structure
     if (error.code === 'PGRST116') {
       return res.status(200).json({ success: true, data: null });
     }
