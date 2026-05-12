@@ -148,6 +148,12 @@ const GLOBAL_CSS = `
     --accent-cyan-soft:   rgba(8, 145, 178, 0.12);
     --accent-cyan-faint:  rgba(8, 145, 178, 0.04);
 
+    /* Accents — green */
+    --accent-green:       #059669;
+    --accent-green-deep:  #047857;
+    --accent-green-soft:  rgba(5, 150, 105, 0.12);
+    --accent-green-faint: rgba(5, 150, 105, 0.04);
+
     /* Status */
     --status-success:  #059669;
     --status-warning:  #d97706;
@@ -578,6 +584,331 @@ const GLOBAL_CSS = `
     box-shadow:
       inset 0 1px 0 var(--border-glass-top),
       inset 0 -2px 0 var(--accent-cyan);
+  }
+
+  /* ─── Sub-stage 3: Overview tab body — hero metric tiles ─── */
+  .overview-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(175px, 1fr));
+    gap: var(--card-gap);
+    margin-bottom: var(--section-gap);
+  }
+
+  .overview-tile {
+    padding: var(--card-padding);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    min-height: 110px;
+  }
+
+  .overview-tile__label {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    color: var(--text-dim);
+  }
+
+  .overview-tile__value {
+    font-family: var(--font-serif);
+    font-size: 28px;
+    font-weight: 700;
+    color: var(--text-primary);
+    letter-spacing: -0.5px;
+    line-height: 1;
+  }
+
+  .overview-tile__breakdown {
+    font-family: var(--font-mono);
+    font-size: 9.5px;
+    color: var(--text-dim);
+    line-height: 1.4;
+  }
+
+  /* Accent modifiers — repaint the glass top rim. Standalone classes
+     so they can be applied to .overview-panel and other Overview-body
+     surfaces in subsequent sub-tasks without redefinition. */
+  .accent-red {
+    box-shadow:
+      var(--shadow-float-low),
+      inset 0  3px 0 var(--accent-red),
+      inset 0 -1px 0 var(--border-glass-bottom);
+  }
+  .accent-cyan {
+    box-shadow:
+      var(--shadow-float-low),
+      inset 0  3px 0 var(--accent-cyan),
+      inset 0 -1px 0 var(--border-glass-bottom);
+  }
+  .accent-gold {
+    box-shadow:
+      var(--shadow-float-low),
+      inset 0  3px 0 var(--accent-gold),
+      inset 0 -1px 0 var(--border-glass-bottom);
+  }
+  .accent-green {
+    box-shadow:
+      var(--shadow-float-low),
+      inset 0  3px 0 var(--accent-green),
+      inset 0 -1px 0 var(--border-glass-bottom);
+  }
+
+  /* ─── Sub-stage 3: Overview tab body — MTD Spend vs Cap panel ─── */
+  .overview-mtd {
+    padding: var(--card-padding);
+    margin-top: var(--section-gap);
+    font-family: var(--font-sans);
+    color: var(--text-primary);
+  }
+
+  .overview-mtd__loading {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+  }
+
+  .overview-mtd__title {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    color: var(--text-dim);
+    margin-bottom: 10px;
+  }
+
+  .overview-mtd__amount {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+
+  .overview-mtd__spend {
+    font-family: var(--font-serif);
+    font-size: 28px;
+    font-weight: 700;
+    color: var(--text-primary);
+    letter-spacing: -0.5px;
+    line-height: 1;
+  }
+
+  .overview-mtd__separator {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text-dim);
+  }
+
+  .overview-mtd__cap {
+    font-family: var(--font-sans);
+    font-size: 16px;
+    font-weight: 500;
+    color: var(--text-secondary);
+  }
+
+  .overview-mtd__pct {
+    margin-left: auto;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-secondary);
+    background: var(--bg-glass-soft);
+    padding: 3px 8px;
+    border-radius: var(--radius-sm);
+  }
+
+  .overview-mtd__bar {
+    height: 8px;
+    background: var(--bg-glass-soft);
+    border-radius: 4px;
+    overflow: hidden;
+    margin-bottom: 14px;
+  }
+
+  /* .mtd-bar-fill (with .over-75 / .over-90 thresholds) is reused
+     unchanged from Stage B2 — see :~768. Domain-meaning colors. */
+
+  .overview-mtd__by-platform {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text-secondary);
+    padding-top: 4px;
+    border-top: 1px solid var(--border-subtle);
+  }
+
+  .overview-mtd__platform-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 4px 0;
+  }
+
+  .overview-mtd__platform-name { color: var(--text-secondary); }
+  .overview-mtd__platform-spend {
+    color: var(--text-primary);
+    font-weight: 500;
+  }
+
+  /* ─── Sub-stage 3: Overview tab body — chart card ─── */
+  .overview-chart {
+    padding: var(--card-padding);
+    margin-top: var(--section-gap);
+  }
+
+  .overview-chart__title {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    color: var(--text-dim);
+    margin-bottom: 10px;
+  }
+
+  .overview-chart__bars {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 24px;
+  }
+
+  .overview-chart__legend {
+    display: flex;
+    gap: 24px;
+    margin-top: 10px;
+    justify-content: center;
+  }
+
+  .overview-chart__legend-item {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-family: var(--font-mono);
+    font-size: 10px;
+  }
+
+  .overview-chart__legend-swatch {
+    width: 8px;
+    height: 8px;
+    border-radius: 2px;
+    display: inline-block;
+  }
+
+  /* ─── Sub-stage 3: Overview tab body — Actions + Log panels ─── */
+  .overview-panels {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--card-gap);
+    margin-top: var(--section-gap);
+  }
+
+  .overview-panel {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .overview-panel__header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--card-padding) var(--card-padding) 14px;
+  }
+
+  /* For panels whose body uses .activity-row — keep alignment with
+     the row's hardcoded 18px horizontal padding. Density-fixed
+     per the principle for internal list rhythm. */
+  .overview-panel__header--flush {
+    padding: 16px 18px 10px;
+  }
+
+  .overview-panel__title {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    color: var(--text-dim);
+  }
+
+  .overview-panel__title--gold { color: var(--accent-gold); }
+
+  .overview-panel__view-all {
+    background: none;
+    border: none;
+    padding: 0;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--accent-red);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    transition: color 200ms var(--easing-default);
+  }
+  .overview-panel__view-all:hover { color: var(--accent-red-deep); }
+
+  .overview-panel__body {
+    padding: 0 var(--card-padding) var(--card-padding);
+  }
+
+  .overview-panel__row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 9px 0;
+    border-bottom: 1px solid var(--border-subtle);
+  }
+  .overview-panel__row:last-child { border-bottom: none; }
+
+  .overview-panel__row-text {
+    color: var(--text-secondary);
+    font-family: var(--font-sans);
+    font-size: 12px;
+    flex: 1;
+  }
+
+  .overview-panel__row-meta {
+    color: var(--text-dim);
+    font-family: var(--font-mono);
+    font-size: 10px;
+    white-space: nowrap;
+  }
+
+  .overview-panel__list {
+    max-height: 196px;
+    overflow: auto;
+  }
+
+  .overview-panel__log-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    display: inline-block;
+    flex-shrink: 0;
+  }
+  .overview-panel__log-dot--waiting {
+    background: var(--accent-gold);
+    box-shadow: 0 0 7px var(--accent-gold);
+  }
+  .overview-panel__log-dot--ok {
+    background: var(--status-success);
+    box-shadow: 0 0 7px var(--status-success);
+  }
+
+  .overview-panel__log-time {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    color: var(--text-dim);
+    width: 64px;
+    flex-shrink: 0;
+  }
+
+  .overview-panel__log-action {
+    color: var(--text-secondary);
+    font-family: var(--font-sans);
+    font-size: 12px;
+    flex: 1;
   }
 
   .metric-card {
@@ -2839,15 +3170,12 @@ export default function MarketingBotDashboard() {
 
             {/* ── Metric cards ── */}
             {snapshotLoading && (
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(175px, 1fr))", gap: 14, marginBottom: 24 }}>
+              <div className="overview-grid">
                 {[0,1,2,3,4,5].map(i => (
-                  <div key={i} className="metric-card" style={{ minHeight: 110 }}>
-                    <div className="card-top-bar" style={{ background: C.borderMed }} />
-                    <div style={{ paddingTop: 4 }}>
-                      <div style={{ height: 9,  width: "50%", background: C.borderDim, borderRadius: 4, marginBottom: 14 }} />
-                      <div style={{ height: 28, width: "70%", background: C.borderDim, borderRadius: 6, marginBottom: 12 }} />
-                      <div style={{ height: 9,  width: "85%", background: C.borderDim, borderRadius: 4 }} />
-                    </div>
+                  <div key={i} className="overview-tile glass glass-low">
+                    <div style={{ height: 9,  width: "50%", background: "var(--bg-glass-soft)", borderRadius: 4 }} />
+                    <div style={{ height: 28, width: "70%", background: "var(--bg-glass-soft)", borderRadius: 6 }} />
+                    <div style={{ height: 9,  width: "85%", background: "var(--bg-glass-soft)", borderRadius: 4 }} />
                   </div>
                 ))}
               </div>
@@ -2884,32 +3212,32 @@ export default function MarketingBotDashboard() {
 
               const cards = [
                 {
-                  label: "Total Spend", color: C.gold,
+                  label: "Total Spend", accent: "red",
                   value: fmtUSD(c.spend),
                   breakdown: `Google: ${fmtUSD(g.spend)} · Meta: ${fmtUSD(m.spend)}`,
                 },
                 {
-                  label: "Impressions", color: "#2b3a6b",
+                  label: "Impressions", accent: "cyan",
                   value: fmt(c.impressions),
                   breakdown: `Google: ${fmt(g.impressions)} · Meta: ${fmt(m.impressions)}`,
                 },
                 {
-                  label: "Clicks", color: "#2b3a6b",
+                  label: "Clicks", accent: "cyan",
                   value: fmt(c.clicks),
                   breakdown: `Google: ${fmt(g.clicks)} · Meta: ${fmt(m.clicks)}`,
                 },
                 {
-                  label: "Conversions", color: "#2b3a6b",
+                  label: "Conversions", accent: "green",
                   value: fmt(c.conversions),
                   breakdown: `Google: ${fmt(g.conversions)} · Meta: ${fmt(m.conversions)}`,
                 },
                 {
-                  label: "Avg CTR", color: "#2b3a6b",
+                  label: "Avg CTR", accent: "gold",
                   value: fmtPct(c.ctr),
                   breakdown: `Google: ${fmtPct(g.ctr)} · Meta: ${fmtPct(m.ctr)}`,
                 },
                 {
-                  label: "Avg CPC", color: "#2b3a6b",
+                  label: "Avg CPC", accent: "gold",
                   value: fmtUSD(c.cpc),
                   breakdown: `Google: ${fmtUSD(g.cpc)} · Meta: ${fmtUSD(m.cpc)}`,
                 },
@@ -2917,19 +3245,16 @@ export default function MarketingBotDashboard() {
 
               return (
                 <>
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(175px, 1fr))", gap: 14, marginBottom: 10 }}>
+                  <div className="overview-grid">
                     {cards.map((kpi, i) => (
-                      <div key={i} className="metric-card">
-                        <div className="card-top-bar" style={{ background: kpi.color }} />
-                        <div style={{ position: "relative", zIndex: 1 }}>
-                          <div style={{ fontFamily: F.mono, fontSize: 10, textTransform: "uppercase", letterSpacing: "1.5px", color: C.textMuted, marginBottom: 10 }}>{kpi.label}</div>
-                          <div style={{ fontFamily: F.serif, fontSize: 28, fontWeight: 700, color: C.textPrimary, letterSpacing: "-0.5px", lineHeight: 1, marginBottom: 10 }}>{kpi.value}</div>
-                          <div style={{ fontFamily: F.mono, fontSize: 9.5, color: C.textDim, lineHeight: 1.4 }}>{kpi.breakdown}</div>
-                        </div>
+                      <div key={i} className={`overview-tile glass glass-low accent-${kpi.accent}`}>
+                        <div className="overview-tile__label">{kpi.label}</div>
+                        <div className="overview-tile__value">{kpi.value}</div>
+                        <div className="overview-tile__breakdown">{kpi.breakdown}</div>
                       </div>
                     ))}
                   </div>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24, padding: "0 2px" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "0 2px" }}>
                     {updatedTs && (
                       <span style={{ fontFamily: F.mono, fontSize: 10, color: C.textDim }}>
                         Last updated: <span style={{ color: C.textMuted }}>{updatedTs}</span>
@@ -2940,60 +3265,67 @@ export default function MarketingBotDashboard() {
               );
             })()}
 
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-              <div style={{ background: `linear-gradient(145deg, ${C.bgRaised}, ${C.bgSurface})`, border: `1px solid ${C.borderDim}`, borderRadius: 12, padding: 16 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-                  <div className="section-label" style={{ marginBottom: 0, color: C.amber }}>{pendingCount} Actions Pending</div>
-                  <button onClick={() => dispatch({ type: "SET_TAB", payload: "actions" })} className="view-all-btn">
+            <div className="overview-panels">
+              <div className="overview-panel glass glass-low accent-gold">
+                <div className="overview-panel__header">
+                  <div className="overview-panel__title overview-panel__title--gold">
+                    {pendingCount} Actions Pending
+                  </div>
+                  <button
+                    onClick={() => dispatch({ type: "SET_TAB", payload: "actions" })}
+                    className="overview-panel__view-all"
+                  >
                     View all <Icons.ChevRight />
                   </button>
                 </div>
-                {state.actionQueue.filter(a => a.status === "pending").slice(0, 3).map(a => (
-                  <div key={a.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 0", borderBottom: `1px solid ${C.borderDim}` }}>
-                    <PriorityDot priority={a.priority} />
-                    <span style={{ color: C.textSecondary, flex: 1, fontFamily: F.sans, fontSize: 12 }}>{a.action}</span>
-                    <span style={{ color: C.textDim, fontSize: 10, fontFamily: F.mono, whiteSpace: "nowrap" }}>{a.channel}</span>
-                  </div>
-                ))}
+                <div className="overview-panel__body">
+                  {state.actionQueue.filter(a => a.status === "pending").slice(0, 3).map(a => (
+                    <div key={a.id} className="overview-panel__row">
+                      <PriorityDot priority={a.priority} />
+                      <span className="overview-panel__row-text">{a.action}</span>
+                      <span className="overview-panel__row-meta">{a.channel}</span>
+                    </div>
+                  ))}
+                </div>
               </div>
 
-              <div style={{ background: `linear-gradient(145deg, ${C.bgRaised}, ${C.bgSurface})`, border: `1px solid ${C.borderDim}`, borderRadius: 12, overflow: "hidden" }}>
-                <div style={{ padding: "16px 18px 10px" }}>
-                  <div className="section-label">Automation Log — Today</div>
+              <div className="overview-panel glass glass-low">
+                <div className="overview-panel__header overview-panel__header--flush">
+                  <div className="overview-panel__title">Automation Log — Today</div>
                 </div>
-                <div style={{ maxHeight: 196, overflow: "auto" }}>
+                <div className="overview-panel__list">
                   {state.automationLog.map((log, i) => (
                     <div key={i} className="activity-row">
-                      <span style={{ width: 6, height: 6, borderRadius: "50%", background: log.status === "waiting" ? C.amber : C.emerald, boxShadow: `0 0 7px ${log.status === "waiting" ? C.amber : C.emerald}`, display: "inline-block", flexShrink: 0 }} />
-                      <span style={{ fontFamily: F.mono, fontSize: 10.5, color: C.textDim, width: 64, flexShrink: 0 }}>{log.time}</span>
+                      <span className={`overview-panel__log-dot overview-panel__log-dot--${log.status === "waiting" ? "waiting" : "ok"}`} />
+                      <span className="overview-panel__log-time">{log.time}</span>
                       <StatusBadge status={log.status} />
-                      <span style={{ color: C.textSecondary, fontFamily: F.sans, fontSize: 12, flex: 1 }}>{log.action}</span>
+                      <span className="overview-panel__log-action">{log.action}</span>
                     </div>
                   ))}
                 </div>
               </div>
             </div>
 
-            <div style={{ marginTop: 16, background: `linear-gradient(145deg, ${C.bgRaised}, ${C.bgSurface})`, border: `1px solid ${C.borderDim}`, borderRadius: 12, padding: 20 }}>
-              <div className="section-label">Channel Spend vs Revenue</div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
+            <div className="overview-chart glass glass-low">
+              <div className="overview-chart__title">Channel Spend vs Revenue</div>
+              <div className="overview-chart__bars">
                 <MiniBar values={[2100,1680,0,0,500]}      labels={["Google","Meta","SEO","Blog","Local"]} color={C.rose}    height={100} />
                 <MiniBar values={[7980,7056,2200,890,814]} labels={["Google","Meta","SEO","Blog","Local"]} color={C.emerald} height={100} />
               </div>
-              <div style={{ display: "flex", gap: 24, marginTop: 10, justifyContent: "center" }}>
-                <span style={{ fontSize: 10, color: C.rose,    fontFamily: F.mono, display: "flex", alignItems: "center", gap: 5 }}>
-                  <span style={{ width: 8, height: 8, borderRadius: 2, background: C.rose,    display: "inline-block" }} /> Spend
+              <div className="overview-chart__legend">
+                <span className="overview-chart__legend-item" style={{ color: C.rose }}>
+                  <span className="overview-chart__legend-swatch" style={{ background: C.rose }} /> Spend
                 </span>
-                <span style={{ fontSize: 10, color: C.emerald, fontFamily: F.mono, display: "flex", alignItems: "center", gap: 5 }}>
-                  <span style={{ width: 8, height: 8, borderRadius: 2, background: C.emerald, display: "inline-block" }} /> Revenue
+                <span className="overview-chart__legend-item" style={{ color: C.emerald }}>
+                  <span className="overview-chart__legend-swatch" style={{ background: C.emerald }} /> Revenue
                 </span>
               </div>
             </div>
 
             {/* ── Stage B2: MTD Spend vs Cap panel ── */}
             {budgetLoading && !budgetData && (
-              <div className="mtd-panel" style={{ marginTop: 16 }}>
-                <div className="mtd-loading">Loading budget data…</div>
+              <div className="overview-mtd glass glass-low accent-gold">
+                <div className="overview-mtd__loading">Loading budget data…</div>
               </div>
             )}
             {budgetData && (() => {
@@ -3007,6 +3339,7 @@ export default function MarketingBotDashboard() {
                 pct > 90 ? "mtd-bar-fill over-90" :
                 pct > 75 ? "mtd-bar-fill over-75" :
                 "mtd-bar-fill";
+              const accentClass = pct > 75 ? "accent-red" : "accent-gold";
               const fmtUSD = (n) => `$${Number(n || 0).toLocaleString("en-US", {
                 minimumFractionDigits: 2, maximumFractionDigits: 2,
               })}`;
@@ -3016,29 +3349,29 @@ export default function MarketingBotDashboard() {
                 p;
 
               return (
-                <div className="mtd-panel" style={{ marginTop: 16 }}>
-                  <div className="mtd-title">MTD Spend vs Cap</div>
-                  <div className="mtd-amount">
-                    <span className="mtd-spend">{fmtUSD(total)}</span>
-                    <span className="mtd-separator">of</span>
-                    <span className="mtd-cap">
+                <div className={`overview-mtd glass glass-low ${accentClass}`}>
+                  <div className="overview-mtd__title">MTD Spend vs Cap</div>
+                  <div className="overview-mtd__amount">
+                    <span className="overview-mtd__spend">{fmtUSD(total)}</span>
+                    <span className="overview-mtd__separator">of</span>
+                    <span className="overview-mtd__cap">
                       {hasCap ? fmtUSD(cap) : "no cap set"}
                     </span>
                     {hasCap && (
-                      <span className="mtd-pct">{pct.toFixed(0)}%</span>
+                      <span className="overview-mtd__pct">{pct.toFixed(0)}%</span>
                     )}
                   </div>
                   {hasCap && (
-                    <div className="mtd-bar">
+                    <div className="overview-mtd__bar">
                       <div className={fillClass} style={{ width: `${pct}%` }} />
                     </div>
                   )}
                   {Object.keys(budgetData.mtd_spend_by_platform || {}).length > 0 && (
-                    <div className="mtd-by-platform">
+                    <div className="overview-mtd__by-platform">
                       {Object.entries(budgetData.mtd_spend_by_platform).map(([platform, spend]) => (
-                        <div key={platform} className="mtd-platform-row">
-                          <span className="mtd-platform-name">{platformLabel(platform)}</span>
-                          <span className="mtd-platform-spend">{fmtUSD(spend)}</span>
+                        <div key={platform} className="overview-mtd__platform-row">
+                          <span className="overview-mtd__platform-name">{platformLabel(platform)}</span>
+                          <span className="overview-mtd__platform-spend">{fmtUSD(spend)}</span>
                         </div>
                       ))}
                     </div>
