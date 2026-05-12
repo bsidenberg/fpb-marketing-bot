@@ -1,4 +1,5 @@
 import { useState, useEffect, useReducer, useCallback, useRef } from "react";
+import { LayoutGrid, Rows3 } from "lucide-react";
 
 // ── Stage B2: account-aware fetch wrapper ──
 // Appends ?account=<slug> to the URL so backend routes resolve the right
@@ -85,14 +86,134 @@ const F = {
 const GLOBAL_CSS = `
   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=DM+Mono:wght@400;500&display=swap');
 
+  /* ─── Design Refresh foundation tokens (Sub-stage 1) ─── */
+  :root {
+    /* Spacing */
+    --space-1: 4px;
+    --space-2: 8px;
+    --space-3: 12px;
+    --space-4: 16px;
+    --space-5: 20px;
+    --space-6: 24px;
+    --space-8: 32px;
+    --space-10: 40px;
+    --space-12: 48px;
+    --space-16: 64px;
+
+    /* Typography */
+    --font-sans: 'IBM Plex Sans', system-ui, -apple-system, 'Inter', sans-serif;
+    --font-mono: 'IBM Plex Mono', 'JetBrains Mono', 'Menlo', monospace;
+    --font-serif: 'IBM Plex Serif', Georgia, serif;
+
+    /* Backgrounds */
+    --bg-base:        #f0f2f7;
+    --bg-elevated:    rgba(255, 255, 255, 0.7);
+    --bg-glass:       rgba(255, 255, 255, 0.65);
+    --bg-glass-soft:  rgba(255, 255, 255, 0.45);
+    --bg-highest:     rgba(243, 244, 248, 0.85);
+
+    /* Glass refraction tokens */
+    --border-glass-top:    rgba(255, 255, 255, 0.9);
+    --border-glass-bottom: rgba(15, 23, 42, 0.06);
+    --border-glass-side:   rgba(15, 23, 42, 0.04);
+    --glass-highlight-top: rgba(255, 255, 255, 0.8);
+    --glass-shadow-bottom: rgba(15, 23, 42, 0.05);
+
+    /* Borders */
+    --border-subtle:   rgba(15, 23, 42, 0.05);
+    --border-default:  rgba(15, 23, 42, 0.1);
+    --border-bright:   rgba(15, 23, 42, 0.15);
+
+    /* Text */
+    --text-primary:    #0f172a;
+    --text-secondary:  #475569;
+    --text-dim:        #94a3b8;
+    --text-disabled:   #cbd5e1;
+
+    /* Accents — red */
+    --accent-red:        #c0272d;
+    --accent-red-deep:   #991b1f;
+    --accent-red-soft:   rgba(192, 39, 45, 0.1);
+    --accent-red-faint:  rgba(192, 39, 45, 0.04);
+
+    /* Accents — gold */
+    --accent-gold:       #a07b1f;
+    --accent-gold-deep:  #6f5615;
+    --accent-gold-soft:  rgba(160, 123, 31, 0.12);
+    --accent-gold-faint: rgba(160, 123, 31, 0.04);
+
+    /* Accents — cyan */
+    --accent-cyan:        #0891b2;
+    --accent-cyan-bright: #06b6d4;
+    --accent-cyan-soft:   rgba(8, 145, 178, 0.12);
+    --accent-cyan-faint:  rgba(8, 145, 178, 0.04);
+
+    /* Status */
+    --status-success:  #059669;
+    --status-warning:  #d97706;
+    --status-error:    #c0272d;
+    --status-info:     #0891b2;
+
+    /* Shadows — the floating system */
+    --shadow-float-low:
+      0 1px 2px rgba(15, 23, 42, 0.04),
+      0 2px 6px rgba(15, 23, 42, 0.06);
+    --shadow-float-mid:
+      0 1px 2px rgba(15, 23, 42, 0.06),
+      0 4px 8px rgba(15, 23, 42, 0.08),
+      0 12px 24px rgba(15, 23, 42, 0.06),
+      0 24px 48px rgba(15, 23, 42, 0.04);
+    --shadow-float-high:
+      0 2px 4px rgba(15, 23, 42, 0.08),
+      0 8px 16px rgba(15, 23, 42, 0.1),
+      0 16px 32px rgba(15, 23, 42, 0.08),
+      0 32px 64px rgba(15, 23, 42, 0.06);
+    --shadow-ambient: 0 0 0 1px rgba(15, 23, 42, 0.03);
+
+    /* Radius */
+    --radius-sm: 6px;
+    --radius-md: 10px;
+    --radius-lg: 16px;
+    --radius-xl: 20px;
+    --radius-pill: 999px;
+
+    /* Animation */
+    --easing-default: cubic-bezier(0.4, 0, 0.2, 1);
+
+    /* Density — comfortable default */
+    --card-padding: 24px;
+    --card-gap: 16px;
+    --section-gap: 32px;
+    --chip-padding-y: 6px;
+    --chip-padding-x: 10px;
+  }
+
+  /* Density compact variant */
+  [data-density="compact"] {
+    --card-padding: 16px;
+    --card-gap: 8px;
+    --section-gap: 20px;
+    --chip-padding-y: 4px;
+    --chip-padding-x: 8px;
+  }
+
+  /* Reduced-motion accommodation */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   html, body { height: 100%; }
 
   body {
-    background: #f3f4f6;
+    background: var(--bg-base);
     min-height: 100vh;
-    font-family: 'Inter', system-ui, sans-serif;
-    color: #3a3a3a;
+    font-family: var(--font-sans);
+    color: var(--text-primary);
     position: relative;
     overflow-x: hidden;
   }
@@ -113,6 +234,66 @@ const GLOBAL_CSS = `
   }
   @keyframes spin { to { transform:rotate(360deg); } }
   @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
+
+  /* ─── Glass primitive class system (Sub-stage 1) ───
+     Defined but not yet applied to any element. Sub-stages 2/3 retrofit
+     components to use these classes. Inner ::before/::after pseudo-elements
+     create refraction highlight (top) and inner shadow (bottom). */
+  .glass {
+    position: relative;
+    background: var(--bg-glass);
+    backdrop-filter: blur(32px) saturate(180%);
+    -webkit-backdrop-filter: blur(32px) saturate(180%);
+    border-radius: var(--radius-lg);
+    box-shadow:
+      var(--shadow-float-mid),
+      var(--shadow-ambient),
+      inset 0 1px 0 var(--border-glass-top),
+      inset 0 -1px 0 var(--border-glass-bottom);
+    border-left: 1px solid var(--border-glass-side);
+    border-right: 1px solid var(--border-glass-side);
+    overflow: hidden;
+  }
+  .glass::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 50%;
+    background: linear-gradient(180deg, var(--glass-highlight-top) 0%, transparent 80%);
+    pointer-events: none;
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    z-index: 0;
+  }
+  .glass::after {
+    content: "";
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 25%;
+    background: linear-gradient(0deg, var(--glass-shadow-bottom) 0%, transparent 100%);
+    pointer-events: none;
+    border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+    z-index: 0;
+  }
+  .glass > * { position: relative; z-index: 1; }
+
+  .glass-high {
+    box-shadow:
+      var(--shadow-float-high),
+      var(--shadow-ambient),
+      inset 0 1px 0 var(--border-glass-top),
+      inset 0 -1px 0 var(--border-glass-bottom);
+  }
+
+  .glass-low {
+    box-shadow:
+      var(--shadow-float-low),
+      inset 0 1px 0 var(--border-glass-top),
+      inset 0 -1px 0 var(--border-glass-bottom);
+  }
 
   .pip {
     display: inline-block;
@@ -137,6 +318,43 @@ const GLOBAL_CSS = `
     position: absolute; top: 0; left: 0; right: 0; height: 2px;
     background: linear-gradient(90deg, transparent, #8b1a1e 20%, #c0272d 50%, #8b1a1e 80%, transparent);
     opacity: 0.9;
+  }
+
+  /* Density toggle (header right-cluster) — Sub-stage 1 foundation */
+  .header-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    background: var(--bg-glass-soft);
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    color: var(--text-secondary);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: all 200ms var(--easing-default);
+    flex-shrink: 0;
+    box-shadow:
+      var(--shadow-float-low),
+      inset 0 1px 0 var(--border-glass-top),
+      inset 0 -1px 0 var(--border-glass-bottom);
+    border-left: 1px solid var(--border-glass-side);
+    border-right: 1px solid var(--border-glass-side);
+    border-top: none;
+    border-bottom: none;
+  }
+  .header-toggle:hover {
+    color: var(--text-primary);
+    transform: translateY(-1px);
+    box-shadow:
+      var(--shadow-float-mid),
+      inset 0 1px 0 var(--border-glass-top),
+      inset 0 -1px 0 var(--border-glass-bottom);
+  }
+  .header-toggle:focus-visible {
+    outline: 2px solid var(--accent-red);
+    outline-offset: 2px;
   }
 
   .logo-box {
@@ -1953,6 +2171,22 @@ export default function MarketingBotDashboard() {
     }
   }, [selectedAccountSlug]);
 
+  // ── Design Refresh: density ──
+  // 'comfortable' (default) | 'compact'. Drives [data-density] on <body>
+  // which scopes the --card-padding / --card-gap / --section-gap tokens.
+  const [density, setDensity] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('density_preference') || 'comfortable';
+    }
+    return 'comfortable';
+  });
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    localStorage.setItem('density_preference', density);
+    document.body.dataset.density = density;
+  }, [density]);
+
   useEffect(() => {
     fetch('/api/accounts')
       .then(r => r.json())
@@ -2382,6 +2616,15 @@ export default function MarketingBotDashboard() {
             selectedSlug={selectedAccountSlug}
             onChange={setSelectedAccountSlug}
           />
+          <button
+            type="button"
+            className="header-toggle"
+            onClick={() => setDensity(d => d === 'comfortable' ? 'compact' : 'comfortable')}
+            aria-label={density === 'comfortable' ? 'Switch to compact density' : 'Switch to comfortable density'}
+            title={density === 'comfortable' ? 'Switch to compact density' : 'Switch to comfortable density'}
+          >
+            {density === 'comfortable' ? <LayoutGrid size={16} /> : <Rows3 size={16} />}
+          </button>
           <div className="stat-chip">
             <span style={{ width: 6, height: 6, borderRadius: "50%", background: C.emerald, boxShadow: `0 0 7px ${C.emerald}`, display: "inline-block" }} />
             LIVE
