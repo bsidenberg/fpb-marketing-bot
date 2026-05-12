@@ -25,7 +25,7 @@ function AccountSelector({ accounts, selectedSlug, onChange }) {
 
   if (accounts.length === 1) {
     return (
-      <div className="stat-chip stat-chip-account" title="Active account">
+      <div className="chip chip-account" title="Active account">
         {accounts[0].name}
       </div>
     );
@@ -33,7 +33,7 @@ function AccountSelector({ accounts, selectedSlug, onChange }) {
 
   return (
     <select
-      className="stat-chip stat-chip-account stat-chip-select"
+      className="chip chip-account chip-account-select"
       value={selectedSlug}
       onChange={(e) => onChange(e.target.value)}
       aria-label="Active account"
@@ -303,21 +303,15 @@ const GLOBAL_CSS = `
     flex-shrink: 0;
   }
 
+  /* Sub-stage 2: .app-header now layered with .glass primitive.
+     Background, backdrop-filter, border-bottom, height, and the red top
+     gradient strip (::before) removed — glass owns the surface. Margin
+     added so the glass shadow has breathing room from the viewport edge. */
   .app-header {
-    position: relative;
-    height: 64px;
-    background: rgba(26,36,68,0.97);
-    backdrop-filter: blur(28px);
-    border-bottom: 1px solid rgba(209,213,219,0.10);
-    padding: 0 24px;
+    margin: 12px 12px 8px 12px;
+    padding: 12px 20px;
     display: flex; align-items: center; justify-content: space-between;
     z-index: 10;
-  }
-  .app-header::before {
-    content: '';
-    position: absolute; top: 0; left: 0; right: 0; height: 2px;
-    background: linear-gradient(90deg, transparent, #8b1a1e 20%, #c0272d 50%, #8b1a1e 80%, transparent);
-    opacity: 0.9;
   }
 
   /* Density toggle (header right-cluster) — Sub-stage 1 foundation */
@@ -357,6 +351,182 @@ const GLOBAL_CSS = `
     outline-offset: 2px;
   }
 
+  /* Sub-stage 2: header logo treatment — text-only, account name + gold "AI"
+     suffix, gold mini-caps subtitle with static pip. Replaces the inline-
+     styled logo block + .logo-box bolt tile. The .logo-box rule below is
+     orphaned dead code awaiting the post-redesign cleanup pass. */
+  .logo-block {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .logo-text {
+    font-family: var(--font-sans);
+    font-weight: 700;
+    font-size: 17px;
+    letter-spacing: -0.015em;
+    line-height: 1.1;
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+  }
+
+  .logo-text .account-name {
+    color: var(--text-primary);
+  }
+
+  .logo-text .ai-suffix {
+    color: var(--accent-gold);
+    font-weight: 700;
+    letter-spacing: 0.02em;
+  }
+
+  .subtitle {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .subtitle-pip {
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background: var(--accent-gold);
+  }
+
+  .subtitle-text {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.18em;
+    color: var(--accent-gold);
+  }
+
+  /* Sub-stage 2: glass chip system for the header right-cluster.
+     Replaces .stat-chip dark-theme pills. .chip is the base; variants
+     (-account, -live, -pending, -sync) add color/dot/check/chevron via
+     pseudo-elements. .clock is non-chip naked time text. */
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: 6px 11px;
+    border-radius: var(--radius-pill);
+    background: var(--bg-glass-soft);
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    box-shadow:
+      var(--shadow-float-low),
+      inset 0 1px 0 var(--border-glass-top),
+      inset 0 -1px 0 var(--border-glass-bottom);
+    border-left: 1px solid var(--border-glass-side);
+    border-right: 1px solid var(--border-glass-side);
+    transition: all 200ms var(--easing-default);
+  }
+
+  .chip:hover {
+    transform: translateY(-1px);
+    box-shadow:
+      var(--shadow-float-mid),
+      inset 0 1px 0 var(--border-glass-top),
+      inset 0 -1px 0 var(--border-glass-bottom);
+  }
+
+  .chip-account {
+    font-family: var(--font-sans);
+    text-transform: none;
+    letter-spacing: 0;
+    font-weight: 500;
+    color: var(--text-primary);
+    font-size: 12px;
+    padding: 6px 14px;
+  }
+
+  .chip-account::after {
+    content: "▾";
+    font-size: 9px;
+    color: var(--text-dim);
+    margin-left: 4px;
+  }
+
+  /* Multi-account variant: native <select> with custom SVG chevron.
+     ::after suppressed so we don't double-render a chevron. */
+  .chip-account-select {
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='9' height='9' viewBox='0 0 9 9'%3E%3Cpath d='M1 3 L4.5 6 L8 3' stroke='%2394a3b8' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 12px center;
+    padding-right: 28px;
+    cursor: pointer;
+  }
+
+  .chip-account-select option {
+    background: white;
+    color: var(--text-primary);
+  }
+
+  .chip-account-select::after {
+    display: none;
+  }
+
+  .chip-live {
+    color: var(--accent-cyan-bright);
+  }
+
+  .chip-live::before {
+    content: "";
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--accent-cyan-bright);
+    box-shadow: 0 0 8px var(--accent-cyan-soft);
+    animation: pulse-cyan 1.8s ease-in-out infinite;
+  }
+
+  @keyframes pulse-cyan {
+    0%, 100% { transform: scale(1); opacity: 1; }
+    50% { transform: scale(1.25); opacity: 0.6; }
+  }
+
+  .chip-pending {
+    color: var(--accent-gold);
+  }
+
+  .chip-pending::before {
+    content: "";
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--accent-gold);
+  }
+
+  .chip-sync::before {
+    content: "✓";
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--status-success);
+  }
+
+  .clock {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-dim);
+    padding: 0 var(--space-2);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.02em;
+  }
+
   .logo-box {
     width: 38px; height: 38px;
     background: linear-gradient(145deg, #2b3a6b, #1a2444);
@@ -367,22 +537,47 @@ const GLOBAL_CSS = `
     flex-shrink: 0;
   }
 
-  .nav-tab {
-    display: flex; align-items: center; gap: 6px;
-    padding: 12px 16px;
-    border: none; cursor: pointer;
-    background: transparent; color: #9ca3af;
-    border-bottom: 2px solid transparent;
-    font-family: 'Inter', sans-serif;
-    font-size: 12px; font-weight: 500;
-    transition: all 0.18s ease;
-    white-space: nowrap;
+  /* Sub-stage 2: tab bar — glass surface mirroring the header, with
+     cyan-tinted active state replacing the old dark-navy / red treatment.
+     .app-tabs handles layout (margin, padding, overflow); .glass primitive
+     provides the translucent surface. Tab icons inherit text color via
+     currentColor, so active tabs auto-tint cyan. */
+  .app-tabs {
+    margin: 0 12px 12px 12px;
+    padding: 6px;
+    display: flex;
+    gap: 2px;
+    overflow-x: auto;
   }
-  .nav-tab:hover:not(.active) { color: #ffffff; background: rgba(255,255,255,0.04); }
+
+  .nav-tab {
+    padding: 9px 16px;
+    font-family: var(--font-sans);
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    background: transparent;
+    border: none;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: all 200ms var(--easing-default);
+    white-space: nowrap;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .nav-tab:hover {
+    color: var(--text-primary);
+    background: var(--bg-glass-soft);
+  }
+
   .nav-tab.active {
-    color: #ffffff;
-    border-bottom-color: #c0272d;
-    background: rgba(192,39,45,0.08);
+    background: var(--bg-glass-soft);
+    color: var(--accent-cyan-bright);
+    box-shadow:
+      inset 0 1px 0 var(--border-glass-top),
+      inset 0 -2px 0 var(--accent-cyan);
   }
 
   .metric-card {
@@ -2583,30 +2778,15 @@ export default function MarketingBotDashboard() {
       <style>{GLOBAL_CSS}</style>
 
       {/* ── HEADER ── */}
-      <div className="app-header">
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <div className="logo-box">
-            <svg viewBox="0 0 24 24" fill="none" width="20" height="20">
-              <path d="M13 3L4 14h8l-1 7 9-11h-8l1-7z" fill="url(#g1)" stroke="url(#g1)" strokeWidth="0.5" strokeLinejoin="round"/>
-              <defs>
-                <linearGradient id="g1" x1="4" y1="3" x2="17" y2="21" gradientUnits="userSpaceOnUse">
-                  <stop offset="0%" stopColor="#e04a4f"/>
-                  <stop offset="100%" stopColor="#8b1a1e"/>
-                </linearGradient>
-              </defs>
-            </svg>
+      <div className="app-header glass">
+        <div className="logo-block">
+          <div className="logo-text">
+            <span className="account-name">{selectedAccount?.name || 'Florida Pole Barn'}</span>
+            <span className="ai-suffix">AI</span>
           </div>
-          <div>
-            <div style={{ fontFamily: F.serif, fontSize: 16, fontWeight: 700, letterSpacing: "-0.01em", lineHeight: 1.15 }}>
-              <span style={{ color: C.textPrimary }}>{selectedAccount?.name || 'FPB'}</span>
-              <span style={{ color: C.gold }}>&nbsp;AI</span>
-            </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 5, marginTop: 2 }}>
-              <span className="pip" />
-              <span style={{ fontFamily: F.mono, fontSize: 9, letterSpacing: "2.5px", color: C.textMuted, textTransform: "uppercase" }}>
-                Marketing Agent
-              </span>
-            </div>
+          <div className="subtitle">
+            <span className="subtitle-pip"></span>
+            <span className="subtitle-text">Marketing Agent</span>
           </div>
         </div>
 
@@ -2625,32 +2805,19 @@ export default function MarketingBotDashboard() {
           >
             {density === 'comfortable' ? <LayoutGrid size={16} /> : <Rows3 size={16} />}
           </button>
-          <div className="stat-chip">
-            <span style={{ width: 6, height: 6, borderRadius: "50%", background: C.emerald, boxShadow: `0 0 7px ${C.emerald}`, display: "inline-block" }} />
-            LIVE
-          </div>
-          <div className="stat-chip">
-            <span style={{ width: 6, height: 6, borderRadius: "50%", background: C.amber, boxShadow: `0 0 7px ${C.amber}`, display: "inline-block" }} />
-            {pendingCount} pending
-          </div>
+          <span className="chip chip-live">Live</span>
+          <span className="chip chip-pending">{pendingCount} pending</span>
           {lastSynced && (
-            <div className="stat-chip">
-              <span style={{ color: C.emerald, fontSize: 10 }}>●</span>
-              Synced {lastSynced}
-            </div>
+            <span className="chip chip-sync">Synced {lastSynced}</span>
           )}
-          <div className="stat-chip">
+          <span className="clock">
             {now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-          </div>
+          </span>
         </div>
       </div>
 
       {/* ── TABS ── */}
-      <div style={{
-        display: "flex", gap: 2, padding: "0 24px",
-        background: "rgba(22,28,45,0.80)", borderBottom: "1px solid rgba(255,255,255,0.08)",
-        overflowX: "auto", backdropFilter: "blur(16px)",
-      }}>
+      <div className="app-tabs glass">
         {tabs.map(tab => (
           <button
             key={tab.id}
