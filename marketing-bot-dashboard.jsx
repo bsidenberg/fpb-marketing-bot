@@ -263,7 +263,7 @@ const GLOBAL_CSS = `
   .glass::before {
     content: "";
     position: absolute;
-    top: 0;
+    top: 3px;
     left: 0;
     right: 0;
     height: 50%;
