@@ -145,6 +145,7 @@ const GLOBAL_CSS = `
     /* Accents — cyan */
     --accent-cyan:        #0891b2;
     --accent-cyan-bright: #06b6d4;
+    --accent-cyan-deep:   #0e7490;
     --accent-cyan-soft:   rgba(8, 145, 178, 0.12);
     --accent-cyan-faint:  rgba(8, 145, 178, 0.04);
 
@@ -560,7 +561,7 @@ const GLOBAL_CSS = `
     padding: 9px 16px;
     font-family: var(--font-sans);
     font-size: 13px;
-    font-weight: 500;
+    font-weight: 600;
     color: var(--text-secondary);
     background: transparent;
     border: none;
@@ -573,14 +574,15 @@ const GLOBAL_CSS = `
     gap: 6px;
   }
 
-  .nav-tab:hover {
+  .nav-tab:hover:not(.active) {
     color: var(--text-primary);
     background: var(--bg-glass-soft);
   }
 
   .nav-tab.active {
     background: var(--bg-glass-soft);
-    color: var(--accent-cyan-bright);
+    color: var(--accent-cyan-deep);
+    font-weight: 600;
     box-shadow:
       inset 0 1px 0 var(--border-glass-top),
       inset 0 -2px 0 var(--accent-cyan);
