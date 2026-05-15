@@ -58,6 +58,8 @@ const ACCOUNT_PUBLIC_COLUMNS = [
   'tracking_health_score',
   'crm_hygiene_score',
   'account_health_score',
+  'parent_account_id',
+  'product_line',
   'created_at',
   'updated_at',
 ].join(', ');

@@ -96,6 +96,8 @@ function makeAccountRow(overrides = {}) {
     tracking_health_score:           0,
     crm_hygiene_score:               0,
     account_health_score:            0,
+    parent_account_id:               null,
+    product_line:                    null,
     created_at:                      '2026-01-01T00:00:00Z',
     updated_at:                      '2026-01-01T00:00:00Z',
     ...overrides,
@@ -110,6 +112,7 @@ const WHITELIST = [
   'target_cost_per_booked_job', 'target_margin_goal',
   'autonomy_level', 'status',
   'tracking_health_score', 'crm_hygiene_score', 'account_health_score',
+  'parent_account_id', 'product_line',
   'created_at', 'updated_at',
 ];
 
