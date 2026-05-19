@@ -26,6 +26,7 @@ import {
 } from './lib/accounts.js';
 import { setCorsHeaders } from './lib/cors.js';
 import { requireSecret } from './lib/require-secret.js';
+import { recordApiCall } from './lib/api-cost.js';
 
 export default async function handler(req, res) {
   setCorsHeaders(req, res, { methods: 'POST, OPTIONS', headers: 'Content-Type, x-execute-secret, x-account-slug' });
@@ -171,7 +172,10 @@ export default async function handler(req, res) {
     return res.status(500).json({ success: false, error: err.message, step: 'create_creative' });
   }
 
-  // ── STEP 3: Log to automation_log (account-scoped) ────────────────────────
+  // ── STEP 3: Log to cost ledger (fire-and-forget) ─────────────────────────
+  await recordApiCall('meta_ads', 'creative_upload', account.id, { creativeId, format });
+
+  // ── STEP 4: Log to automation_log (account-scoped) ────────────────────────
   try {
     await supabase.from('automation_log').insert({
       account_id:  account.id,

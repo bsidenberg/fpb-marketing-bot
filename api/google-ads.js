@@ -21,6 +21,7 @@ import {
   checkConnectionFields,
 } from './lib/accounts.js';
 import { setCorsHeaders } from './lib/cors.js';
+import { recordApiCall } from './lib/api-cost.js';
 
 export default async function handler(req, res) {
   setCorsHeaders(req, res, { methods: 'GET, POST, OPTIONS', headers: 'Content-Type, x-account-slug' });
@@ -164,6 +165,9 @@ export default async function handler(req, res) {
 
     const roas = totalSpend > 0 ? (totalConversions * 150 / totalSpend).toFixed(2) : '0.00';
     const cpl = totalConversions > 0 ? (totalSpend / totalConversions).toFixed(2) : '0.00';
+
+    // Cost ledger — fire-and-forget
+    await recordApiCall('google_ads', 'campaigns_search', account.id);
 
     return res.status(200).json({
       success: true,

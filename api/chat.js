@@ -44,6 +44,7 @@ import { getFpbChatSystemPrompt, FPB_SYSTEM_PROMPT_VERSION } from './lib/prompts
 import { resolveForRead, resolveForWrite } from './lib/accounts.js';
 import { setCorsHeaders } from './lib/cors.js';
 import { checkRateLimit } from './lib/rate-limit.js';
+import { recordAnthropicCost } from './lib/anthropic-cost.js';
 
 const CHAT_MODEL = 'claude-sonnet-4-20250514';
 
@@ -150,13 +151,15 @@ async function callClaude({ model, system, messages, max_tokens }) {
 }
 
 // ── Intent detection ─────────────────────────────────────────────────────────
-async function detectIntent(message) {
+async function detectIntent(message, accountId = null) {
   const json = await callClaude({
     model:      'claude-haiku-4-5-20251001',
     max_tokens: 10,
     system:     'Classify this message into one of three intents: DATA_QUESTION (needs live ad performance data to answer), ACTION_REQUEST (user wants to make a change to a campaign), STRATEGY (general advice, explanation, or question that does not need live data). Respond with only one word: DATA_QUESTION, ACTION_REQUEST, or STRATEGY.',
     messages:   [{ role: 'user', content: message }],
   });
+  // Cost ledger — fire-and-forget
+  await recordAnthropicCost(json, accountId, 'intent_detection');
   const word = (json.content?.[0]?.text || '').trim().toUpperCase();
   if (['DATA_QUESTION', 'ACTION_REQUEST', 'STRATEGY'].includes(word)) return word;
   return 'STRATEGY'; // safe default
@@ -287,7 +290,7 @@ export default async function handler(req, res) {
 
   try {
     // ── Step 1: Intent detection (skip if client already knows to include ad data) ──
-    let intent = includeAdData ? 'DATA_QUESTION' : await detectIntent(message);
+    let intent = includeAdData ? 'DATA_QUESTION' : await detectIntent(message, account.id);
 
     // ── Step 2: If DATA_QUESTION and not yet fetching, signal the frontend ──
     if (intent === 'DATA_QUESTION' && !includeAdData) {
@@ -383,6 +386,9 @@ export default async function handler(req, res) {
       output_json: { reply: displayText, messageType, hasActionPayload: !!actionPayload },
       latency_ms,
     });
+
+    // Cost ledger — fire-and-forget; never throws back to caller
+    await recordAnthropicCost(claudeRes, account.id, 'chat', runId);
 
     // ── Step 7: Save to Supabase ──
     await supabase.from('chat_messages').insert([

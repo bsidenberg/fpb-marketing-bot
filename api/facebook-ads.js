@@ -18,6 +18,7 @@ import {
   checkConnectionFields,
 } from './lib/accounts.js';
 import { setCorsHeaders } from './lib/cors.js';
+import { recordApiCall } from './lib/api-cost.js';
 
 export default async function handler(req, res) {
   setCorsHeaders(req, res, { methods: 'GET, POST, OPTIONS', headers: 'Content-Type, x-account-slug' });
@@ -126,6 +127,9 @@ export default async function handler(req, res) {
           : null,
       };
     });
+
+    // Cost ledger — fire-and-forget
+    await recordApiCall('meta_ads', 'campaigns_read', account.id);
 
     res.status(200).json({
       success: true,

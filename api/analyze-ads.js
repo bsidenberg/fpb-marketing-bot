@@ -28,6 +28,7 @@ import {
   getConnectionForAccount,
 } from './lib/accounts.js';
 import { setCorsHeaders } from './lib/cors.js';
+import { recordAnthropicCost } from './lib/anthropic-cost.js';
 
 // ── Internal data fetchers (account-scoped) ───────────────────────────────────
 
@@ -88,7 +89,7 @@ async function callClaude(performanceData) {
 
   // Strip any markdown fences if present
   const clean = text.replace(/^```(?:json)?\n?/i, '').replace(/\n?```$/i, '').trim();
-  return JSON.parse(clean);
+  return { actions: JSON.parse(clean), rawResponse: json };
 }
 
 // ── Best-effort ai_analysis_runs logging ──────────────────────────────────────
@@ -216,11 +217,13 @@ export async function runAnalysisForAccount(account, { baseUrl, triggeredBy = 'm
   await updateAnalysisRunStatus(runId, { status: 'running' });
 
   // ── 3. Send to Claude ──────────────────────────────────────────────────────
-  let actions  = [];
-  let aiError  = null;
+  let actions      = [];
+  let aiError      = null;
+  let claudeRaw    = null;
   try {
-    const result = await callClaude(performanceData);
-    actions = Array.isArray(result) ? result : [];
+    const { actions: parsed, rawResponse } = await callClaude(performanceData);
+    actions   = Array.isArray(parsed) ? parsed : [];
+    claudeRaw = rawResponse;
   } catch (err) {
     aiError = err;
   }
@@ -252,6 +255,9 @@ export async function runAnalysisForAccount(account, { baseUrl, triggeredBy = 'm
     output_json: actions,
     latency_ms,
   });
+
+  // Cost ledger — fire-and-forget; never throws back to caller
+  await recordAnthropicCost(claudeRaw, account.id, 'analyze_ads', runId);
 
   // ── 5. Insert recommended actions (account-scoped dedup against pending) ───
   let insertedCount = 0;

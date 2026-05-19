@@ -34,6 +34,7 @@ import {
   canExecute,
   isManualType,
 } from './action-states.js';
+import { recordApiCall } from './api-cost.js';
 
 // ── Platform normaliser ───────────────────────────────────────────────────────
 export function normalizePlatform(platform) {
@@ -128,6 +129,8 @@ export async function executeGoogle(action, { account, connection }) {
   });
   const text = await res.text();
   if (!res.ok) throw new Error(`Google Ads API ${res.status}: ${text.substring(0, 400)}`);
+  // Cost ledger — fire-and-forget
+  await recordApiCall('google_ads', 'campaign_mutate', account.id);
   return JSON.parse(text);
 }
 
@@ -155,6 +158,8 @@ export async function executeMeta(action, { account, connection }) {
   const res  = await fetch(url.toString(), { method: 'POST' });
   const json = await res.json();
   if (json.error) throw new Error(json.error.message || `Meta API error code ${json.error.code}`);
+  // Cost ledger — fire-and-forget
+  await recordApiCall('meta_ads', 'campaign_mutate', account.id);
   return json;
 }
 
@@ -238,6 +243,9 @@ export async function executePublishCreative(action, { account, connection }) {
   if (creativeJson.error) throw new Error(creativeJson.error.message || `Meta creative code ${creativeJson.error.code}`);
   if (!creativeJson.id) throw new Error('Ad creative created but no ID returned');
 
+  // Cost ledger — fire-and-forget (image upload + creative = 2 calls)
+  await recordApiCall('meta_ads', 'creative_upload', account.id, { format });
+
   return {
     creative_id: creativeJson.id,
     image_hash:  imageHash,
@@ -312,6 +320,9 @@ export async function executeCreateMetaCampaign(action, { account, connection })
   });
   const adSetData = await adSetRes.json();
   if (adSetData.error) throw new Error(adSetData.error.message);
+
+  // Cost ledger — fire-and-forget (campaign + adset = 2 API calls, logged as one event)
+  await recordApiCall('meta_ads', 'campaign_create', account.id);
 
   return {
     campaign_id: campaignData.id,

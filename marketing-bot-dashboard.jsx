@@ -2666,6 +2666,19 @@ export default function MarketingBotDashboard() {
   const [leadsData, setLeadsData] = useState([]);
   const [leadsLoading, setLeadsLoading] = useState(false);
 
+  // ── Costs tab state ──
+  const [costsMonth, setCostsMonth] = useState(() => new Date().toISOString().slice(0, 7));
+  const [costsRollup, setCostsRollup] = useState(null);
+  const [costsRollupLoading, setCostsRollupLoading] = useState(false);
+  const [subscriptions, setSubscriptions] = useState([]);
+  const [subsLoading, setSubsLoading] = useState(false);
+  const [hoursLog, setHoursLog] = useState([]);
+  const [hoursLoading, setHoursLoading] = useState(false);
+  const [newSubForm, setNewSubForm] = useState({ vendor: '', plan: '', monthly_amount_usd: '', started_at: new Date().toISOString().slice(0, 10), notes: '' });
+  const [newHoursForm, setNewHoursForm] = useState({ hours: '', focus_area: selectedAccountSlug, category: 'build', log_date: new Date().toISOString().slice(0, 10), notes: '' });
+  const [costsSubError, setCostsSubError] = useState(null);
+  const [costsHoursError, setCostsHoursError] = useState(null);
+
   // ── Chat tab state ──
   const [chatMessages, setChatMessages] = useState([]);
   const [chatInput, setChatInput] = useState("");
@@ -2934,6 +2947,48 @@ export default function MarketingBotDashboard() {
     }
   }, [state.activeTab, fetchOutcomes, fetchLeads, selectedAccountSlug]);
 
+  // ── Costs tab data loaders ──
+  const fetchCostsRollup = useCallback(async (month) => {
+    setCostsRollupLoading(true);
+    try {
+      const res  = await accountFetch(`/api/cost-rollup?month=${encodeURIComponent(month)}`, {}, selectedAccountSlug);
+      const json = await res.json();
+      if (json.success) setCostsRollup(json.rollup);
+    } catch { /* swallow */ } finally {
+      setCostsRollupLoading(false);
+    }
+  }, [selectedAccountSlug]);
+
+  const fetchSubscriptions = useCallback(async () => {
+    setSubsLoading(true);
+    try {
+      const res  = await accountFetch('/api/cost-subscriptions', {}, selectedAccountSlug);
+      const json = await res.json();
+      if (json.success) setSubscriptions(json.data || []);
+    } catch { /* swallow */ } finally {
+      setSubsLoading(false);
+    }
+  }, [selectedAccountSlug]);
+
+  const fetchHoursLog = useCallback(async () => {
+    setHoursLoading(true);
+    try {
+      const res  = await accountFetch('/api/cost-hours', {}, selectedAccountSlug);
+      const json = await res.json();
+      if (json.success) setHoursLog(json.data || []);
+    } catch { /* swallow */ } finally {
+      setHoursLoading(false);
+    }
+  }, [selectedAccountSlug]);
+
+  useEffect(() => {
+    if (state.activeTab === 'costs') {
+      fetchCostsRollup(costsMonth);
+      fetchSubscriptions();
+      fetchHoursLog();
+    }
+  }, [state.activeTab, costsMonth, selectedAccountSlug]); // eslint-disable-line
+
   // ── Chat: load history on mount ──
   // Welcome message reads from the selected account at render time so it
   // updates when the user switches accounts (the effect deps already
@@ -3103,6 +3158,7 @@ export default function MarketingBotDashboard() {
     { id: "intel",     label: "Intel",                     icon: <Icons.Eye /> },
     { id: "log",         label: "Automation Log",            icon: <Icons.Clock /> },
     { id: "attribution", label: "Attribution",              icon: <Icons.BarChart /> },
+    { id: "costs",       label: "Costs",                    icon: <Icons.Settings /> },
     { id: "setup",       label: "Setup Guide",              icon: <Icons.Settings /> },
   ];
 
@@ -4474,6 +4530,295 @@ export default function MarketingBotDashboard() {
             {!leadsLoading && leadsData.length > 0 && (
               <LeadTable leads={leadsData} onUpdate={fetchLeads} accountSlug={selectedAccountSlug} />
             )}
+          </div>
+        )}
+
+        {/* COSTS TAB */}
+        {state.activeTab === "costs" && (
+          <div key="costs" style={{ animation: "panelIn 0.22s ease" }}>
+            {/* Header */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
+              <div>
+                <div style={{ fontFamily: F.serif, fontSize: 22, fontWeight: 700, color: C.textPrimary, marginBottom: 4 }}>Costs</div>
+                <div style={{ fontSize: 13, color: C.textSecondary, fontFamily: F.sans }}>
+                  API usage, subscriptions, and hours — pricing floor data (Principle 13)
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <input
+                  type="month"
+                  value={costsMonth}
+                  onChange={e => setCostsMonth(e.target.value)}
+                  style={{
+                    padding: "6px 10px", border: `1px solid ${C.borderDim}`, borderRadius: 6,
+                    fontFamily: F.sans, fontSize: 12, color: C.textPrimary, background: C.bgRaised,
+                  }}
+                />
+                <button
+                  onClick={() => { fetchCostsRollup(costsMonth); fetchSubscriptions(); fetchHoursLog(); }}
+                  style={{
+                    padding: "7px 14px", background: C.gold, color: "#fff",
+                    border: "none", borderRadius: 6, fontFamily: F.sans,
+                    fontSize: 12, fontWeight: 600, cursor: "pointer",
+                  }}
+                >
+                  Refresh
+                </button>
+              </div>
+            </div>
+
+            {/* ── Monthly rollup stats ── */}
+            <div style={{ marginBottom: 24 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: C.textMuted, fontFamily: F.sans, marginBottom: 10, textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                Monthly Rollup — {costsMonth}
+              </div>
+              {costsRollupLoading ? (
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 12 }}>
+                  {[0,1,2,3,4,5].map(i => (
+                    <div key={i} className="data-card" style={{ padding: 16 }}>
+                      <div style={{ height: 10, width: "60%", background: C.borderDim, borderRadius: 4, marginBottom: 8 }} />
+                      <div style={{ height: 22, width: "40%", background: C.borderDim, borderRadius: 4 }} />
+                    </div>
+                  ))}
+                </div>
+              ) : costsRollup ? (
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 12 }}>
+                  {[
+                    { label: "Anthropic Cost",   value: `$${(costsRollup.anthropic_total_usd || 0).toFixed(4)}` },
+                    { label: "Input Tokens",     value: Number(costsRollup.anthropic_input_tokens  || 0).toLocaleString() },
+                    { label: "Output Tokens",    value: Number(costsRollup.anthropic_output_tokens || 0).toLocaleString() },
+                    { label: "Google Ads Calls", value: (costsRollup.google_ads_calls || 0).toLocaleString() },
+                    { label: "Meta Ads Calls",   value: (costsRollup.meta_ads_calls   || 0).toLocaleString() },
+                    { label: "Sub Share",        value: `$${(costsRollup.subscription_share_usd || 0).toFixed(2)}` },
+                    { label: "Hours Logged",     value: `${(costsRollup.hours_total || 0).toFixed(1)} h` },
+                    { label: "Operating Total",  value: `$${(costsRollup.operating_total_usd || 0).toFixed(4)}` },
+                  ].map(({ label, value }) => (
+                    <div key={label} className="data-card" style={{ padding: 16 }}>
+                      <div style={{ fontSize: 11, color: C.textMuted, fontFamily: F.sans, fontWeight: 500, marginBottom: 6 }}>{label}</div>
+                      <div style={{ fontSize: 18, fontWeight: 700, color: C.textPrimary, fontFamily: F.sans }}>{value}</div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div style={{ color: C.textMuted, fontSize: 13, fontFamily: F.sans, padding: "20px 0" }}>
+                  No rollup data — click Refresh to compute.
+                </div>
+              )}
+            </div>
+
+            {/* ── Subscriptions ── */}
+            <div style={{ marginBottom: 28 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: C.textMuted, fontFamily: F.sans, marginBottom: 12, textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                Subscriptions
+              </div>
+              {subsLoading ? (
+                <div style={{ color: C.textMuted, fontSize: 13, fontFamily: F.sans }}>Loading…</div>
+              ) : subscriptions.length === 0 ? (
+                <div style={{ color: C.textMuted, fontSize: 13, fontFamily: F.sans, marginBottom: 12 }}>No subscriptions logged yet.</div>
+              ) : (
+                <div style={{ overflowX: "auto", marginBottom: 12 }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, fontFamily: F.sans }}>
+                    <thead>
+                      <tr style={{ color: C.textMuted, textAlign: "left" }}>
+                        {["Vendor","Plan","$/mo","Started","Ends","Notes"].map(h => (
+                          <th key={h} style={{ padding: "6px 10px", borderBottom: `1px solid ${C.borderDim}`, fontWeight: 500 }}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {subscriptions.map(s => (
+                        <tr key={s.id} style={{ borderBottom: `1px solid ${C.borderDim}` }}>
+                          <td style={{ padding: "8px 10px", color: C.textPrimary, fontWeight: 600 }}>{s.vendor}</td>
+                          <td style={{ padding: "8px 10px", color: C.textSecondary }}>{s.plan}</td>
+                          <td style={{ padding: "8px 10px", color: C.textPrimary }}>${parseFloat(s.monthly_amount_usd || 0).toFixed(2)}</td>
+                          <td style={{ padding: "8px 10px", color: C.textSecondary }}>{s.started_at?.slice(0, 10) || "—"}</td>
+                          <td style={{ padding: "8px 10px", color: C.textSecondary }}>{s.ended_at?.slice(0, 10) || "Active"}</td>
+                          <td style={{ padding: "8px 10px", color: C.textMuted }}>{s.notes || "—"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {/* Add subscription form */}
+              <details style={{ marginTop: 8 }}>
+                <summary style={{ cursor: "pointer", fontSize: 12, color: C.gold, fontFamily: F.sans, fontWeight: 600, userSelect: "none" }}>
+                  + Add subscription
+                </summary>
+                <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 10 }}>
+                  {[
+                    { key: "vendor",             label: "Vendor",        placeholder: "anthropic, vercel…" },
+                    { key: "plan",               label: "Plan",          placeholder: "pro, team, free…" },
+                    { key: "monthly_amount_usd", label: "$/month",       placeholder: "20.00" },
+                    { key: "started_at",         label: "Start date",    placeholder: "YYYY-MM-DD", type: "date" },
+                    { key: "notes",              label: "Notes",         placeholder: "Optional" },
+                  ].map(({ key, label, placeholder, type }) => (
+                    <div key={key}>
+                      <div style={{ fontSize: 11, color: C.textMuted, fontFamily: F.sans, marginBottom: 4 }}>{label}</div>
+                      <input
+                        type={type || "text"}
+                        value={newSubForm[key] || ""}
+                        onChange={e => setNewSubForm(f => ({ ...f, [key]: e.target.value }))}
+                        placeholder={placeholder}
+                        style={{
+                          width: "100%", padding: "6px 8px",
+                          border: `1px solid ${C.borderDim}`, borderRadius: 5,
+                          fontFamily: F.sans, fontSize: 12, color: C.textPrimary,
+                          background: C.bgRaised, boxSizing: "border-box",
+                        }}
+                      />
+                    </div>
+                  ))}
+                </div>
+                {costsSubError && (
+                  <div style={{ color: "#c0272d", fontSize: 12, fontFamily: F.sans, marginTop: 8 }}>{costsSubError}</div>
+                )}
+                <button
+                  onClick={async () => {
+                    setCostsSubError(null);
+                    const { vendor, plan, monthly_amount_usd, started_at, notes } = newSubForm;
+                    if (!vendor || !plan || !monthly_amount_usd || !started_at) {
+                      setCostsSubError("vendor, plan, $/month, and start date are required");
+                      return;
+                    }
+                    try {
+                      const res  = await accountFetch('/api/cost-subscriptions', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ vendor, plan, monthly_amount_usd: parseFloat(monthly_amount_usd), started_at: `${started_at}T00:00:00Z`, notes: notes || null }),
+                      }, selectedAccountSlug);
+                      const json = await res.json();
+                      if (!json.success) { setCostsSubError(json.error || 'Failed'); return; }
+                      setNewSubForm({ vendor: '', plan: '', monthly_amount_usd: '', started_at: new Date().toISOString().slice(0, 10), notes: '' });
+                      fetchSubscriptions();
+                    } catch (err) { setCostsSubError(err.message); }
+                  }}
+                  style={{
+                    marginTop: 12, padding: "7px 16px", background: C.gold, color: "#fff",
+                    border: "none", borderRadius: 6, fontFamily: F.sans,
+                    fontSize: 12, fontWeight: 600, cursor: "pointer",
+                  }}
+                >
+                  Save subscription
+                </button>
+              </details>
+            </div>
+
+            {/* ── Hours log ── */}
+            <div style={{ marginBottom: 28 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: C.textMuted, fontFamily: F.sans, marginBottom: 12, textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                Hours Log
+              </div>
+              {hoursLoading ? (
+                <div style={{ color: C.textMuted, fontSize: 13, fontFamily: F.sans }}>Loading…</div>
+              ) : hoursLog.length === 0 ? (
+                <div style={{ color: C.textMuted, fontSize: 13, fontFamily: F.sans, marginBottom: 12 }}>No hours logged yet.</div>
+              ) : (
+                <div style={{ overflowX: "auto", marginBottom: 12 }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, fontFamily: F.sans }}>
+                    <thead>
+                      <tr style={{ color: C.textMuted, textAlign: "left" }}>
+                        {["Date","Hours","Focus Area","Category","Notes"].map(h => (
+                          <th key={h} style={{ padding: "6px 10px", borderBottom: `1px solid ${C.borderDim}`, fontWeight: 500 }}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {hoursLog.map(h => (
+                        <tr key={h.id} style={{ borderBottom: `1px solid ${C.borderDim}` }}>
+                          <td style={{ padding: "8px 10px", color: C.textSecondary }}>{h.log_date}</td>
+                          <td style={{ padding: "8px 10px", color: C.textPrimary, fontWeight: 600 }}>{parseFloat(h.hours).toFixed(1)}</td>
+                          <td style={{ padding: "8px 10px", color: C.textSecondary }}>{h.focus_area}</td>
+                          <td style={{ padding: "8px 10px", color: C.textSecondary }}>{h.category}</td>
+                          <td style={{ padding: "8px 10px", color: C.textMuted }}>{h.notes || "—"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {/* Add hours form */}
+              <details style={{ marginTop: 8 }}>
+                <summary style={{ cursor: "pointer", fontSize: 12, color: C.gold, fontFamily: F.sans, fontWeight: 600, userSelect: "none" }}>
+                  + Log hours
+                </summary>
+                <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 10 }}>
+                  {[
+                    { key: "hours",      label: "Hours",       placeholder: "2.5" },
+                    { key: "focus_area", label: "Focus area",  placeholder: "fpb, weld, fsc…" },
+                    { key: "log_date",   label: "Date",        type: "date" },
+                    { key: "notes",      label: "Notes",       placeholder: "Optional" },
+                  ].map(({ key, label, placeholder, type }) => (
+                    <div key={key}>
+                      <div style={{ fontSize: 11, color: C.textMuted, fontFamily: F.sans, marginBottom: 4 }}>{label}</div>
+                      <input
+                        type={type || "text"}
+                        value={newHoursForm[key] || ""}
+                        onChange={e => setNewHoursForm(f => ({ ...f, [key]: e.target.value }))}
+                        placeholder={placeholder}
+                        style={{
+                          width: "100%", padding: "6px 8px",
+                          border: `1px solid ${C.borderDim}`, borderRadius: 5,
+                          fontFamily: F.sans, fontSize: 12, color: C.textPrimary,
+                          background: C.bgRaised, boxSizing: "border-box",
+                        }}
+                      />
+                    </div>
+                  ))}
+                  <div>
+                    <div style={{ fontSize: 11, color: C.textMuted, fontFamily: F.sans, marginBottom: 4 }}>Category</div>
+                    <select
+                      value={newHoursForm.category}
+                      onChange={e => setNewHoursForm(f => ({ ...f, category: e.target.value }))}
+                      style={{
+                        width: "100%", padding: "6px 8px",
+                        border: `1px solid ${C.borderDim}`, borderRadius: 5,
+                        fontFamily: F.sans, fontSize: 12, color: C.textPrimary,
+                        background: C.bgRaised, boxSizing: "border-box",
+                      }}
+                    >
+                      {["build", "operating", "review", "investigation", "other"].map(c => (
+                        <option key={c} value={c}>{c}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+                {costsHoursError && (
+                  <div style={{ color: "#c0272d", fontSize: 12, fontFamily: F.sans, marginTop: 8 }}>{costsHoursError}</div>
+                )}
+                <button
+                  onClick={async () => {
+                    setCostsHoursError(null);
+                    const { hours, focus_area, category, log_date, notes } = newHoursForm;
+                    if (!hours || !focus_area || !category || !log_date) {
+                      setCostsHoursError("hours, focus area, category, and date are required");
+                      return;
+                    }
+                    try {
+                      const res  = await accountFetch('/api/cost-hours', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ hours: parseFloat(hours), focus_area, category, log_date, notes: notes || null }),
+                      }, selectedAccountSlug);
+                      const json = await res.json();
+                      if (!json.success) { setCostsHoursError(json.error || 'Failed'); return; }
+                      setNewHoursForm(f => ({ ...f, hours: '', focus_area: selectedAccountSlug, notes: '', log_date: new Date().toISOString().slice(0, 10) }));
+                      fetchHoursLog();
+                      fetchCostsRollup(costsMonth);
+                    } catch (err) { setCostsHoursError(err.message); }
+                  }}
+                  style={{
+                    marginTop: 12, padding: "7px 16px", background: C.gold, color: "#fff",
+                    border: "none", borderRadius: 6, fontFamily: F.sans,
+                    fontSize: 12, fontWeight: 600, cursor: "pointer",
+                  }}
+                >
+                  Save hours
+                </button>
+              </details>
+            </div>
           </div>
         )}
 
