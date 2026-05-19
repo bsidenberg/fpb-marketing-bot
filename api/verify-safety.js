@@ -23,9 +23,10 @@ import {
   getConnectionForAccount,
   FPB_DEFAULT_SLUG,
 } from './lib/accounts.js';
+import { setCorsHeaders } from './lib/cors.js';
 
 export default async function handler(req, res) {
-  res.setHeader('Access-Control-Allow-Origin', '*');
+  setCorsHeaders(req, res, { methods: 'GET, OPTIONS', headers: 'Content-Type' });
   if (req.method === 'OPTIONS') return res.status(200).end();
 
   const checks = [];
@@ -47,7 +48,7 @@ export default async function handler(req, res) {
     status: secretSet ? 'pass' : 'warn',
     detail: secretSet
       ? 'EXECUTE_SECRET is present — mutation endpoints will enforce the x-execute-secret header.'
-      : 'EXECUTE_SECRET is NOT set — mutation endpoints are currently unprotected (will warn in logs). Add EXECUTE_SECRET to Vercel env vars and redeploy.',
+      : 'EXECUTE_SECRET is NOT set — in production, mutation endpoints now fail closed with 503 (requireSecret). In non-production they warn-and-allow. Add EXECUTE_SECRET to Vercel env vars and redeploy.',
   });
 
   // ── 3. Mutation endpoints protected ─────────────────────────────────────────
@@ -57,7 +58,7 @@ export default async function handler(req, res) {
     id:     'mutation_auth_wired',
     title:  'x-execute-secret auth wired to mutation endpoints',
     status: 'implemented',
-    detail: 'requireExecuteSecret() is called at handler entry in execute-action.js, meta-creative.js, create-facebook-campaign.js, create-google-campaign.js.',
+    detail: 'requireSecret() (api/lib/require-secret.js) is called at handler entry in execute-action.js, meta-creative.js, create-facebook-campaign.js, create-google-campaign.js — fail-closed with 503 in production when EXECUTE_SECRET is unset.',
   });
 
   // ── 4. Creative publish gated through approval queue ────────────────────────

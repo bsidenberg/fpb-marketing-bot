@@ -19,27 +19,14 @@ import {
   getConnectionForAccount,
   checkConnectionFields,
 } from './lib/accounts.js';
-
-function requireExecuteSecret(req, res) {
-  const secret = process.env.EXECUTE_SECRET;
-  if (!secret) {
-    console.warn('[SECURITY] EXECUTE_SECRET not set — mutation endpoint is unprotected');
-    return true;
-  }
-  if (req.headers['x-execute-secret'] !== secret) {
-    res.status(401).json({ success: false, error: 'Unauthorized' });
-    return false;
-  }
-  return true;
-}
+import { setCorsHeaders } from './lib/cors.js';
+import { requireSecret } from './lib/require-secret.js';
 
 export default async function handler(req, res) {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-execute-secret, x-account-slug');
+  setCorsHeaders(req, res, { methods: 'GET, POST, OPTIONS', headers: 'Content-Type, x-execute-secret, x-account-slug' });
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
-  if (!requireExecuteSecret(req, res)) return;
+  if (!requireSecret(req, res, { envVar: 'EXECUTE_SECRET', header: 'x-execute-secret', label: '/api/create-facebook-campaign' })) return;
 
   const account = await resolveForWrite(req, res);
   if (!account) return;

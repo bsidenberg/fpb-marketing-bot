@@ -27,16 +27,7 @@ import {
   resolveForWrite,
   getConnectionForAccount,
 } from './lib/accounts.js';
-
-const CORS = {
-  'Access-Control-Allow-Origin':  '*',
-  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, x-account-slug',
-};
-
-function cors(res) {
-  Object.entries(CORS).forEach(([k, v]) => res.setHeader(k, v));
-}
+import { setCorsHeaders } from './lib/cors.js';
 
 // ── Internal data fetchers (account-scoped) ───────────────────────────────────
 
@@ -362,7 +353,7 @@ export async function runAnalysisForAccount(account, { baseUrl, triggeredBy = 'm
 // ── HTTP handler ──────────────────────────────────────────────────────────────
 
 export default async function handler(req, res) {
-  cors(res);
+  setCorsHeaders(req, res, { methods: 'GET, POST, OPTIONS', headers: 'Content-Type, x-account-slug' });
   if (req.method === 'OPTIONS') return res.status(200).end();
 
   const account = await resolveForWrite(req, res);

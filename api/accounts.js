@@ -23,16 +23,7 @@
  */
 
 import supabase from './lib/supabase.js';
-
-const CORS = {
-  'Access-Control-Allow-Origin':  '*',
-  'Access-Control-Allow-Methods': 'GET, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, x-account-slug',
-};
-
-function cors(res) {
-  Object.entries(CORS).forEach(([k, v]) => res.setHeader(k, v));
-}
+import { setCorsHeaders } from './lib/cors.js';
 
 // Whitelist of columns returned to clients. Enumerated explicitly to
 // guarantee that future schema additions cannot leak through this
@@ -65,7 +56,7 @@ const ACCOUNT_PUBLIC_COLUMNS = [
 ].join(', ');
 
 export default async function handler(req, res) {
-  cors(res);
+  setCorsHeaders(req, res, { methods: 'GET, OPTIONS', headers: 'Content-Type, x-account-slug' });
   if (req.method === 'OPTIONS') return res.status(200).end();
 
   if (req.method !== 'GET') {

@@ -46,19 +46,10 @@ import {
   getConnectionForAccount,
   checkConnectionFields,
 } from './lib/accounts.js';
-
-const CORS = {
-  'Access-Control-Allow-Origin':  '*',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, x-account-slug',
-};
-
-function cors(res) {
-  Object.entries(CORS).forEach(([k, v]) => res.setHeader(k, v));
-}
+import { setCorsHeaders } from './lib/cors.js';
 
 export default async function handler(req, res) {
-  cors(res);
+  setCorsHeaders(req, res, { methods: 'POST, OPTIONS', headers: 'Content-Type, x-account-slug' });
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') {
     return res.status(405).json({ success: false, error: 'Method not allowed' });

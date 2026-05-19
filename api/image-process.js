@@ -1,14 +1,20 @@
+// ============================================================
+// api/image-process.js — resize + text-overlay an ad image (Sharp)
+//
+// POST /api/image-process
+//   Auth: x-image-process-secret (server-only; fail-closed in production
+//         when IMAGE_PROCESS_SECRET is unset — see api/lib/require-secret.js)
+//   Body: { imageData: { base64 }, format, overlays }
+//
+// Base64 payloads larger than 10MB are rejected with 413 to protect the
+// serverless function from memory exhaustion via oversized input.
+// ============================================================
+
 import sharp from 'sharp';
+import { setCorsHeaders } from './lib/cors.js';
+import { requireSecret } from './lib/require-secret.js';
 
-const CORS = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type',
-};
-
-function cors(res) {
-  Object.entries(CORS).forEach(([k, v]) => res.setHeader(k, v));
-}
+const MAX_BASE64_BYTES = 10 * 1024 * 1024; // 10 MB
 
 const FORMAT_SPECS = {
   feed:     { width: 1200, height: 628  },  // 1.91:1 standard link ad
@@ -54,16 +60,24 @@ function buildOverlaySvg(text, position, style, width, height, fontSize) {
 }
 
 export default async function handler(req, res) {
-  cors(res);
+  setCorsHeaders(req, res, { methods: 'POST, OPTIONS', headers: 'Content-Type, x-image-process-secret' });
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') {
     return res.status(405).json({ success: false, error: 'Method not allowed' });
   }
+  if (!requireSecret(req, res, { envVar: 'IMAGE_PROCESS_SECRET', header: 'x-image-process-secret', label: '/api/image-process' })) return;
 
   const { imageData, format = 'feed', overlays = [] } = req.body || {};
 
   if (!imageData?.base64) {
     return res.status(400).json({ success: false, error: 'Missing imageData.base64' });
+  }
+  if (imageData.base64.length > MAX_BASE64_BYTES) {
+    return res.status(413).json({
+      success: false,
+      error:   'Image payload too large — Base64 data exceeds the 10MB limit.',
+      code:    'PAYLOAD_TOO_LARGE',
+    });
   }
   if (!FORMAT_SPECS.hasOwnProperty(format)) {
     return res.status(400).json({ success: false, error: `Unknown format: ${format}` });

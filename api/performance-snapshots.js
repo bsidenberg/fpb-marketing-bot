@@ -17,16 +17,7 @@
 
 import supabase from './lib/supabase.js';
 import { resolveForRead } from './lib/accounts.js';
-
-const CORS = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'GET, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, x-account-slug',
-};
-
-function cors(res) {
-  Object.entries(CORS).forEach(([k, v]) => res.setHeader(k, v));
-}
+import { setCorsHeaders } from './lib/cors.js';
 
 function extractMetrics(platformData) {
   if (!platformData) return null;
@@ -59,7 +50,7 @@ function buildCombined(google, meta) {
 }
 
 export default async function handler(req, res) {
-  cors(res);
+  setCorsHeaders(req, res, { methods: 'GET, OPTIONS', headers: 'Content-Type, x-account-slug' });
   if (req.method === 'OPTIONS') return res.status(200).end();
 
   if (req.method !== 'GET') {

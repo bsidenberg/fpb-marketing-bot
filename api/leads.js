@@ -7,8 +7,9 @@
 //
 // ⚠️  Auth notes:
 //   POST requires x-leads-ingest-secret header matching LEADS_INGEST_SECRET env var.
-//   If LEADS_INGEST_SECRET is not set, the endpoint logs a warning and accepts
-//   any POST — set it in Vercel before accepting real webhook traffic.
+//   If LEADS_INGEST_SECRET is not set: in production the POST is refused with
+//   503 (fail-closed); in non-production it logs a warning and accepts the POST
+//   (dev convenience). See api/lib/require-secret.js.
 //
 //   PATCH is currently unauthenticated (dashboard-internal use only).
 //   Auth gap: anyone with a lead UUID can update its qualification status.
@@ -24,37 +25,14 @@
 import supabase from './lib/supabase.js';
 import { normalizePayload, buildDedupKey } from './lib/lead-ingest.js';
 import { resolveForRead, resolveForWrite } from './lib/accounts.js';
-
-const CORS = {
-  'Access-Control-Allow-Origin':  '*',
-  'Access-Control-Allow-Methods': 'GET, POST, PATCH, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, x-leads-ingest-secret, x-account-slug',
-};
-
-function cors(res) {
-  Object.entries(CORS).forEach(([k, v]) => res.setHeader(k, v));
-}
-
-// ── Auth helpers ──────────────────────────────────────────────────────────────
-
-function requireIngestSecret(req, res) {
-  const secret = process.env.LEADS_INGEST_SECRET;
-  if (!secret) {
-    console.warn('[SECURITY] LEADS_INGEST_SECRET not set — /api/leads POST is unprotected');
-    return true; // warn but allow (matches execute-action pattern)
-  }
-  if (req.headers['x-leads-ingest-secret'] !== secret) {
-    res.status(401).json({ success: false, error: 'Unauthorized — missing or invalid x-leads-ingest-secret' });
-    return false;
-  }
-  return true;
-}
+import { setCorsHeaders } from './lib/cors.js';
+import { requireSecret } from './lib/require-secret.js';
 
 const VALID_STATUSES   = ['new','qualified','unqualified','booked','lost','unknown'];
 const VALID_PLATFORMS  = ['google','meta','organic','referral','manual','unknown'];
 
 export default async function handler(req, res) {
-  cors(res);
+  setCorsHeaders(req, res, { methods: 'GET, POST, PATCH, OPTIONS', headers: 'Content-Type, x-leads-ingest-secret, x-account-slug' });
   if (req.method === 'OPTIONS') return res.status(200).end();
 
   // ── GET — list leads (read path; archived/inactive accounts allowed) ──────
@@ -89,7 +67,7 @@ export default async function handler(req, res) {
 
   // ── POST — create a lead (write path; rejects inactive/archived) ─────────
   if (req.method === 'POST') {
-    if (!requireIngestSecret(req, res)) return;
+    if (!requireSecret(req, res, { envVar: 'LEADS_INGEST_SECRET', header: 'x-leads-ingest-secret', label: '/api/leads' })) return;
 
     const account = await resolveForWrite(req, res);
     if (!account) return;

@@ -43,6 +43,7 @@ import {
   listActiveAccounts,
   FPB_DEFAULT_SLUG,
 } from './lib/accounts.js';
+import { setCorsHeaders } from './lib/cors.js';
 
 const WINDOW_DAYS = parseInt(process.env.OUTCOME_WINDOW_DAYS || '7', 10);
 
@@ -309,7 +310,7 @@ async function evaluateForAccount(account, { dryRun, specificId }) {
 }
 
 export default async function handler(req, res) {
-  res.setHeader('Access-Control-Allow-Origin', '*');
+  setCorsHeaders(req, res, { methods: 'GET, OPTIONS', headers: 'Content-Type, Authorization' });
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'GET') {
     return res.status(405).json({ success: false, error: 'Method not allowed' });

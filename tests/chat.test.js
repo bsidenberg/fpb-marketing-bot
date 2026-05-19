@@ -124,6 +124,9 @@ vi.stubGlobal('fetch', mockFetch);
 
 // Import AFTER all mocks
 import handler from '../api/chat.js';
+// rate-limit.js is intentionally NOT mocked — the chat handler exercises
+// the real limiter; clearRateLimits() resets its state between tests.
+import { clearRateLimits } from '../api/lib/rate-limit.js';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 function makeReq(overrides = {}) {
@@ -141,9 +144,10 @@ function makeRes() {
   return {
     _statusCode: 200,
     _body:       null,
+    _headers:    {},
     status:    function(code) { this._statusCode = code; return this; },
     json:      function(body) { this._body = body; return this; },
-    setHeader: () => {},
+    setHeader: function(k, v) { this._headers[k] = v; },
     end:       () => {},
   };
 }
@@ -156,6 +160,7 @@ function anthropicCalls() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  clearRateLimits();
   for (const k of Object.keys(responses))      delete responses[k];
   for (const k of Object.keys(insertsByTable)) delete insertsByTable[k];
   for (const k of Object.keys(updatesByTable)) delete updatesByTable[k];
@@ -293,6 +298,58 @@ describe('chat — account scoping', () => {
     expect(anthropicCalls()).toHaveLength(0);
     expect(insertsByTable['chat_messages']).toBeUndefined();
     expect(insertsByTable['ai_analysis_runs']).toBeUndefined();
+  });
+
+});
+
+// ============================================================================
+// Rate limiting (Sub-Task 6.4) — per-account guard on Anthropic spend
+// ============================================================================
+
+describe('chat — rate limiting', () => {
+
+  it('allows a request that is under the per-account limit', async () => {
+    const res = makeRes();
+    await handler(makeReq(), res);
+    expect(res._statusCode).toBe(200);
+  });
+
+  it('returns 429 with a Retry-After header once an account exceeds 30 requests/min', async () => {
+    // 30 requests inside the window are allowed.
+    for (let i = 0; i < 30; i++) {
+      const res = makeRes();
+      await handler(makeReq(), res);
+      expect(res._statusCode).toBe(200);
+    }
+    // The 31st is blocked.
+    const blocked = makeRes();
+    await handler(makeReq(), blocked);
+    expect(blocked._statusCode).toBe(429);
+    expect(blocked._body.code).toBe('RATE_LIMIT_EXCEEDED');
+    expect(blocked._headers['Retry-After']).toBeTruthy();
+  });
+
+  it('does not call Anthropic once the rate limit is exceeded', async () => {
+    for (let i = 0; i < 30; i++) await handler(makeReq(), makeRes());
+    mockFetch.mockClear();
+    const blocked = makeRes();
+    await handler(makeReq(), blocked);
+    expect(blocked._statusCode).toBe(429);
+    expect(anthropicCalls()).toHaveLength(0);
+  });
+
+  it('keeps rate-limit counters independent per account', async () => {
+    // Exhaust FPB's budget.
+    for (let i = 0; i < 30; i++) await handler(makeReq(), makeRes());
+    const fpbBlocked = makeRes();
+    await handler(makeReq(), fpbBlocked);
+    expect(fpbBlocked._statusCode).toBe(429);
+
+    // Weld is a different account — it still has a full budget.
+    mockAccount = { id: 'weld-uuid', slug: 'weld', status: 'active' };
+    const weldRes = makeRes();
+    await handler(makeReq(), weldRes);
+    expect(weldRes._statusCode).toBe(200);
   });
 
 });

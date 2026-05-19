@@ -42,18 +42,10 @@
 import supabase from './lib/supabase.js';
 import { getFpbChatSystemPrompt, FPB_SYSTEM_PROMPT_VERSION } from './lib/prompts/fpb.js';
 import { resolveForRead, resolveForWrite } from './lib/accounts.js';
+import { setCorsHeaders } from './lib/cors.js';
+import { checkRateLimit } from './lib/rate-limit.js';
 
 const CHAT_MODEL = 'claude-sonnet-4-20250514';
-
-const CORS = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, x-account-slug',
-};
-
-function cors(res) {
-  Object.entries(CORS).forEach(([k, v]) => res.setHeader(k, v));
-}
 
 // ── chat_messages table existence preflight ──────────────────────────────────
 // Returns true if the table exists (or appears to), false if it is missing.
@@ -229,7 +221,7 @@ function parseAdPreview(text) {
 
 // ── Main handler ─────────────────────────────────────────────────────────────
 export default async function handler(req, res) {
-  cors(res);
+  setCorsHeaders(req, res, { methods: 'GET, POST, OPTIONS', headers: 'Content-Type, x-account-slug' });
   if (req.method === 'OPTIONS') return res.status(200).end();
 
   // ── GET — load session history ────────────────────────────────────────────
@@ -264,6 +256,21 @@ export default async function handler(req, res) {
 
   const account = await resolveForWrite(req, res);
   if (!account) return;
+
+  // Rate limit (Sub-Task 6.4): per-account guard on the highest-cost
+  // endpoint so one account cannot exhaust Anthropic budget for others.
+  const rl = checkRateLimit(account.id);
+  if (!rl.allowed) {
+    console.warn(
+      `[RATE-LIMIT-EXCEEDED] /api/chat account=${account.slug} count=${rl.count} limit=${rl.limit}`
+    );
+    res.setHeader('Retry-After', String(rl.retryAfterSec));
+    return res.status(429).json({
+      success: false,
+      error:   `Rate limit exceeded — max ${rl.limit} chat requests per minute. Retry in ${rl.retryAfterSec}s.`,
+      code:    'RATE_LIMIT_EXCEEDED',
+    });
+  }
 
   // Preflight chat_messages table existence. If missing, log a failed AI run
   // and bail with 503 — never burn Anthropic tokens when persistence is broken.

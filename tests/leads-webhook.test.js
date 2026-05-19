@@ -508,3 +508,38 @@ describe('PATCH /api/leads — account scoping', () => {
     expect(lastUpdatePatch).toBeNull(); // never reached the update path
   });
 });
+
+// ── Fail-closed ingest secret (Sub-Task 6.2) ─────────────────────────────────
+
+describe('POST /api/leads — fail-closed ingest secret', () => {
+  it('returns 503 SECRET_NOT_CONFIGURED when LEADS_INGEST_SECRET is unset in production', async () => {
+    const savedEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
+    try {
+      // LEADS_INGEST_SECRET is deleted in beforeEach.
+      const req = makeReq({ headers: {}, body: { contact_email: 'x@y.com' } });
+      const res = makeRes();
+      await handler(req, res);
+      expect(res._statusCode).toBe(503);
+      expect(res._body.code).toBe('SECRET_NOT_CONFIGURED');
+      expect(lastInsertRow).toBeNull(); // never reached the insert path
+    } finally {
+      process.env.NODE_ENV = savedEnv;
+    }
+  });
+
+  it('still warns and accepts the POST when the secret is unset in non-production', async () => {
+    const savedEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'development';
+    try {
+      queueResults({ data: [], error: null });                                            // dedup: none
+      queueResults({ data: { id: 'dev-lead', qualification_status: 'new' }, error: null }); // insert
+      const req = makeReq({ headers: {}, body: { contact_email: 'dev@y.com' } });
+      const res = makeRes();
+      await handler(req, res);
+      expect(res._statusCode).toBe(201);
+    } finally {
+      process.env.NODE_ENV = savedEnv;
+    }
+  });
+});
