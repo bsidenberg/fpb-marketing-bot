@@ -33,8 +33,10 @@ import {
   STATUS,
   canExecute,
   isManualType,
+  inferPillar,
 } from './action-states.js';
 import { recordApiCall } from './api-cost.js';
+import { recordActionOutcome } from './autonomy-coordinator.js';
 
 // ── Platform normaliser ───────────────────────────────────────────────────────
 export function normalizePlatform(platform) {
@@ -488,6 +490,9 @@ export async function acquireLockAndExecute(actionId, { account, connection }) {
       : `${actionType} failed: ${executionError}`,
     metadata: { ...extraMeta, ...(executionError ? { error: executionError } : {}) },
   });
+
+  // ── Record outcome for autonomy posture tracking (fire-and-forget) ────────────
+  recordActionOutcome(actionId, account.id, inferPillar(actionType), actionType, succeeded);
 
   if (succeeded) {
     return { httpStatus: 200, body: { success: true, executed: true, ...flattenMeta(extraMeta) } };

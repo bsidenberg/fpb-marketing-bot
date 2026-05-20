@@ -2674,6 +2674,12 @@ export default function MarketingBotDashboard() {
   const [subsLoading, setSubsLoading] = useState(false);
   const [hoursLog, setHoursLog] = useState([]);
   const [hoursLoading, setHoursLoading] = useState(false);
+
+  // Autonomy tab state
+  const [postureRows, setPostureRows] = useState([]);
+  const [postureLoading, setPostureLoading] = useState(false);
+  const [holdoutClasses, setHoldoutClasses] = useState([]);
+  const [holdoutLoading, setHoldoutLoading] = useState(false);
   const [newSubForm, setNewSubForm] = useState({ vendor: '', plan: '', monthly_amount_usd: '', started_at: new Date().toISOString().slice(0, 10), notes: '' });
   const [newHoursForm, setNewHoursForm] = useState({ hours: '', focus_area: selectedAccountSlug, category: 'build', log_date: new Date().toISOString().slice(0, 10), notes: '' });
   const [costsSubError, setCostsSubError] = useState(null);
@@ -2989,6 +2995,36 @@ export default function MarketingBotDashboard() {
     }
   }, [state.activeTab, costsMonth, selectedAccountSlug]); // eslint-disable-line
 
+  // Autonomy tab fetch callbacks
+  const fetchPostureRows = useCallback(async () => {
+    setPostureLoading(true);
+    try {
+      const res  = await accountFetch('/api/autonomy-posture', {}, selectedAccountSlug);
+      const json = await res.json();
+      if (json.success) setPostureRows(json.data || []);
+    } catch { /* swallow */ } finally {
+      setPostureLoading(false);
+    }
+  }, [selectedAccountSlug]);
+
+  const fetchHoldoutClasses = useCallback(async () => {
+    setHoldoutLoading(true);
+    try {
+      const res  = await accountFetch('/api/autonomy-holdout-classes', {}, selectedAccountSlug);
+      const json = await res.json();
+      if (json.success) setHoldoutClasses(json.data || []);
+    } catch { /* swallow */ } finally {
+      setHoldoutLoading(false);
+    }
+  }, [selectedAccountSlug]);
+
+  useEffect(() => {
+    if (state.activeTab === 'autonomy') {
+      fetchPostureRows();
+      fetchHoldoutClasses();
+    }
+  }, [state.activeTab, selectedAccountSlug]); // eslint-disable-line
+
   // ── Chat: load history on mount ──
   // Welcome message reads from the selected account at render time so it
   // updates when the user switches accounts (the effect deps already
@@ -3159,6 +3195,7 @@ export default function MarketingBotDashboard() {
     { id: "log",         label: "Automation Log",            icon: <Icons.Clock /> },
     { id: "attribution", label: "Attribution",              icon: <Icons.BarChart /> },
     { id: "costs",       label: "Costs",                    icon: <Icons.Settings /> },
+    { id: "autonomy",    label: "Autonomy",                 icon: <Icons.Bot /> },
     { id: "setup",       label: "Setup Guide",              icon: <Icons.Settings /> },
   ];
 
@@ -4818,6 +4855,115 @@ export default function MarketingBotDashboard() {
                   Save hours
                 </button>
               </details>
+            </div>
+          </div>
+        )}
+
+        {/* AUTONOMY TAB */}
+        {state.activeTab === "autonomy" && (
+          <div key="autonomy" style={{ animation: "panelIn 0.22s ease" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
+              <div>
+                <div style={{ fontFamily: F.serif, fontSize: 22, fontWeight: 700, color: C.textPrimary, marginBottom: 4 }}>Autonomy</div>
+                <div style={{ fontSize: 13, color: C.textSecondary, fontFamily: F.sans }}>
+                  Posture per (account × pillar × action class) — tier, cadence caps, graduation tracking
+                </div>
+              </div>
+              <button
+                onClick={() => { fetchPostureRows(); fetchHoldoutClasses(); }}
+                style={{ padding: "7px 14px", background: C.gold, color: "#fff", border: "none", borderRadius: 6, fontFamily: F.sans, fontSize: 12, fontWeight: 600, cursor: "pointer" }}
+              >
+                Refresh
+              </button>
+            </div>
+
+            {/* Posture grid */}
+            <div style={{ marginBottom: 28 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: C.textMuted, fontFamily: F.sans, marginBottom: 12, textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                Posture Grid
+              </div>
+              {postureLoading ? (
+                <div style={{ color: C.textMuted, fontSize: 13, fontFamily: F.sans }}>Loading…</div>
+              ) : postureRows.length === 0 ? (
+                <div style={{ color: C.textMuted, fontSize: 13, fontFamily: F.sans }}>
+                  No posture rows yet — rows are created automatically as actions flow through the coordinator.
+                </div>
+              ) : (
+                <div style={{ overflowX: "auto" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, fontFamily: F.sans }}>
+                    <thead>
+                      <tr style={{ color: C.textMuted, textAlign: "left" }}>
+                        {["Pillar", "Action Class", "Tier", "Cycles", "Success Rate", "Cap / Window", "Graduation", "Holdout"].map(h => (
+                          <th key={h} style={{ padding: "6px 10px", borderBottom: `1px solid ${C.borderDim}`, fontWeight: 600, whiteSpace: "nowrap" }}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {postureRows.map((row, i) => {
+                        const rate = row.cycles_completed > 0
+                          ? `${((row.success_count / row.cycles_completed) * 100).toFixed(0)}%`
+                          : "—";
+                        const gradColor = row.graduation_readiness === 'eligible'   ? C.emerald
+                                        : row.graduation_readiness === 'needs_more' ? C.textMuted
+                                        : C.amber;
+                        return (
+                          <tr key={i} style={{ borderBottom: `1px solid ${C.borderDim}` }}>
+                            <td style={{ padding: "7px 10px", color: C.textSecondary }}>{row.pillar}</td>
+                            <td style={{ padding: "7px 10px", color: C.textPrimary, fontWeight: 500 }}>{row.action_class}</td>
+                            <td style={{ padding: "7px 10px" }}>
+                              <span style={{
+                                background: row.tier === 'full' ? "rgba(22,163,74,0.12)" : "rgba(192,39,45,0.10)",
+                                color:      row.tier === 'full' ? C.emerald : C.amber,
+                                padding: "2px 8px", borderRadius: 4, fontWeight: 600, fontSize: 11,
+                              }}>
+                                {row.tier}
+                              </span>
+                            </td>
+                            <td style={{ padding: "7px 10px", color: C.textSecondary }}>{row.cycles_completed}</td>
+                            <td style={{ padding: "7px 10px", color: C.textSecondary }}>{rate}</td>
+                            <td style={{ padding: "7px 10px", color: C.textMuted }}>
+                              {row.cap_per_window != null ? `${row.cap_per_window} / ${row.window_days}d` : "—"}
+                            </td>
+                            <td style={{ padding: "7px 10px", color: gradColor, fontWeight: 500 }}>
+                              {row.graduation_readiness === 'eligible'     ? "Eligible"
+                               : row.graduation_readiness === 'needs_more' ? `${row.cycles_completed}/20 cycles`
+                               : "Needs success rate"}
+                            </td>
+                            <td style={{ padding: "7px 10px", color: row.holdout ? C.rose : C.textMuted }}>
+                              {row.holdout ? "Yes" : "—"}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            {/* Holdout list */}
+            <div style={{ marginBottom: 28 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: C.textMuted, fontFamily: F.sans, marginBottom: 12, textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                Holdout List — Always Requires Approval
+              </div>
+              {holdoutLoading ? (
+                <div style={{ color: C.textMuted, fontSize: 13, fontFamily: F.sans }}>Loading…</div>
+              ) : holdoutClasses.length === 0 ? (
+                <div style={{ color: C.textMuted, fontSize: 13, fontFamily: F.sans }}>No holdout classes found.</div>
+              ) : (
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                  {holdoutClasses.map(h => (
+                    <div key={h.action_class} title={h.description} style={{
+                      background: "rgba(220,38,38,0.07)",
+                      border: `1px solid rgba(220,38,38,0.2)`,
+                      color: C.rose, padding: "4px 10px", borderRadius: 4,
+                      fontFamily: F.sans, fontSize: 12, fontWeight: 500,
+                    }}>
+                      {h.action_class}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         )}

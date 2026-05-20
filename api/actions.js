@@ -1,7 +1,9 @@
 import supabase from './lib/supabase.js';
-import { validateStatusPatch } from './lib/action-states.js';
+import { validateStatusPatch, inferPillar } from './lib/action-states.js';
 import { resolveForRead, resolveForWrite } from './lib/accounts.js';
 import { setCorsHeaders } from './lib/cors.js';
+import { checkPostureForAction } from './lib/autonomy-coordinator.js';
+import { detectNovelty, detectConflict, detectExternalFlag, detectAnomaly } from './lib/autonomy-escalation.js';
 
 export default async function handler(req, res) {
   setCorsHeaders(req, res, { methods: 'GET, POST, PATCH, OPTIONS', headers: 'Content-Type, x-account-slug' });
@@ -94,6 +96,36 @@ export default async function handler(req, res) {
       execution_data = {},
     } = req.body;
 
+    // ── Autonomy coordinator gate ─────────────────────────────────────────────
+    const pillar = inferPillar(action_type);
+
+    // Build escalation context from detectors
+    const [novel, conflict] = await Promise.all([
+      detectNovelty(action_type, account.id),
+      detectConflict(account.id),
+    ]);
+    const context = {
+      novel,
+      conflict,
+      anomaly:       detectAnomaly(),
+      external_flag: detectExternalFlag(req.body),
+      confidence:    req.body.confidence ?? undefined,
+    };
+
+    const { verdict, reason } = await checkPostureForAction(account.id, pillar, action_type, context);
+
+    if (verdict === 'block') {
+      return res.status(403).json({
+        success: false,
+        error:   `Action blocked by autonomy coordinator: ${reason}`,
+        code:    'AUTONOMY_BLOCKED',
+      });
+    }
+
+    // Force auto_execute=false when coordinator says require_approval
+    const effectiveAutoExecute = verdict === 'allow_auto' ? (auto_execute === true) : false;
+    const coordinatorMeta = { autonomy_verdict: verdict, ...(reason ? { autonomy_reason: reason } : {}) };
+
     const { data, error } = await supabase
       .from('actions')
       .insert({
@@ -103,8 +135,8 @@ export default async function handler(req, res) {
         title,
         description,
         priority,
-        auto_execute:   auto_execute === true,
-        execution_data,
+        auto_execute:   effectiveAutoExecute,
+        execution_data: { ...execution_data, ...coordinatorMeta },
         status:         'pending',
       })
       .select()

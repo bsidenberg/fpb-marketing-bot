@@ -49,6 +49,37 @@ export const MANUAL_TYPES = [
   'adjust_bid',
 ];
 
+// ── Pillar mapping ────────────────────────────────────────────────────────────
+// Maps action class strings to the four Prime pillars. Used by the autonomy
+// coordinator to scope posture rows. Defaults to 'paid_ads' for unmapped types.
+export const ACTION_CLASS_TO_PILLAR = {
+  'pause_campaign':             'paid_ads',
+  'enable_campaign':            'paid_ads',
+  'publish_creative':           'paid_ads',
+  'create_meta_campaign':       'paid_ads',
+  'create_campaign':            'paid_ads',
+  'delete_campaign':            'paid_ads',
+  'modify_targeting':           'paid_ads',
+  'change_budget':              'paid_ads',
+  'change_budget_significantly': 'paid_ads',
+  'adjust_budget':              'paid_ads',
+  'adjust_bid':                 'paid_ads',
+  'flag_low_confidence':        'paid_ads',
+  'flag_anomaly':               'paid_ads',
+  'publish_blog_post':          'seo_blog',
+  'publish_gbp_post':           'gbp',
+  'update_gbp_info':            'gbp',
+  'publish_social_post':        'social_media',
+};
+
+/**
+ * Infer the Prime pillar from an action class string.
+ * Returns 'paid_ads' as the default for unknown types.
+ */
+export function inferPillar(actionClass) {
+  return ACTION_CLASS_TO_PILLAR[actionClass] ?? 'paid_ads';
+}
+
 // ── State predicates ──────────────────────────────────────────────────────────
 
 /**
