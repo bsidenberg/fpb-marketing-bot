@@ -2680,10 +2680,6 @@ export default function MarketingBotDashboard() {
   const [postureLoading, setPostureLoading] = useState(false);
   const [holdoutClasses, setHoldoutClasses] = useState([]);
   const [holdoutLoading, setHoldoutLoading] = useState(false);
-  const [newSubForm, setNewSubForm] = useState({ vendor: '', plan: '', monthly_amount_usd: '', started_at: new Date().toISOString().slice(0, 10), notes: '' });
-  const [newHoursForm, setNewHoursForm] = useState({ hours: '', focus_area: selectedAccountSlug, category: 'build', log_date: new Date().toISOString().slice(0, 10), notes: '' });
-  const [costsSubError, setCostsSubError] = useState(null);
-  const [costsHoursError, setCostsHoursError] = useState(null);
 
   // ── Chat tab state ──
   const [chatMessages, setChatMessages] = useState([]);
@@ -2710,6 +2706,10 @@ export default function MarketingBotDashboard() {
     }
     return 'fpb';
   });
+  const [newSubForm, setNewSubForm] = useState({ vendor: '', plan: '', monthly_amount_usd: '', started_at: new Date().toISOString().slice(0, 10), notes: '' });
+  const [newHoursForm, setNewHoursForm] = useState({ hours: '', focus_area: selectedAccountSlug, category: 'build', log_date: new Date().toISOString().slice(0, 10), notes: '' });
+  const [costsSubError, setCostsSubError] = useState(null);
+  const [costsHoursError, setCostsHoursError] = useState(null);
   const [activeAccounts, setActiveAccounts] = useState([]);
 
   useEffect(() => {
