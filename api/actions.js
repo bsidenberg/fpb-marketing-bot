@@ -4,6 +4,7 @@ import { resolveForRead, resolveForWrite } from './lib/accounts.js';
 import { setCorsHeaders } from './lib/cors.js';
 import { checkPostureForAction } from './lib/autonomy-coordinator.js';
 import { detectNovelty, detectConflict, detectExternalFlag, detectAnomaly } from './lib/autonomy-escalation.js';
+import { normalizeChannel } from './lib/normalize-channel.js';
 
 export default async function handler(req, res) {
   setCorsHeaders(req, res, { methods: 'GET, POST, PATCH, OPTIONS', headers: 'Content-Type, x-account-slug' });
@@ -130,7 +131,7 @@ export default async function handler(req, res) {
       .from('actions')
       .insert({
         account_id:     account.id,
-        channel,
+        channel:        normalizeChannel(channel),
         action_type,
         title,
         description,
