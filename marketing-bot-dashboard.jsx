@@ -2305,7 +2305,7 @@ function ImageProcessPanel({ msgId, originalImage, panelState, updatePanel, acco
 }
 
 // ── Chat action card ──
-function ActionCard({ payload, accountSlug = 'fpb' }) {
+function ActionCard({ payload, actionId: preCreatedActionId, accountSlug = 'fpb' }) {
   const [status, setStatus] = useState("idle"); // idle | executing | done | error
   const [errorMsg, setErrorMsg] = useState(null);
 
@@ -2320,30 +2320,40 @@ function ActionCard({ payload, accountSlug = 'fpb' }) {
   const handleConfirm = async () => {
     setStatus("executing");
     try {
-      // Step 1: Create a pending action row so this execution is auditable.
-      const createRes = await accountFetch("/api/actions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          channel:        payload.platform || "other",
-          action_type:    payload.action_type,
-          title:          (payload.action_type || "").replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase()),
-          description:    payload.description || "",
-          priority:       payload.priority || "medium",
-          execution_data: {
-            platform:      payload.platform,
-            campaign_id:   payload.campaign_id,
-            campaign_name: payload.campaign_name,
-          },
-        }),
-      }, accountSlug);
-      const createJson = await createRes.json();
-      if (!createRes.ok || !createJson.success) {
-        throw new Error(createJson.error || "Failed to queue action");
-      }
-      const actionId = createJson.data?.id;
+      // Use the pre-created action ID from chat response when available.
+      // Fall back to on-demand creation for history-loaded messages that
+      // were persisted before this fix was deployed.
+      let actionId = preCreatedActionId;
 
-      // Step 2: Approve and execute via proxy (no client secret required).
+      if (!actionId) {
+        const createRes = await accountFetch("/api/actions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            channel:        payload.channel || payload.platform || "other",
+            action_type:    payload.action_type,
+            title:          (payload.action_type || "").replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase()),
+            description:    payload.description || "",
+            priority:       payload.priority || "medium",
+            execution_data: {
+              campaign_id:       payload.campaign_id       || null,
+              campaign_name:     payload.campaign_name     || null,
+              current_value:     payload.current_value     || null,
+              recommended_value: payload.recommended_value || null,
+            },
+          }),
+        }, accountSlug);
+        const createJson = await createRes.json();
+        if (!createRes.ok || !createJson.success) {
+          throw new Error(createJson.error || "Failed to queue action");
+        }
+        actionId = createJson.data?.id;
+      }
+
+      if (!actionId) {
+        throw new Error("Action blocked by autonomy policy — please review manually.");
+      }
+
       const approveRes = await accountFetch("/api/approve-action", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -3132,6 +3142,7 @@ export default function MarketingBotDashboard() {
             id: Date.now() + "-a", role: "assistant",
             content: json2.reply, message_type: json2.messageType || "text",
             action_payload: json2.actionPayload || null,
+            action_id:      json2.actionId      || null,
             creative_ready: json2.creativeReady ?? null,
             adPreview:      json2.adPreview     || null,
           }]);
@@ -3141,6 +3152,7 @@ export default function MarketingBotDashboard() {
           id: Date.now() + "-a", role: "assistant",
           content: json1.reply, message_type: json1.messageType || "text",
           action_payload: json1.actionPayload || null,
+          action_id:      json1.actionId      || null,
           creative_ready: json1.creativeReady ?? null,
           adPreview:      json1.adPreview     || null,
         }]);
@@ -3929,7 +3941,7 @@ export default function MarketingBotDashboard() {
                         <div style={{ maxWidth: "80%" }}>
                           <div style={{ fontFamily: F.mono, fontSize: 9, textTransform: "uppercase", letterSpacing: "1.5px", color: C.textDim, marginBottom: 5 }}>AI Assistant</div>
                           <div className="chat-bubble-assistant" style={{ marginBottom: 8 }}>{msg.content}</div>
-                          <ActionCard payload={msg.action_payload} accountSlug={selectedAccountSlug} />
+                          <ActionCard payload={msg.action_payload} actionId={msg.action_id} accountSlug={selectedAccountSlug} />
                           {msg.adPreview && (
                             <AdPreviewCard
                               adPreview={msg.adPreview}

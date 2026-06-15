@@ -118,12 +118,27 @@ vi.mock('../api/lib/accounts.js', () => {
   };
 });
 
+// ── Autonomy mocks — allow all actions through so step 6.5 can reach the insert ─
+vi.mock('../api/lib/autonomy-coordinator.js', () => ({
+  checkPostureForAction: vi.fn(async () => ({ verdict: 'require_approval', reason: 'recommend tier' })),
+  recordActionOutcome:   vi.fn(),
+  getActiveCount:        vi.fn(async () => 0),
+}));
+
+vi.mock('../api/lib/autonomy-escalation.js', () => ({
+  detectNovelty:      vi.fn(async () => false),
+  detectConflict:     vi.fn(async () => false),
+  detectExternalFlag: vi.fn(() => false),
+  detectAnomaly:      vi.fn(() => false),
+}));
+
 // ── fetch mock ───────────────────────────────────────────────────────────────
 const mockFetch = vi.fn();
 vi.stubGlobal('fetch', mockFetch);
 
 // Import AFTER all mocks
 import handler from '../api/chat.js';
+import { checkPostureForAction } from '../api/lib/autonomy-coordinator.js';
 // rate-limit.js is intentionally NOT mocked — the chat handler exercises
 // the real limiter; clearRateLimits() resets its state between tests.
 import { clearRateLimits } from '../api/lib/rate-limit.js';
@@ -350,6 +365,101 @@ describe('chat — rate limiting', () => {
     const weldRes = makeRes();
     await handler(makeReq(), weldRes);
     expect(weldRes._statusCode).toBe(200);
+  });
+
+});
+
+// ============================================================================
+// Chat — ACTION block emission → pending action row creation (Step 6.5)
+// ============================================================================
+
+function makeActionFetch(actionText) {
+  return mockFetch
+    .mockResolvedValueOnce({ // intent detection call
+      ok: true,
+      json: async () => ({ content: [{ text: 'ACTION_REQUEST' }] }),
+    })
+    .mockResolvedValueOnce({ // main Claude call
+      ok: true,
+      json: async () => ({
+        content: [{ text: actionText }],
+        usage: { input_tokens: 500, output_tokens: 100 },
+      }),
+    });
+}
+
+describe('chat — ACTION block emission creates pending action row', () => {
+
+  it('inserts a pending action row and returns actionId when Claude emits an ACTION block', async () => {
+    setResponse('actions.insert.single', { data: { id: 'action-uuid-123' }, error: null });
+    makeActionFetch(
+      'I recommend pausing this campaign.\nACTION:{"action_type":"pause_campaign","channel":"google_ads","campaign_id":"camp-123","campaign_name":"FPB Kit Campaign","description":"CPL over $150","current_value":"$160","recommended_value":"paused"}'
+    );
+
+    const req = makeReq();
+    const res = makeRes();
+    await handler(req, res);
+
+    expect(res._statusCode).toBe(200);
+    expect(res._body.success).toBe(true);
+    expect(res._body.actionId).toBe('action-uuid-123');
+    expect(res._body.messageType).toBe('action_request');
+
+    const inserted = (insertsByTable['actions'] || [])[0];
+    expect(inserted).toBeDefined();
+    expect(inserted.action_type).toBe('pause_campaign');
+    expect(inserted.channel).toBe('google_ads');
+    expect(inserted.status).toBe('pending');
+    expect(inserted.account_id).toBe('fpb-uuid');
+    expect(inserted.execution_data.campaign_id).toBe('camp-123');
+    expect(inserted.execution_data.current_value).toBe('$160');
+  });
+
+  it('returns actionId: null when coordinator returns block verdict — chat response still 200', async () => {
+    checkPostureForAction.mockResolvedValueOnce({ verdict: 'block', reason: 'cap exceeded' });
+    makeActionFetch(
+      'Pause this campaign.\nACTION:{"action_type":"pause_campaign","channel":"google_ads","campaign_id":"camp-123"}'
+    );
+
+    const req = makeReq();
+    const res = makeRes();
+    await handler(req, res);
+
+    expect(res._statusCode).toBe(200);
+    expect(res._body.success).toBe(true);
+    expect(res._body.actionId).toBeNull();
+    // No actions row should have been inserted
+    expect(insertsByTable['actions']).toBeUndefined();
+  });
+
+  it('returns actionId: null when action row insert fails — chat response still 200', async () => {
+    setResponse('actions.insert.single', { data: null, error: { message: 'constraint violation' } });
+    makeActionFetch(
+      'Pause this.\nACTION:{"action_type":"pause_campaign","channel":"google_ads"}'
+    );
+
+    const req = makeReq();
+    const res = makeRes();
+    await handler(req, res);
+
+    expect(res._statusCode).toBe(200);
+    expect(res._body.success).toBe(true);
+    expect(res._body.actionId).toBeNull();
+  });
+
+  it('skips DB creation for process_image action type and returns actionId: null', async () => {
+    makeActionFetch(
+      'Processing image.\nACTION:{"action_type":"process_image","platform":"meta","format":"feed"}'
+    );
+
+    const req = makeReq();
+    const res = makeRes();
+    await handler(req, res);
+
+    expect(res._statusCode).toBe(200);
+    expect(res._body.success).toBe(true);
+    expect(res._body.actionId).toBeNull();
+    expect(insertsByTable['actions']).toBeUndefined();
   });
 
 });

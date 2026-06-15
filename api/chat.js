@@ -45,6 +45,10 @@ import { resolveForRead, resolveForWrite } from './lib/accounts.js';
 import { setCorsHeaders } from './lib/cors.js';
 import { checkRateLimit } from './lib/rate-limit.js';
 import { recordAnthropicCost } from './lib/anthropic-cost.js';
+import { normalizeChannel } from './lib/normalize-channel.js';
+import { inferPillar } from './lib/action-states.js';
+import { checkPostureForAction } from './lib/autonomy-coordinator.js';
+import { detectNovelty, detectConflict, detectExternalFlag, detectAnomaly } from './lib/autonomy-escalation.js';
 
 const CHAT_MODEL = 'claude-sonnet-4-20250514';
 
@@ -381,6 +385,56 @@ export default async function handler(req, res) {
     const { displayText,                adPreview     } = parseAdPreview(afterCreative);
     const messageType = actionPayload ? 'action_request' : 'text';
 
+    // ── Step 6.5: Persist pre-created action row when Claude emits an ACTION block ──
+    // process_image is UI-only (triggers image panel); skip it so only campaign-
+    // management actions hit the DB. Coordinator gate is always called first.
+    let savedActionId = null;
+    if (actionPayload && actionPayload.action_type && actionPayload.action_type !== 'process_image') {
+      try {
+        const pillar = inferPillar(actionPayload.action_type);
+        const [novel, conflict] = await Promise.all([
+          detectNovelty(actionPayload.action_type, account.id),
+          detectConflict(account.id),
+        ]);
+        const context = {
+          novel,
+          conflict,
+          anomaly:       detectAnomaly(),
+          external_flag: detectExternalFlag(actionPayload),
+        };
+        const { verdict } = await checkPostureForAction(account.id, pillar, actionPayload.action_type, context);
+        if (verdict !== 'block') {
+          const { data: actionRow, error: actionErr } = await supabase
+            .from('actions')
+            .insert({
+              account_id:     account.id,
+              channel:        normalizeChannel(actionPayload.channel || 'other'),
+              action_type:    actionPayload.action_type,
+              title:          (actionPayload.action_type || '').replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
+              description:    actionPayload.description || '',
+              priority:       actionPayload.priority || 'medium',
+              auto_execute:   false,
+              execution_data: {
+                campaign_id:       actionPayload.campaign_id       || null,
+                campaign_name:     actionPayload.campaign_name     || null,
+                current_value:     actionPayload.current_value     || null,
+                recommended_value: actionPayload.recommended_value || null,
+              },
+              status: 'pending',
+            })
+            .select('id')
+            .single();
+          if (!actionErr && actionRow?.id) {
+            savedActionId = actionRow.id;
+          } else if (actionErr) {
+            console.error('[chat] action row creation failed:', actionErr.message);
+          }
+        }
+      } catch (e) {
+        console.error('[chat] action row creation threw:', e.message);
+      }
+    }
+
     await updateChatRunStatus(runId, {
       status:      'succeeded',
       output_json: { reply: displayText, messageType, hasActionPayload: !!actionPayload },
@@ -417,6 +471,7 @@ export default async function handler(req, res) {
       reply:         displayText,
       messageType,
       actionPayload: actionPayload || null,
+      actionId:      savedActionId || null,
       creativeReady: creativeReady ?? null,
       adPreview:     adPreview     || null,
       sessionId,
