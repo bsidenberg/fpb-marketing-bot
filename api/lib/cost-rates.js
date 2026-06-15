@@ -9,6 +9,7 @@
 export const ANTHROPIC_RATES = {
   'claude-sonnet-4-20250514':  { input_per_mtok: 3.00, output_per_mtok: 15.00 },
   'claude-haiku-4-5-20251001': { input_per_mtok: 1.00, output_per_mtok: 5.00  },
+  'claude-haiku-4-5':          { input_per_mtok: 1.00, output_per_mtok: 5.00  },
   'claude-sonnet-4-6':         { input_per_mtok: 3.00, output_per_mtok: 15.00 },
   'claude-opus-4-7':           { input_per_mtok: 5.00, output_per_mtok: 25.00 },
 };

@@ -50,7 +50,7 @@ import { inferPillar } from './lib/action-states.js';
 import { checkPostureForAction } from './lib/autonomy-coordinator.js';
 import { detectNovelty, detectConflict, detectExternalFlag, detectAnomaly } from './lib/autonomy-escalation.js';
 
-const CHAT_MODEL = 'claude-sonnet-4-20250514';
+const CHAT_MODEL = 'claude-sonnet-4-6';
 
 // ── chat_messages table existence preflight ──────────────────────────────────
 // Returns true if the table exists (or appears to), false if it is missing.
@@ -157,7 +157,7 @@ async function callClaude({ model, system, messages, max_tokens }) {
 // ── Intent detection ─────────────────────────────────────────────────────────
 async function detectIntent(message, accountId = null) {
   const json = await callClaude({
-    model:      'claude-haiku-4-5-20251001',
+    model:      'claude-haiku-4-5',
     max_tokens: 10,
     system:     'Classify this message into one of three intents: DATA_QUESTION (needs live ad performance data to answer), ACTION_REQUEST (user wants to make a change to a campaign), STRATEGY (general advice, explanation, or question that does not need live data). Respond with only one word: DATA_QUESTION, ACTION_REQUEST, or STRATEGY.',
     messages:   [{ role: 'user', content: message }],

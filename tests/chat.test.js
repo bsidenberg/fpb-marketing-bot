@@ -259,7 +259,7 @@ describe('chat — chat_messages table preflight', () => {
     expect(row.account_id).toBe('fpb-uuid');
     expect(row.status).toBe('failed');
     expect(row.model_provider).toBe('anthropic');
-    expect(row.model_name).toBe('claude-sonnet-4-20250514');
+    expect(row.model_name).toBe('claude-sonnet-4-6');
     expect(row.prompt_version).toBe('fpb-v1');
     expect(row.error).toMatch(/FEATURE_NOT_CONFIGURED/);
     expect(row.error).toMatch(/chat_messages table does not exist/);
