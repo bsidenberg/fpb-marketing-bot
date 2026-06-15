@@ -28,14 +28,15 @@ const singleQueue = [];
 
 function makeChain() {
   const chain = {
-    select: () => chain,
-    eq:     () => chain,
-    in:     () => chain,
-    is:     () => chain,
-    update: () => chain,
-    insert: () => chain,
-    single: async () => singleQueue.shift() ?? { data: null, error: null },
-    then:   (resolve) => resolve({ data: [], error: null }),
+    select:      () => chain,
+    eq:          () => chain,
+    in:          () => chain,
+    is:          () => chain,
+    update:      () => chain,
+    insert:      () => chain,
+    single:      async () => singleQueue.shift() ?? { data: null, error: null },
+    maybeSingle: async () => singleQueue.shift() ?? { data: null, error: null },
+    then:        (resolve) => resolve({ data: [], error: null }),
   };
   return chain;
 }
@@ -147,14 +148,15 @@ describe('approve-action — action lookup', () => {
     expect(res._body.error).toBe('Action not found');
   });
 
-  it('returns 404 when Supabase returns a fetch error', async () => {
-    singleQueue.push({ data: null, error: { message: 'no rows', code: 'PGRST116' } });
+  it('returns 500 when Supabase returns a real database error (not a row-not-found)', async () => {
+    singleQueue.push({ data: null, error: { code: '42501', message: 'permission denied for table actions', details: null, hint: null } });
 
     const res = makeRes();
     await handler(makeReq({ actionId: 'action-123' }), res);
 
-    expect(res._statusCode).toBe(404);
-    expect(res._body.error).toBe('Action not found');
+    expect(res._statusCode).toBe(500);
+    expect(res._body.success).toBe(false);
+    expect(res._body.error).toBe('Failed to retrieve action');
   });
 
 });

@@ -25,7 +25,8 @@ function makeChain() {
     is:      () => makeChain(),
     update:  () => makeChain(),
     insert:  () => makeChain(),
-    single:  async () => singleQueue.shift() ?? { data: null, error: null },
+    single:      async () => singleQueue.shift() ?? { data: null, error: null },
+    maybeSingle: async () => singleQueue.shift() ?? { data: null, error: null },
     // Awaiting the chain directly (no .single()) — resolves silently
     then: (resolve) => resolve({ data: null, error: null }),
   };
@@ -124,7 +125,7 @@ describe('acquireLockAndExecute', () => {
   });
 
   it('returns 404 when action is not found', async () => {
-    queueResults({ data: null, error: { message: 'no rows' } }); // preflight miss
+    queueResults({ data: null, error: null }); // preflight miss — maybeSingle returns null/null for 0 rows
 
     const { httpStatus, body } = await acquireLockAndExecute('action-123', { account: FPB_ACCOUNT, connection: null });
     expect(httpStatus).toBe(404);

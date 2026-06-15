@@ -165,8 +165,9 @@ function makeChain(table) {
       (insertsByTable[table] = insertsByTable[table] || []).push(row);
       return chain;
     },
-    single: async () => singleQueue.shift() ?? { data: null, error: null },
-    then:   (resolve) => resolve({ data: [], error: null }),
+    single:      async () => singleQueue.shift() ?? { data: null, error: null },
+    maybeSingle: async () => singleQueue.shift() ?? { data: null, error: null },
+    then:        (resolve) => resolve({ data: [], error: null }),
   };
   return chain;
 }

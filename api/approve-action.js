@@ -69,9 +69,18 @@ export default async function handler(req, res) {
     .from('actions')
     .select('id, account_id, status, execution_result, action_type, channel')
     .eq('id', actionId)
-    .single();
+    .maybeSingle();
 
-  if (fetchErr || !action) {
+  if (fetchErr) {
+    console.error('[approve-action] action fetch failed:', JSON.stringify({
+      code:    fetchErr.code,
+      message: fetchErr.message,
+      details: fetchErr.details,
+      hint:    fetchErr.hint,
+    }));
+    return res.status(500).json({ success: false, error: 'Failed to retrieve action' });
+  }
+  if (!action) {
     return res.status(404).json({ success: false, error: 'Action not found' });
   }
 

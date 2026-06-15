@@ -367,9 +367,18 @@ export async function acquireLockAndExecute(actionId, { account, connection }) {
     .from('actions')
     .select('account_id, status, execution_result, action_type, channel, execution_data')
     .eq('id', actionId)
-    .single();
+    .maybeSingle();
 
-  if (fetchErr || !current) {
+  if (fetchErr) {
+    console.error('[execute-action-logic] action fetch failed:', JSON.stringify({
+      code:    fetchErr.code,
+      message: fetchErr.message,
+      details: fetchErr.details,
+      hint:    fetchErr.hint,
+    }));
+    return { httpStatus: 500, body: { success: false, error: 'Failed to retrieve action' } };
+  }
+  if (!current) {
     return { httpStatus: 404, body: { success: false, error: 'Action not found' } };
   }
 
