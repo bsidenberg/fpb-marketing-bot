@@ -106,7 +106,7 @@ function makeActionRow(overrides = {}) {
     id:               'action-123',
     account_id:       FPB.id,
     status:           'pending',
-    execution_result: null,
+    result: null,
     action_type:      'pause_campaign',
     channel:          'google_ads',
     ...overrides,
@@ -179,7 +179,7 @@ describe('approve-action — account isolation', () => {
 describe('approve-action — state validation', () => {
 
   it('returns 409 when action is already in a final execution state', async () => {
-    singleQueue.push({ data: makeActionRow({ execution_result: 'success' }), error: null });
+    singleQueue.push({ data: makeActionRow({ result: 'success' }), error: null });
 
     const res = makeRes();
     await handler(makeReq({ actionId: 'action-123' }), res);

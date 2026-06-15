@@ -11,7 +11,7 @@ export function makeAction(overrides = {}) {
     id:               'test-action-id',
     status:           'pending',
     action_type:      'pause_campaign',
-    execution_result: null,
+    result: null,
     ...overrides,
   };
 }

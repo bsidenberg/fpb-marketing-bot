@@ -6,7 +6,7 @@
 //   pending  → rejected   (human rejects)
 //   approved → approved   (status unchanged through execution)
 //
-// execution_result field lifecycle:
+// result field lifecycle:
 //   null            → 'executing'       (idempotency lock acquired)
 //   'executing'     → 'success'         (execution succeeded)
 //   'executing'     → <error string>    (execution failed)
@@ -25,8 +25,8 @@ export const STATUS = {
   REJECTED: 'rejected',
 };
 
-// ── execution_result sentinel values ─────────────────────────────────────────
-// Any other string in execution_result is treated as an error message.
+// ── result sentinel values ────────────────────────────────────────────────────
+// Any other string in result is treated as an error message.
 export const EXEC_RESULT = {
   EXECUTING:       'executing',
   SUCCESS:         'success',
@@ -89,23 +89,23 @@ export function inferPillar(actionClass) {
 export function isFinal(action) {
   if (!action) return true;
   if (action.status === STATUS.REJECTED) return true;
-  const er = action.execution_result;
+  const er = action.result;
   if (er === EXEC_RESULT.SUCCESS)         return true;
   if (er === EXEC_RESULT.REQUIRES_MANUAL) return true;
-  // Any non-null, non-'executing' execution_result is an error message (final)
+  // Any non-null, non-'executing' result is an error message (final)
   if (er && er !== EXEC_RESULT.EXECUTING) return true;
   return false;
 }
 
 /**
  * Can this action enter the execution flow right now?
- * Requires: status pending or approved, execution_result null.
+ * Requires: status pending or approved, result null.
  */
 export function canExecute(action) {
   if (!action) return false;
   if (isFinal(action)) return false;
   if (!['pending', 'approved'].includes(action.status)) return false;
-  if (action.execution_result != null) return false;
+  if (action.result != null) return false;
   return true;
 }
 
@@ -127,7 +127,7 @@ export function isExecutableType(actionType) {
  * Validate a PATCH status transition.
  * Returns { valid: true } or { valid: false, error: string }.
  *
- * @param {object} current  — current action row { status, execution_result }
+ * @param {object} current  — current action row { status, result }
  * @param {string} newStatus — requested new status value
  */
 export function validateStatusPatch(current, newStatus) {
@@ -144,7 +144,7 @@ export function validateStatusPatch(current, newStatus) {
   if (isFinal(current)) {
     return {
       valid: false,
-      error: `Action is in a final state (status=${current.status}, execution_result=${current.execution_result}) and cannot be updated`,
+      error: `Action is in a final state (status=${current.status}, result=${current.result}) and cannot be updated`,
     };
   }
 

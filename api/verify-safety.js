@@ -73,12 +73,12 @@ export default async function handler(req, res) {
 
   // ── 5. Idempotency lock wired ────────────────────────────────────────────────
   // Static assertion: execute-action.js does an atomic update
-  // (execution_result: null → 'executing') before calling any platform API.
+  // (result: null → 'executing') before calling any platform API.
   checks.push({
     id:     'idempotency_lock',
     title:  'Execution idempotency lock in execute-action.js',
     status: 'implemented',
-    detail: 'execute-action.js atomically sets execution_result="executing" with .eq("status","approved").is("execution_result",null) before any platform API call. Duplicate requests return 409.',
+    detail: 'execute-action.js atomically sets result="executing" with .eq("status","approved").is("result",null) before any platform API call. Duplicate requests return 409.',
   });
 
   // ── 6. Manual action types handled correctly ─────────────────────────────────
@@ -86,7 +86,7 @@ export default async function handler(req, res) {
     id:     'manual_types_safe',
     title:  'adjust_budget / adjust_bid return requires_manual — no platform call',
     status: 'implemented',
-    detail: 'MANUAL_TYPES in execute-action.js returns {requires_manual:true, executed:false} and marks execution_result="requires_manual" without touching any ad platform API.',
+    detail: 'MANUAL_TYPES in execute-action.js returns {requires_manual:true, executed:false} and marks result="requires_manual" without touching any ad platform API.',
   });
 
   // ── 7. META_ACCESS_TOKEN present ────────────────────────────────────────────

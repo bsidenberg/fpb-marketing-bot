@@ -67,7 +67,7 @@ export default async function handler(req, res) {
   // ── Fetch action; verify ownership BEFORE leaking state info ────────────
   const { data: action, error: fetchErr } = await supabase
     .from('actions')
-    .select('id, account_id, status, execution_result, action_type, channel')
+    .select('id, account_id, status, result, action_type, channel')
     .eq('id', actionId)
     .maybeSingle();
 
@@ -94,8 +94,8 @@ export default async function handler(req, res) {
 
   // ── State validation ─────────────────────────────────────────────────────
   if (!canExecute(action)) {
-    const detail = action.execution_result
-      ? `Action already executed (execution_result: ${action.execution_result})`
+    const detail = action.result
+      ? `Action already executed (result: ${action.result})`
       : `Action is not in an executable state (status: ${action.status})`;
     return res.status(409).json({ success: false, error: detail });
   }

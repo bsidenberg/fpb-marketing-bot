@@ -34,7 +34,7 @@ export default async function handler(req, res) {
     const urlParts = (req.url || '').split('?')[0].split('/').filter(Boolean);
     const id = urlParts[urlParts.length - 1];
 
-    const { status, executed_at, execution_result } = req.body || {};
+    const { status, executed_at, result } = req.body || {};
 
     if (!id || id === 'actions') {
       return res.status(400).json({ success: false, error: 'Missing action id in URL' });
@@ -46,7 +46,7 @@ export default async function handler(req, res) {
     // ── Fetch current row for transition validation + ownership check ─────────
     const { data: current, error: fetchErr } = await supabase
       .from('actions')
-      .select('id, account_id, status, execution_result')
+      .select('id, account_id, status, result')
       .eq('id', id)
       .single();
 
@@ -69,7 +69,7 @@ export default async function handler(req, res) {
 
     const updatePayload = { status, reviewed_at: new Date().toISOString() };
     if (executed_at)      updatePayload.executed_at      = executed_at;
-    if (execution_result) updatePayload.execution_result = execution_result;
+    if (result) updatePayload.result = result;
 
     const { data, error } = await supabase
       .from('actions')

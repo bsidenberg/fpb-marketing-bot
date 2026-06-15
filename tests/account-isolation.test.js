@@ -257,7 +257,7 @@ describe('approve-action — account isolation', () => {
         id:               'fpb-action-1',
         account_id:       FPB.id,
         status:           'pending',
-        execution_result: null,
+        result: null,
         action_type:      'pause_campaign',
         channel:          'google',
       },
@@ -292,7 +292,7 @@ describe('approve-action — account isolation', () => {
         id:               'fpb-action-2',
         account_id:       FPB.id,
         status:           'pending',
-        execution_result: null,
+        result: null,
         action_type:      'pause_campaign',
         channel:          'google',
       },
@@ -325,7 +325,7 @@ describe('approve-action — account isolation', () => {
         id:               'fpb-manual',
         account_id:       FPB.id,            // owned by FPB
         status:           'pending',
-        execution_result: null,
+        result: null,
         action_type:      'adjust_budget',   // manual type — would skip connection if owned
         channel:          'google',
       },

@@ -345,7 +345,7 @@ export async function executeCreateMetaCampaign(action, { account, connection })
  *
  * This function:
  *   1. Atomically claims the action with an idempotency lock
- *      (execution_result: null → 'executing'). Accepts status pending/approved.
+ *      (result: null → 'executing'). Accepts status pending/approved.
  *   2. Re-asserts ownership (TOCTOU defense — throws if account_id changed
  *      since caller's check). This is a "should never happen" invariant.
  *   3. Dispatches to the appropriate platform function with { account, connection }.
@@ -365,7 +365,7 @@ export async function acquireLockAndExecute(actionId, { account, connection }) {
   // Fetch current state so we can validate before acquiring the lock
   const { data: current, error: fetchErr } = await supabase
     .from('actions')
-    .select('account_id, status, execution_result, action_type, channel, execution_data')
+    .select('account_id, status, result, action_type, channel, execution_data')
     .eq('id', actionId)
     .maybeSingle();
 
@@ -393,7 +393,7 @@ export async function acquireLockAndExecute(actionId, { account, connection }) {
     await supabase.from('actions').update({
       status:           STATUS.APPROVED,
       reviewed_at:      now,
-      execution_result: EXEC_RESULT.REQUIRES_MANUAL,
+      result: EXEC_RESULT.REQUIRES_MANUAL,
       execution_error:  'This action type must be applied manually in the ad platform.',
     }).eq('id', actionId);
 
@@ -423,21 +423,21 @@ export async function acquireLockAndExecute(actionId, { account, connection }) {
       httpStatus: 409,
       body: {
         success: false,
-        error:   `Action cannot be executed (status=${current.status}, execution_result=${current.execution_result ?? 'null'})`,
+        error:   `Action cannot be executed (status=${current.status}, result=${current.result ?? 'null'})`,
       },
     };
   }
 
   // ── Atomic idempotency lock ───────────────────────────────────────────────────
-  // Transitions execution_result: null → 'executing'.
-  // Requires status IN ('pending','approved') AND execution_result IS NULL.
+  // Transitions result: null → 'executing'.
+  // Requires status IN ('pending','approved') AND result IS NULL.
   // If another request got here first, the update matches 0 rows → 409.
   const { data: locked, error: lockErr } = await supabase
     .from('actions')
-    .update({ execution_result: EXEC_RESULT.EXECUTING })
+    .update({ result: EXEC_RESULT.EXECUTING })
     .eq('id', actionId)
     .in('status', [STATUS.PENDING, STATUS.APPROVED])
-    .is('execution_result', null)
+    .is('result', null)
     .select('account_id, action_type, channel, execution_data')
     .single();
 
@@ -483,7 +483,7 @@ export async function acquireLockAndExecute(actionId, { account, connection }) {
     status:           STATUS.APPROVED,
     reviewed_at:      now,
     executed_at:      now,
-    execution_result: finalResult,
+    result: finalResult,
     ...(executionError ? { execution_error: executionError } : {}),
   }).eq('id', actionId);
 

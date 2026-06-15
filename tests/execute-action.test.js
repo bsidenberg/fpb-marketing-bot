@@ -81,7 +81,7 @@ function makeAction(overrides = {}) {
     account_id:       FPB_ACCOUNT.id,  // matches default test account context
     status:           STATUS.PENDING,
     action_type:      'pause_campaign',
-    execution_result: null,
+    result:           null,
     execution_data:   {},
     ...overrides,
   };
@@ -116,7 +116,7 @@ beforeEach(() => {
 describe('acquireLockAndExecute', () => {
 
   it('returns 409 when action is in a final state (canExecute = false)', async () => {
-    const finalAction = makeAction({ execution_result: EXEC_RESULT.SUCCESS });
+    const finalAction = makeAction({ result: EXEC_RESULT.SUCCESS });
     queueResults({ data: finalAction, error: null }); // preflight
 
     const { httpStatus, body } = await acquireLockAndExecute('action-123', { account: FPB_ACCOUNT, connection: null });

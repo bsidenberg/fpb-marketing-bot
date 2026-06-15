@@ -255,7 +255,7 @@ async function evaluateForAccount(account, { dryRun, specificId }) {
     .from('actions')
     .select('id, account_id, action_type, channel, execution_data, executed_at, reviewed_at')
     .eq('account_id', account.id)
-    .eq('execution_result', 'success')
+    .eq('result', 'success')
     .lt('executed_at', cutoff)
     .order('executed_at', { ascending: false })
     .limit(50);
@@ -266,7 +266,7 @@ async function evaluateForAccount(account, { dryRun, specificId }) {
       .select('id, account_id, action_type, channel, execution_data, executed_at, reviewed_at')
       .eq('id', specificId)
       .eq('account_id', account.id)
-      .eq('execution_result', 'success');
+      .eq('result', 'success');
   }
 
   const { data: actions, error: fetchErr } = await query;
