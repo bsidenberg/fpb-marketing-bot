@@ -113,7 +113,7 @@ export async function executeGoogle(action, { account, connection }) {
   const status      = actionType === 'pause_campaign' ? 'PAUSED' : 'ENABLED';
   const accessToken = await getGoogleAccessToken(refreshToken);
 
-  const url = `https://googleads.googleapis.com/v19/customers/${customerId}/campaigns:mutate`;
+  const url = `https://googleads.googleapis.com/v23/customers/${customerId}/campaigns:mutate`;
   const res = await fetch(url, {
     method: 'POST',
     headers: {
@@ -191,7 +191,7 @@ export async function executeGoogleAdjustBudget(action, { account, connection })
     : null;
 
   if (!budgetId) {
-    const searchUrl = `https://googleads.googleapis.com/v19/customers/${customerId}/googleAds:search`;
+    const searchUrl = `https://googleads.googleapis.com/v23/customers/${customerId}/googleAds:search`;
     const searchRes = await fetch(searchUrl, {
       method: 'POST',
       headers: {
@@ -221,7 +221,7 @@ export async function executeGoogleAdjustBudget(action, { account, connection })
     budgetId = budgetResource.split('/').pop();
   }
 
-  const url = `https://googleads.googleapis.com/v19/customers/${customerId}/campaignBudgets:mutate`;
+  const url = `https://googleads.googleapis.com/v23/customers/${customerId}/campaignBudgets:mutate`;
   const res  = await fetch(url, {
     method: 'POST',
     headers: {
@@ -281,7 +281,7 @@ export async function executeGoogleAddNegativeKeyword(action, { account, connect
     : undefined;
   const accessToken      = await getGoogleAccessToken(connection.resolved_refresh_token);
 
-  const url = `https://googleads.googleapis.com/v19/customers/${customerId}/campaignCriteria:mutate`;
+  const url = `https://googleads.googleapis.com/v23/customers/${customerId}/campaignCriteria:mutate`;
   const res  = await fetch(url, {
     method: 'POST',
     headers: {
