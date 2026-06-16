@@ -148,22 +148,26 @@ export async function executeGoogleAdjustBudget(action, { account, connection })
     throw new Error(`Google Ads connection missing refresh token for account ${account.slug}`);
   }
 
-  const campaignId   = action.execution_data?.campaign_id;
-  const newBudgetUsd = action.execution_data?.recommended_value;
+  // Coerce to string — Prime may store campaign IDs as JSON numbers or strings
+  const campaignId = String(action.execution_data?.campaign_id || '');
+  // Coerce to number — Prime serializes numeric fields as JSON strings ("31" not 31)
+  const rawValue   = action.execution_data?.recommended_value;
+  const budget     = Number(rawValue);
 
   // Guard against placeholder IDs generated from hypothetical Prime actions
-  if (!campaignId || !/^\d{8,}$/.test(String(campaignId))) {
+  if (!campaignId || !/^\d{8,}$/.test(campaignId)) {
     throw new Error(
       'Invalid campaign_id format — appears to be a placeholder, not a real Google Ads campaign ID. ' +
       'This usually means Prime generated a hypothetical action without real campaign data.'
     );
   }
 
-  if (typeof newBudgetUsd !== 'number' || newBudgetUsd <= 0) {
-    throw new Error(`Invalid budget value: ${newBudgetUsd} — must be a positive number in USD`);
-  }
-  if (newBudgetUsd > 10000) {
-    throw new Error(`Budget $${newBudgetUsd}/day exceeds $10,000 safety limit — apply manually in Google Ads`);
+  if (!Number.isFinite(budget) || budget <= 0 || budget > 10000) {
+    throw new Error(
+      budget > 10000
+        ? `Budget $${rawValue}/day exceeds $10,000 safety limit — apply manually in Google Ads`
+        : `Invalid budget value: ${rawValue} — must be a positive number in USD between 0 and 10000`
+    );
   }
 
   const customerId       = connection.resolved_account_id_external.replace(/-/g, '');
@@ -171,10 +175,10 @@ export async function executeGoogleAdjustBudget(action, { account, connection })
     ? connection.resolved_manager_account_id.replace(/-/g, '')
     : undefined;
   const accessToken      = await getGoogleAccessToken(connection.resolved_refresh_token);
-  const amountMicros     = Math.round(newBudgetUsd * 1_000_000);
+  const amountMicros     = Math.round(budget * 1_000_000);
   // budget_id may differ from campaign_id; Prime doesn't always provide it,
   // so fall back to campaign_id (works for campaigns with a dedicated budget).
-  const budgetId = action.execution_data?.budget_id || campaignId;
+  const budgetId = String(action.execution_data?.budget_id || campaignId);
 
   const url = `https://googleads.googleapis.com/v19/customers/${customerId}/campaignBudgets:mutate`;
   const res  = await fetch(url, {
@@ -200,7 +204,7 @@ export async function executeGoogleAdjustBudget(action, { account, connection })
 
   await recordApiCall('google_ads', 'budget_mutate', account.id);
 
-  return { campaign_id: campaignId, new_budget_usd: newBudgetUsd, amount_micros: amountMicros };
+  return { campaign_id: campaignId, new_budget_usd: budget, amount_micros: amountMicros };
 }
 
 // ── Google Ads: add negative keyword to a campaign ────────────────────────────
@@ -215,11 +219,12 @@ export async function executeGoogleAddNegativeKeyword(action, { account, connect
     throw new Error(`Google Ads connection missing refresh token for account ${account.slug}`);
   }
 
-  const campaignId  = action.execution_data?.campaign_id;
+  // Coerce to string — Prime may store campaign IDs as JSON numbers or strings
+  const campaignId  = String(action.execution_data?.campaign_id || '');
   const keywordText = action.execution_data?.keyword_text;
   const matchType   = action.execution_data?.match_type || 'BROAD';
 
-  if (!campaignId || !/^\d{8,}$/.test(String(campaignId))) {
+  if (!campaignId || !/^\d{8,}$/.test(campaignId)) {
     throw new Error(
       'Invalid campaign_id format — appears to be a placeholder, not a real Google Ads campaign ID. ' +
       'This usually means Prime generated a hypothetical action without real campaign data.'

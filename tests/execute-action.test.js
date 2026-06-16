@@ -188,6 +188,84 @@ describe('acquireLockAndExecute', () => {
     expect(body.error).toMatch(/placeholder/i);
   });
 
+  // ── String-coercion tests (Bug 14) ──────────────────────────────────────────
+  // Prime serializes numeric fields as JSON strings ("31" not 31).
+
+  it('executes adjust_budget when recommended_value is a string ("31")', async () => {
+    const action = makeAction({
+      action_type:    'adjust_budget',
+      channel:        'google',
+      execution_data: { campaign_id: '123456789', recommended_value: '31' },
+    });
+    queueResults(
+      { data: action, error: null },
+      { data: action, error: null },
+    );
+    mockFetch
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ access_token: 'test-token' }) })
+      .mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify({ results: [] }) });
+
+    const { httpStatus, body } = await acquireLockAndExecute('action-123', { account: FPB_ACCOUNT, connection: GOOGLE_CONN });
+    expect(httpStatus).toBe(200);
+    expect(body.success).toBe(true);
+    expect(body.executed).toBe(true);
+    expect(body.new_budget_usd).toBe(31);
+  });
+
+  it('executes adjust_budget when campaign_id is stored as a numeric value', async () => {
+    const action = makeAction({
+      action_type:    'adjust_budget',
+      channel:        'google',
+      execution_data: { campaign_id: 21613067659, recommended_value: 31 },
+    });
+    queueResults(
+      { data: action, error: null },
+      { data: action, error: null },
+    );
+    mockFetch
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ access_token: 'test-token' }) })
+      .mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify({ results: [] }) });
+
+    const { httpStatus, body } = await acquireLockAndExecute('action-123', { account: FPB_ACCOUNT, connection: GOOGLE_CONN });
+    expect(httpStatus).toBe(200);
+    expect(body.executed).toBe(true);
+    expect(body.campaign_id).toBe('21613067659');
+  });
+
+  it('rejects adjust_budget when recommended_value is null', async () => {
+    const action = makeAction({
+      action_type:    'adjust_budget',
+      channel:        'google',
+      execution_data: { campaign_id: '123456789', recommended_value: null },
+    });
+    queueResults(
+      { data: action, error: null },
+      { data: action, error: null },
+    );
+
+    const { httpStatus, body } = await acquireLockAndExecute('action-123', { account: FPB_ACCOUNT, connection: GOOGLE_CONN });
+    expect(httpStatus).toBe(200);
+    expect(body.executed).toBe(false);
+    expect(body.error).toMatch(/invalid budget value/i);
+  });
+
+  it('rejects adjust_budget when recommended_value is a non-numeric string ("abc")', async () => {
+    const action = makeAction({
+      action_type:    'adjust_budget',
+      channel:        'google',
+      execution_data: { campaign_id: '123456789', recommended_value: 'abc' },
+    });
+    queueResults(
+      { data: action, error: null },
+      { data: action, error: null },
+    );
+
+    const { httpStatus, body } = await acquireLockAndExecute('action-123', { account: FPB_ACCOUNT, connection: GOOGLE_CONN });
+    expect(httpStatus).toBe(200);
+    expect(body.executed).toBe(false);
+    expect(body.error).toMatch(/invalid budget value/i);
+  });
+
   it('adds a negative keyword to a Google Ads campaign', async () => {
     const action = makeAction({
       action_type:    'add_negative_keyword',

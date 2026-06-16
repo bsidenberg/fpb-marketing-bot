@@ -1617,6 +1617,7 @@ function CampaignsTable({ campaigns }) {
       <thead>
         <tr>
           <th>Campaign</th>
+          <th>Campaign ID</th>
           <th>Status</th>
           <th>Spend</th>
           <th>Clicks</th>
@@ -1627,6 +1628,7 @@ function CampaignsTable({ campaigns }) {
         {campaigns.map((c, i) => (
           <tr key={i}>
             <td>{c.name || c.id}</td>
+            <td style={{ fontFamily: F.mono, fontSize: 11, color: "#6b7280", letterSpacing: "0.01em" }}>{c.id || "—"}</td>
             <td>
               <span className={`badge badge-${(c.status || "").toLowerCase() === "active" ? "approved" : "pending"}`}>
                 {c.status || "—"}
