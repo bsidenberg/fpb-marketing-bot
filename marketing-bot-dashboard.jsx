@@ -1,5 +1,6 @@
 import { useState, useEffect, useReducer, useCallback, useRef } from "react";
 import { LayoutGrid, Rows3 } from "lucide-react";
+import { CHAT_IMAGE_TYPES, validateChatImageFile } from "./src/lib/chatImageUtils.js";
 
 // ── Stage B2: account-aware fetch wrapper ──
 // Appends ?account=<slug> to the URL so backend routes resolve the right
@@ -3067,24 +3068,40 @@ export default function MarketingBotDashboard() {
   }, [chatMessages, chatFetching]);
 
   // ── Chat: handle image file select ──
+  const attachImageFile = (file) => {
+    const validation = validateChatImageFile(file);
+    if (!validation.ok) {
+      showToast(validation.error);
+      return;
+    }
+    const previewUrl = URL.createObjectURL(file);
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const base64 = ev.target.result.split(",")[1];
+      setPendingImage({ file, previewUrl, base64, mediaType: file.type });
+    };
+    reader.readAsDataURL(file);
+  };
+
   const handleImageSelect = (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
     e.target.value = "";
+    attachImageFile(file);
+  };
 
-    if (file.size > 5 * 1024 * 1024) {
-      showToast("Image too large — max 5MB");
-      return;
+  const handlePaste = (e) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    for (const item of items) {
+      if (item.kind === "file" && CHAT_IMAGE_TYPES.has(item.type)) {
+        e.preventDefault();
+        const file = item.getAsFile();
+        if (file) attachImageFile(file);
+        return; // take only the first image item
+      }
     }
-
-    const previewUrl = URL.createObjectURL(file);
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      const dataUrl = ev.target.result;
-      const base64 = dataUrl.split(",")[1];
-      setPendingImage({ file, previewUrl, base64, mediaType: file.type });
-    };
-    reader.readAsDataURL(file);
+    // No image found — let default text paste proceed
   };
 
   // ── Chat: send message ──
@@ -4080,7 +4097,7 @@ export default function MarketingBotDashboard() {
                   <input
                     ref={fileInputRef}
                     type="file"
-                    accept="image/jpeg,image/png,image/webp"
+                    accept="image/jpeg,image/png,image/gif,image/webp"
                     style={{ display: "none" }}
                     onChange={handleImageSelect}
                   />
@@ -4115,6 +4132,7 @@ export default function MarketingBotDashboard() {
                         sendMessage();
                       }
                     }}
+                    onPaste={handlePaste}
                     rows={1}
                     disabled={chatLoading || chatFetching}
                   />
