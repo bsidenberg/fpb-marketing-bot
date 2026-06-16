@@ -132,14 +132,110 @@ describe('acquireLockAndExecute', () => {
     expect(body.success).toBe(false);
   });
 
-  it('returns 200 requires_manual for adjust_budget', async () => {
-    const action = makeAction({ action_type: 'adjust_budget' });
-    queueResults({ data: action, error: null }); // preflight
+  it('executes adjust_budget and updates budget via Google Ads API', async () => {
+    const action = makeAction({
+      action_type:    'adjust_budget',
+      channel:        'google',
+      execution_data: { campaign_id: '123456789', recommended_value: 50 },
+    });
+    queueResults(
+      { data: action, error: null },  // preflight fetch
+      { data: action, error: null },  // lock update
+    );
+    mockFetch
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ access_token: 'test-token' }) })
+      .mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify({ results: [] }) });
 
-    const { httpStatus, body } = await acquireLockAndExecute('action-123', { account: FPB_ACCOUNT, connection: null });
+    const { httpStatus, body } = await acquireLockAndExecute('action-123', { account: FPB_ACCOUNT, connection: GOOGLE_CONN });
     expect(httpStatus).toBe(200);
-    expect(body.requires_manual).toBe(true);
+    expect(body.success).toBe(true);
+    expect(body.executed).toBe(true);
+    expect(body.campaign_id).toBe('123456789');
+    expect(body.new_budget_usd).toBe(50);
+  });
+
+  it('rejects adjust_budget when budget exceeds $10,000 safety limit', async () => {
+    const action = makeAction({
+      action_type:    'adjust_budget',
+      channel:        'google',
+      execution_data: { campaign_id: '123456789', recommended_value: 15000 },
+    });
+    queueResults(
+      { data: action, error: null },
+      { data: action, error: null },
+    );
+
+    const { httpStatus, body } = await acquireLockAndExecute('action-123', { account: FPB_ACCOUNT, connection: GOOGLE_CONN });
+    expect(httpStatus).toBe(200);
     expect(body.executed).toBe(false);
+    expect(body.error).toMatch(/10[,.]?000/i);
+  });
+
+  it('rejects adjust_budget when campaign_id looks like a placeholder', async () => {
+    const action = makeAction({
+      action_type:    'adjust_budget',
+      channel:        'google',
+      execution_data: { campaign_id: 'camp_12345', recommended_value: 50 },
+    });
+    queueResults(
+      { data: action, error: null },
+      { data: action, error: null },
+    );
+
+    const { httpStatus, body } = await acquireLockAndExecute('action-123', { account: FPB_ACCOUNT, connection: GOOGLE_CONN });
+    expect(httpStatus).toBe(200);
+    expect(body.executed).toBe(false);
+    expect(body.error).toMatch(/placeholder/i);
+  });
+
+  it('adds a negative keyword to a Google Ads campaign', async () => {
+    const action = makeAction({
+      action_type:    'add_negative_keyword',
+      channel:        'google',
+      execution_data: { campaign_id: '123456789', keyword_text: 'competitor brand' },
+    });
+    queueResults(
+      { data: action, error: null },
+      { data: action, error: null },
+    );
+    mockFetch
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ access_token: 'test-token' }) })
+      .mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify({ results: [] }) });
+
+    const { httpStatus, body } = await acquireLockAndExecute('action-123', { account: FPB_ACCOUNT, connection: GOOGLE_CONN });
+    expect(httpStatus).toBe(200);
+    expect(body.success).toBe(true);
+    expect(body.executed).toBe(true);
+    expect(body.keyword_text).toBe('competitor brand');
+  });
+
+  it('enables (resumes) a Google Ads campaign for resume_campaign', async () => {
+    const action = makeAction({
+      action_type:    'resume_campaign',
+      channel:        'google',
+      execution_data: { campaign_id: '123456789' },
+    });
+    const lockedRow = {
+      account_id:     FPB_ACCOUNT.id,
+      action_type:    'resume_campaign',
+      channel:        'google',
+      execution_data: { campaign_id: '123456789' },
+    };
+    queueResults(
+      { data: action,    error: null },
+      { data: lockedRow, error: null },
+    );
+    mockFetch
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ access_token: 'test-token' }) })
+      .mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify({ results: [] }) });
+
+    const { httpStatus, body } = await acquireLockAndExecute('action-123', { account: FPB_ACCOUNT, connection: GOOGLE_CONN });
+    expect(httpStatus).toBe(200);
+    expect(body.success).toBe(true);
+    expect(body.executed).toBe(true);
+    // Verify ENABLED was sent (not PAUSED)
+    const googleApiBody = JSON.parse(mockFetch.mock.calls[1][1].body);
+    expect(googleApiBody.operations[0].update.status).toBe('ENABLED');
   });
 
   it('returns 200 requires_manual for adjust_bid', async () => {

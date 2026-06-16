@@ -77,18 +77,29 @@ describe('canExecute', () => {
 // ── isManualType / isExecutableType ──────────────────────────────────────────
 
 describe('type classification', () => {
-  it('classifies adjust_budget as manual', () => {
-    expect(isManualType('adjust_budget')).toBe(true);
-    expect(isExecutableType('adjust_budget')).toBe(false);
+  it('classifies adjust_budget as executable (not manual)', () => {
+    expect(isExecutableType('adjust_budget')).toBe(true);
+    expect(isManualType('adjust_budget')).toBe(false);
   });
 
   it('classifies adjust_bid as manual', () => {
     expect(isManualType('adjust_bid')).toBe(true);
+    expect(isExecutableType('adjust_bid')).toBe(false);
   });
 
   it('classifies pause_campaign as executable', () => {
     expect(isExecutableType('pause_campaign')).toBe(true);
     expect(isManualType('pause_campaign')).toBe(false);
+  });
+
+  it('classifies resume_campaign as executable', () => {
+    expect(isExecutableType('resume_campaign')).toBe(true);
+    expect(isManualType('resume_campaign')).toBe(false);
+  });
+
+  it('classifies add_negative_keyword as executable', () => {
+    expect(isExecutableType('add_negative_keyword')).toBe(true);
+    expect(isManualType('add_negative_keyword')).toBe(false);
   });
 
   it('classifies publish_creative as executable', () => {

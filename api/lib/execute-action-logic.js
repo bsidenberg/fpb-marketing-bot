@@ -136,6 +136,132 @@ export async function executeGoogle(action, { account, connection }) {
   return JSON.parse(text);
 }
 
+// ── Google Ads: adjust campaign budget ───────────────────────────────────────
+export async function executeGoogleAdjustBudget(action, { account, connection }) {
+  if (!connection) {
+    throw new Error(`executeGoogleAdjustBudget requires a google_ads connection (account=${account?.slug ?? 'unknown'})`);
+  }
+  if (!connection.resolved_account_id_external) {
+    throw new Error(`Google Ads connection missing customer ID for account ${account.slug}`);
+  }
+  if (!connection.resolved_refresh_token) {
+    throw new Error(`Google Ads connection missing refresh token for account ${account.slug}`);
+  }
+
+  const campaignId   = action.execution_data?.campaign_id;
+  const newBudgetUsd = action.execution_data?.recommended_value;
+
+  // Guard against placeholder IDs generated from hypothetical Prime actions
+  if (!campaignId || !/^\d{8,}$/.test(String(campaignId))) {
+    throw new Error(
+      'Invalid campaign_id format — appears to be a placeholder, not a real Google Ads campaign ID. ' +
+      'This usually means Prime generated a hypothetical action without real campaign data.'
+    );
+  }
+
+  if (typeof newBudgetUsd !== 'number' || newBudgetUsd <= 0) {
+    throw new Error(`Invalid budget value: ${newBudgetUsd} — must be a positive number in USD`);
+  }
+  if (newBudgetUsd > 10000) {
+    throw new Error(`Budget $${newBudgetUsd}/day exceeds $10,000 safety limit — apply manually in Google Ads`);
+  }
+
+  const customerId       = connection.resolved_account_id_external.replace(/-/g, '');
+  const managerAccountId = connection.resolved_manager_account_id
+    ? connection.resolved_manager_account_id.replace(/-/g, '')
+    : undefined;
+  const accessToken      = await getGoogleAccessToken(connection.resolved_refresh_token);
+  const amountMicros     = Math.round(newBudgetUsd * 1_000_000);
+  // budget_id may differ from campaign_id; Prime doesn't always provide it,
+  // so fall back to campaign_id (works for campaigns with a dedicated budget).
+  const budgetId = action.execution_data?.budget_id || campaignId;
+
+  const url = `https://googleads.googleapis.com/v19/customers/${customerId}/campaignBudgets:mutate`;
+  const res  = await fetch(url, {
+    method: 'POST',
+    headers: {
+      Authorization:       `Bearer ${accessToken}`,
+      'developer-token':   process.env.GOOGLE_ADS_DEVELOPER_TOKEN,
+      'login-customer-id': managerAccountId,
+      'Content-Type':      'application/json',
+    },
+    body: JSON.stringify({
+      operations: [{
+        update: {
+          resourceName: `customers/${customerId}/campaignBudgets/${budgetId}`,
+          amountMicros,
+        },
+        updateMask: 'amountMicros',
+      }],
+    }),
+  });
+  const text = await res.text();
+  if (!res.ok) throw new Error(`Google Ads API ${res.status}: ${text.substring(0, 400)}`);
+
+  await recordApiCall('google_ads', 'budget_mutate', account.id);
+
+  return { campaign_id: campaignId, new_budget_usd: newBudgetUsd, amount_micros: amountMicros };
+}
+
+// ── Google Ads: add negative keyword to a campaign ────────────────────────────
+export async function executeGoogleAddNegativeKeyword(action, { account, connection }) {
+  if (!connection) {
+    throw new Error(`executeGoogleAddNegativeKeyword requires a google_ads connection (account=${account?.slug ?? 'unknown'})`);
+  }
+  if (!connection.resolved_account_id_external) {
+    throw new Error(`Google Ads connection missing customer ID for account ${account.slug}`);
+  }
+  if (!connection.resolved_refresh_token) {
+    throw new Error(`Google Ads connection missing refresh token for account ${account.slug}`);
+  }
+
+  const campaignId  = action.execution_data?.campaign_id;
+  const keywordText = action.execution_data?.keyword_text;
+  const matchType   = action.execution_data?.match_type || 'BROAD';
+
+  if (!campaignId || !/^\d{8,}$/.test(String(campaignId))) {
+    throw new Error(
+      'Invalid campaign_id format — appears to be a placeholder, not a real Google Ads campaign ID. ' +
+      'This usually means Prime generated a hypothetical action without real campaign data.'
+    );
+  }
+  if (!keywordText || typeof keywordText !== 'string' || !keywordText.trim()) {
+    throw new Error('executeGoogleAddNegativeKeyword requires execution_data.keyword_text');
+  }
+
+  const customerId       = connection.resolved_account_id_external.replace(/-/g, '');
+  const managerAccountId = connection.resolved_manager_account_id
+    ? connection.resolved_manager_account_id.replace(/-/g, '')
+    : undefined;
+  const accessToken      = await getGoogleAccessToken(connection.resolved_refresh_token);
+
+  const url = `https://googleads.googleapis.com/v19/customers/${customerId}/campaignCriteria:mutate`;
+  const res  = await fetch(url, {
+    method: 'POST',
+    headers: {
+      Authorization:       `Bearer ${accessToken}`,
+      'developer-token':   process.env.GOOGLE_ADS_DEVELOPER_TOKEN,
+      'login-customer-id': managerAccountId,
+      'Content-Type':      'application/json',
+    },
+    body: JSON.stringify({
+      operations: [{
+        create: {
+          campaign: `customers/${customerId}/campaigns/${campaignId}`,
+          negative: true,
+          keyword:  { text: keywordText.trim(), matchType },
+        },
+      }],
+    }),
+  });
+  const text = await res.text();
+  if (!res.ok) throw new Error(`Google Ads API ${res.status}: ${text.substring(0, 400)}`);
+
+  await recordApiCall('google_ads', 'negative_keyword_add', account.id);
+
+  return { campaign_id: campaignId, keyword_text: keywordText.trim(), match_type: matchType };
+}
+
 // ── Meta campaign status ──────────────────────────────────────────────────────
 export async function executeMeta(action, { account, connection }) {
   if (!connection) {
@@ -390,12 +516,14 @@ export async function acquireLockAndExecute(actionId, { account, connection }) {
 
   // Manual-type gate — record approval intent but never execute
   if (isManualType(current.action_type)) {
-    await supabase.from('actions').update({
-      status:           STATUS.APPROVED,
-      reviewed_at:      now,
-      result: EXEC_RESULT.REQUIRES_MANUAL,
-      execution_error:  'This action type must be applied manually in the ad platform.',
+    const { error: manualUpdateErr } = await supabase.from('actions').update({
+      status:      STATUS.APPROVED,
+      reviewed_at: now,
+      result:      EXEC_RESULT.REQUIRES_MANUAL,
     }).eq('id', actionId);
+    if (manualUpdateErr) {
+      console.error('[execute-action-logic] manual approval update failed:', manualUpdateErr.code, manualUpdateErr.message);
+    }
 
     await writeLog({
       actionId, accountId: account.id, now,
@@ -464,7 +592,12 @@ export async function acquireLockAndExecute(actionId, { account, connection }) {
       extraMeta = await executePublishCreative(locked, { account, connection });
     } else if (actionType === 'create_meta_campaign') {
       extraMeta = await executeCreateMetaCampaign(locked, { account, connection });
+    } else if (actionType === 'adjust_budget') {
+      extraMeta = await executeGoogleAdjustBudget(locked, { account, connection });
+    } else if (actionType === 'add_negative_keyword') {
+      extraMeta = await executeGoogleAddNegativeKeyword(locked, { account, connection });
     } else if (normalizedPlatform === 'google' && campaignId) {
+      // handles pause_campaign, enable_campaign, resume_campaign
       await executeGoogle(locked, { account, connection });
       extraMeta = { campaign_id: campaignId };
     } else if (normalizedPlatform === 'meta' && campaignId) {
@@ -479,13 +612,15 @@ export async function acquireLockAndExecute(actionId, { account, connection }) {
 
   // ── Update action row ─────────────────────────────────────────────────────────
   const finalResult = executionError || EXEC_RESULT.SUCCESS;
-  await supabase.from('actions').update({
-    status:           STATUS.APPROVED,
-    reviewed_at:      now,
-    executed_at:      now,
-    result: finalResult,
-    ...(executionError ? { execution_error: executionError } : {}),
+  const { error: finalUpdateErr } = await supabase.from('actions').update({
+    status:      STATUS.APPROVED,
+    reviewed_at: now,
+    executed_at: now,
+    result:      finalResult,
   }).eq('id', actionId);
+  if (finalUpdateErr) {
+    console.error('[execute-action-logic] final status update failed:', finalUpdateErr.code, finalUpdateErr.message);
+  }
 
   // ── Audit log ─────────────────────────────────────────────────────────────────
   const succeeded = !executionError;
@@ -588,11 +723,14 @@ export async function executeTransient({ platform, actionType, campaignId }, { a
 // ── Internal helpers ──────────────────────────────────────────────────────────
 function buildSuccessDesc(actionType, meta) {
   switch (actionType) {
-    case 'pause_campaign':       return `Campaign paused (ID: ${meta.campaign_id})`;
-    case 'enable_campaign':      return `Campaign enabled (ID: ${meta.campaign_id})`;
-    case 'publish_creative':     return `Creative published to Meta (creative ID: ${meta.creative_id})`;
-    case 'create_meta_campaign': return `Meta campaign created in PAUSED state (campaign ID: ${meta.campaign_id}, ad set ID: ${meta.ad_set_id})`;
-    default:                     return `${actionType} completed`;
+    case 'pause_campaign':        return `Campaign paused (ID: ${meta.campaign_id})`;
+    case 'enable_campaign':       return `Campaign enabled (ID: ${meta.campaign_id})`;
+    case 'resume_campaign':       return `Campaign resumed/enabled (ID: ${meta.campaign_id})`;
+    case 'publish_creative':      return `Creative published to Meta (creative ID: ${meta.creative_id})`;
+    case 'create_meta_campaign':  return `Meta campaign created in PAUSED state (campaign ID: ${meta.campaign_id}, ad set ID: ${meta.ad_set_id})`;
+    case 'adjust_budget':         return `Campaign budget updated to $${meta.new_budget_usd}/day (campaign ID: ${meta.campaign_id})`;
+    case 'add_negative_keyword':  return `Negative keyword added: "${meta.keyword_text}" (campaign ID: ${meta.campaign_id})`;
+    default:                      return `${actionType} completed`;
   }
 }
 

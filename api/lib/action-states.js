@@ -38,14 +38,16 @@ export const EXEC_RESULT = {
 export const EXECUTABLE_TYPES = [
   'pause_campaign',
   'enable_campaign',
+  'resume_campaign',
   'publish_creative',
   'create_meta_campaign',
+  'adjust_budget',
+  'add_negative_keyword',
 ];
 
 // MANUAL: valid AI recommendations; must be applied by a human in the ad platform.
 // These are never auto-executed — approval records the intent only.
 export const MANUAL_TYPES = [
-  'adjust_budget',
   'adjust_bid',
 ];
 
