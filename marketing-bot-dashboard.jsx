@@ -1612,12 +1612,14 @@ function CampaignsTable({ campaigns }) {
   if (!campaigns || campaigns.length === 0) return (
     <div style={{ fontFamily: F.mono, fontSize: 11, color: C.textMuted, padding: "12px 0" }}>No campaign data available.</div>
   );
+  const hasBudgetIds = campaigns.some(c => c.budget_id);
   return (
     <table className="campaigns-table">
       <thead>
         <tr>
           <th>Campaign</th>
           <th>Campaign ID</th>
+          {hasBudgetIds && <th>Budget ID</th>}
           <th>Status</th>
           <th>Spend</th>
           <th>Clicks</th>
@@ -1629,6 +1631,7 @@ function CampaignsTable({ campaigns }) {
           <tr key={i}>
             <td>{c.name || c.id}</td>
             <td style={{ fontFamily: F.mono, fontSize: 11, color: "#6b7280", letterSpacing: "0.01em" }}>{c.id || "—"}</td>
+            {hasBudgetIds && <td style={{ fontFamily: F.mono, fontSize: 11, color: "#6b7280", letterSpacing: "0.01em" }}>{c.budget_id || "—"}</td>}
             <td>
               <span className={`badge badge-${(c.status || "").toLowerCase() === "active" ? "approved" : "pending"}`}>
                 {c.status || "—"}

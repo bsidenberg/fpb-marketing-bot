@@ -79,11 +79,15 @@ export default async function handler(req, res) {
       : undefined;
 
     // Step 2: Query campaign performance for last 30 days
+    // campaign.campaign_budget exposes the budget resource name so the dashboard
+    // can display budget_id — Prime can then include it in ACTION blocks, allowing
+    // executeGoogleAdjustBudget to skip the extra GET-campaign lookup.
     const query = `
       SELECT
         campaign.id,
         campaign.name,
         campaign.status,
+        campaign.campaign_budget,
         metrics.impressions,
         metrics.clicks,
         metrics.cost_micros,
@@ -150,8 +154,12 @@ export default async function handler(req, res) {
       totalClicks += parseInt(result.metrics?.clicks || 0);
       totalImpressions += parseInt(result.metrics?.impressions || 0);
       totalConversions += parseFloat(result.metrics?.conversions || 0);
+      // campaign_budget resource name: "customers/X/campaignBudgets/Y" — extract Y
+      const budgetResource = result.campaign?.campaignBudget;
+      const budget_id = budgetResource ? budgetResource.split('/').pop() : null;
       campaigns.push({
         id: result.campaign?.id,
+        budget_id,
         name: result.campaign?.name,
         status: result.campaign?.status,
         spend: spend.toFixed(2),

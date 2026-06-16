@@ -150,9 +150,12 @@ export async function executeGoogleAdjustBudget(action, { account, connection })
 
   // Coerce to string — Prime may store campaign IDs as JSON numbers or strings
   const campaignId = String(action.execution_data?.campaign_id || '');
-  // Coerce to number — Prime serializes numeric fields as JSON strings ("31" not 31)
-  const rawValue   = action.execution_data?.recommended_value;
-  const budget     = Number(rawValue);
+  // Coerce to number — Prime may emit bare numbers, quoted strings ("31"), or
+  // formatted currency strings ("$31/day", "$1,500", "31 USD").
+  // Strip everything except digits and decimal point before converting.
+  const rawValue = action.execution_data?.recommended_value;
+  const cleaned  = typeof rawValue === 'string' ? rawValue.replace(/[^0-9.]/g, '') : rawValue;
+  const budget   = Number(cleaned);
 
   // Guard against placeholder IDs generated from hypothetical Prime actions
   if (!campaignId || !/^\d{8,}$/.test(campaignId)) {
@@ -175,10 +178,48 @@ export async function executeGoogleAdjustBudget(action, { account, connection })
     ? connection.resolved_manager_account_id.replace(/-/g, '')
     : undefined;
   const accessToken      = await getGoogleAccessToken(connection.resolved_refresh_token);
-  const amountMicros     = Math.round(budget * 1_000_000);
-  // budget_id may differ from campaign_id; Prime doesn't always provide it,
-  // so fall back to campaign_id (works for campaigns with a dedicated budget).
-  const budgetId = String(action.execution_data?.budget_id || campaignId);
+  const amountMicros = Math.round(budget * 1_000_000);
+
+  // Resolve the budget resource ID.
+  // Fast path: execution_data.budget_id supplied (populated by api/google-ads.js when
+  // Prime screenshots Live Data and includes it in the ACTION block).
+  // Slow path: fetch the campaign record to find its linked campaignBudget resource name,
+  // then extract the numeric ID. This avoids incorrectly using campaign_id as budget_id
+  // (they are unrelated IDs in the Google Ads data model).
+  let budgetId = action.execution_data?.budget_id
+    ? String(action.execution_data.budget_id)
+    : null;
+
+  if (!budgetId) {
+    const searchUrl = `https://googleads.googleapis.com/v19/customers/${customerId}/googleAds:search`;
+    const searchRes = await fetch(searchUrl, {
+      method: 'POST',
+      headers: {
+        Authorization:       `Bearer ${accessToken}`,
+        'developer-token':   process.env.GOOGLE_ADS_DEVELOPER_TOKEN,
+        'login-customer-id': managerAccountId,
+        'Content-Type':      'application/json',
+      },
+      body: JSON.stringify({
+        query: `SELECT campaign.campaign_budget FROM campaign WHERE campaign.id = ${campaignId} LIMIT 1`,
+      }),
+    });
+    const searchText = await searchRes.text();
+    if (!searchRes.ok) {
+      throw new Error(`Google Ads campaign lookup failed (${searchRes.status}): ${searchText.substring(0, 300)}`);
+    }
+    let searchData;
+    try {
+      searchData = JSON.parse(searchText);
+    } catch (e) {
+      throw new Error(`Google Ads campaign lookup returned unparseable response: ${searchText.substring(0, 100)}`);
+    }
+    const budgetResource = searchData.results?.[0]?.campaign?.campaignBudget;
+    if (!budgetResource) {
+      throw new Error(`Could not find campaign budget resource for campaign ${campaignId} — provide budget_id in execution_data`);
+    }
+    budgetId = budgetResource.split('/').pop();
+  }
 
   const url = `https://googleads.googleapis.com/v19/customers/${customerId}/campaignBudgets:mutate`;
   const res  = await fetch(url, {

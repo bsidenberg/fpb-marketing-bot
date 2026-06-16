@@ -144,6 +144,9 @@ describe('acquireLockAndExecute', () => {
     );
     mockFetch
       .mockResolvedValueOnce({ ok: true, json: async () => ({ access_token: 'test-token' }) })
+      .mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify({
+        results: [{ campaign: { campaignBudget: 'customers/8325311811/campaignBudgets/987654321' } }],
+      }) })
       .mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify({ results: [] }) });
 
     const { httpStatus, body } = await acquireLockAndExecute('action-123', { account: FPB_ACCOUNT, connection: GOOGLE_CONN });
@@ -203,6 +206,9 @@ describe('acquireLockAndExecute', () => {
     );
     mockFetch
       .mockResolvedValueOnce({ ok: true, json: async () => ({ access_token: 'test-token' }) })
+      .mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify({
+        results: [{ campaign: { campaignBudget: 'customers/8325311811/campaignBudgets/987654321' } }],
+      }) })
       .mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify({ results: [] }) });
 
     const { httpStatus, body } = await acquireLockAndExecute('action-123', { account: FPB_ACCOUNT, connection: GOOGLE_CONN });
@@ -224,6 +230,9 @@ describe('acquireLockAndExecute', () => {
     );
     mockFetch
       .mockResolvedValueOnce({ ok: true, json: async () => ({ access_token: 'test-token' }) })
+      .mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify({
+        results: [{ campaign: { campaignBudget: 'customers/8325311811/campaignBudgets/987654321' } }],
+      }) })
       .mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify({ results: [] }) });
 
     const { httpStatus, body } = await acquireLockAndExecute('action-123', { account: FPB_ACCOUNT, connection: GOOGLE_CONN });
@@ -264,6 +273,160 @@ describe('acquireLockAndExecute', () => {
     expect(httpStatus).toBe(200);
     expect(body.executed).toBe(false);
     expect(body.error).toMatch(/invalid budget value/i);
+  });
+
+  // ── Currency-string coercion tests (Bug 16) ──────────────────────────────────
+  // Prime may emit formatted strings like "$31/day", "$1,500", "$31 USD".
+
+  it('executes adjust_budget when recommended_value is "$31/day"', async () => {
+    const action = makeAction({
+      action_type:    'adjust_budget',
+      channel:        'google',
+      execution_data: { campaign_id: '123456789', recommended_value: '$31/day' },
+    });
+    queueResults(
+      { data: action, error: null },
+      { data: action, error: null },
+    );
+    mockFetch
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ access_token: 'test-token' }) })
+      .mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify({
+        results: [{ campaign: { campaignBudget: 'customers/8325311811/campaignBudgets/987654321' } }],
+      }) })
+      .mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify({ results: [] }) });
+
+    const { httpStatus, body } = await acquireLockAndExecute('action-123', { account: FPB_ACCOUNT, connection: GOOGLE_CONN });
+    expect(httpStatus).toBe(200);
+    expect(body.executed).toBe(true);
+    expect(body.new_budget_usd).toBe(31);
+  });
+
+  it('executes adjust_budget when recommended_value is "$1,500"', async () => {
+    const action = makeAction({
+      action_type:    'adjust_budget',
+      channel:        'google',
+      execution_data: { campaign_id: '123456789', recommended_value: '$1,500' },
+    });
+    queueResults(
+      { data: action, error: null },
+      { data: action, error: null },
+    );
+    mockFetch
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ access_token: 'test-token' }) })
+      .mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify({
+        results: [{ campaign: { campaignBudget: 'customers/8325311811/campaignBudgets/987654321' } }],
+      }) })
+      .mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify({ results: [] }) });
+
+    const { httpStatus, body } = await acquireLockAndExecute('action-123', { account: FPB_ACCOUNT, connection: GOOGLE_CONN });
+    expect(httpStatus).toBe(200);
+    expect(body.executed).toBe(true);
+    expect(body.new_budget_usd).toBe(1500);
+  });
+
+  it('executes adjust_budget when recommended_value is "$31 USD"', async () => {
+    const action = makeAction({
+      action_type:    'adjust_budget',
+      channel:        'google',
+      execution_data: { campaign_id: '123456789', recommended_value: '$31 USD' },
+    });
+    queueResults(
+      { data: action, error: null },
+      { data: action, error: null },
+    );
+    mockFetch
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ access_token: 'test-token' }) })
+      .mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify({
+        results: [{ campaign: { campaignBudget: 'customers/8325311811/campaignBudgets/987654321' } }],
+      }) })
+      .mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify({ results: [] }) });
+
+    const { httpStatus, body } = await acquireLockAndExecute('action-123', { account: FPB_ACCOUNT, connection: GOOGLE_CONN });
+    expect(httpStatus).toBe(200);
+    expect(body.executed).toBe(true);
+    expect(body.new_budget_usd).toBe(31);
+  });
+
+  it('rejects adjust_budget when recommended_value is "$$invalid" (strips to empty → NaN)', async () => {
+    const action = makeAction({
+      action_type:    'adjust_budget',
+      channel:        'google',
+      execution_data: { campaign_id: '123456789', recommended_value: '$$invalid' },
+    });
+    queueResults(
+      { data: action, error: null },
+      { data: action, error: null },
+    );
+
+    const { httpStatus, body } = await acquireLockAndExecute('action-123', { account: FPB_ACCOUNT, connection: GOOGLE_CONN });
+    expect(httpStatus).toBe(200);
+    expect(body.executed).toBe(false);
+    expect(body.error).toMatch(/invalid budget value/i);
+  });
+
+  // ── Bug 17: budget_id fast-path and GET-campaign error paths ─────────────────
+
+  it('adjust_budget uses budget_id directly when supplied — skips GET-campaign (2 fetch calls)', async () => {
+    const action = makeAction({
+      action_type:    'adjust_budget',
+      channel:        'google',
+      execution_data: { campaign_id: '123456789', budget_id: '987654321', recommended_value: 50 },
+    });
+    queueResults(
+      { data: action, error: null },
+      { data: action, error: null },
+    );
+    mockFetch
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ access_token: 'test-token' }) })
+      .mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify({ results: [] }) });
+
+    const { httpStatus, body } = await acquireLockAndExecute('action-123', { account: FPB_ACCOUNT, connection: GOOGLE_CONN });
+    expect(httpStatus).toBe(200);
+    expect(body.executed).toBe(true);
+    expect(body.new_budget_usd).toBe(50);
+    // Only 2 calls: OAuth + mutate — no GET-campaign search
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(mockFetch.mock.calls[1][0]).toContain('campaignBudgets:mutate');
+  });
+
+  it('adjust_budget throws when GET-campaign lookup returns non-ok response', async () => {
+    const action = makeAction({
+      action_type:    'adjust_budget',
+      channel:        'google',
+      execution_data: { campaign_id: '123456789', recommended_value: 50 },
+    });
+    queueResults(
+      { data: action, error: null },
+      { data: action, error: null },
+    );
+    mockFetch
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ access_token: 'test-token' }) })
+      .mockResolvedValueOnce({ ok: false, status: 403, text: async () => 'PERMISSION_DENIED' });
+
+    const { httpStatus, body } = await acquireLockAndExecute('action-123', { account: FPB_ACCOUNT, connection: GOOGLE_CONN });
+    expect(httpStatus).toBe(200);
+    expect(body.executed).toBe(false);
+    expect(body.error).toMatch(/campaign lookup failed/i);
+  });
+
+  it('adjust_budget throws when GET-campaign returns no campaignBudget resource', async () => {
+    const action = makeAction({
+      action_type:    'adjust_budget',
+      channel:        'google',
+      execution_data: { campaign_id: '123456789', recommended_value: 50 },
+    });
+    queueResults(
+      { data: action, error: null },
+      { data: action, error: null },
+    );
+    mockFetch
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ access_token: 'test-token' }) })
+      .mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify({ results: [] }) });
+
+    const { httpStatus, body } = await acquireLockAndExecute('action-123', { account: FPB_ACCOUNT, connection: GOOGLE_CONN });
+    expect(httpStatus).toBe(200);
+    expect(body.executed).toBe(false);
+    expect(body.error).toMatch(/budget resource/i);
   });
 
   it('adds a negative keyword to a Google Ads campaign', async () => {
