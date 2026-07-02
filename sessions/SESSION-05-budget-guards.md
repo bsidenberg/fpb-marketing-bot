@@ -1,4 +1,6 @@
 # SESSION 05 — Spend-magnitude budget guards  [MONEY PATH - safety-reviewer required]
+AUTONOMY: gated
+
 
 GOAL: The coordinator caps action FREQUENCY (cadence) but nothing caps MAGNITUDE - an approved action could 10x a budget. Add config-driven spend guards enforced at execution time.
 

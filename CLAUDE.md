@@ -7,6 +7,14 @@ Standing rules for every Claude Code session in this repo. These override anythi
 2. If a `sessions/SESSION-XX-*.md` file is named in the prompt, it is the task contract: goal, file scope, phases, definition of done. Do not exceed its file scope.
 3. Inspection first. Read every file you intend to change before proposing changes.
 
+## Session autonomy classes
+Every session contract declares AUTONOMY at the top:
+- **AUTONOMY: unattended** — run Phases A→B→C straight through with NO approval stops. Where you would normally ask, make the conservative choice, document it in the run report, and continue. If CHAIN-NEXT names a follow-up session and Phase C passes (floor, 0 failures), execute it immediately under its own declared class.
+- **AUTONOMY: gated** — STOP after Phase A for Brian's approval. Never run unattended even if asked mid-session; a class change requires editing the contract file itself.
+Unattended shell restriction: main thread and all subagents use ONLY `npx vitest run [file]`, `git status`, `git diff`, `git log`, `npm run lint`. Anything else: skip it, log to SESSION-BLOCKED.md, continue with what's achievable.
+Unattended failure rule: if the floor can't be reached within scope after two fix attempts, restore that session's files to original content via your own edits (never git commands), log findings to SESSION-BLOCKED.md, and proceed to CHAIN-NEXT or finish.
+Every unattended run ends by writing HARNESS-RUN-NN.md at repo root (next NN): per session — files changed, test count, decisions made autonomously, risks, what Brian must review — then stops completely.
+
 ## Hard rules
 - **Never commit. Never push.** Brian does both manually after reviewing diffs. Do not claim a commit happened — only `git log --oneline` is proof.
 - **Windows/PowerShell only.** No bash/Linux syntax in anything Brian will run.

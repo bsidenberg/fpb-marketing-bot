@@ -1,4 +1,6 @@
 # SESSION 03 — campaign_daily_stats nightly ingestion (Google)
+AUTONOMY: gated
+
 
 GOAL: campaign_daily_stats has 0 rows, which leaves evaluate-outcomes and the entire learning loop inert. Build a nightly ingestion that pulls per-campaign daily metrics from Google Ads (v23) and upserts them.
 
