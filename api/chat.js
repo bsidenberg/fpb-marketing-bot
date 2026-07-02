@@ -41,7 +41,7 @@
 
 import supabase from './lib/supabase.js';
 import { getFpbChatSystemPrompt, FPB_SYSTEM_PROMPT_VERSION } from './lib/prompts/fpb.js';
-import { resolveForRead, resolveForWrite } from './lib/accounts.js';
+import { resolveForRead, resolveForWrite, getConnectionForAccount } from './lib/accounts.js';
 import { setCorsHeaders } from './lib/cors.js';
 import { checkRateLimit } from './lib/rate-limit.js';
 import { recordAnthropicCost } from './lib/anthropic-cost.js';
@@ -49,6 +49,9 @@ import { normalizeChannel } from './lib/normalize-channel.js';
 import { inferPillar } from './lib/action-states.js';
 import { checkPostureForAction } from './lib/autonomy-coordinator.js';
 import { detectNovelty, detectConflict, detectExternalFlag, detectAnomaly } from './lib/autonomy-escalation.js';
+import { requireAdmin } from './lib/require-admin.js';
+import { fetchGoogleAdsData } from './google-ads.js';
+import { fetchMetaAdsData } from './facebook-ads.js';
 
 const CHAT_MODEL = 'claude-sonnet-4-6';
 
@@ -169,21 +172,15 @@ async function detectIntent(message, accountId = null) {
   return 'STRATEGY'; // safe default
 }
 
-// ── Live ad data fetch (account-scoped) ──────────────────────────────────────
-async function fetchAdData(baseUrl, accountSlug) {
-  // Explicit account param prevents accidental fallthrough to default FPB
-  const slugParam = encodeURIComponent(accountSlug);
-  const [gRes, mRes] = await Promise.allSettled([
-    fetch(`${baseUrl}/api/google-ads?account=${slugParam}`),
-    fetch(`${baseUrl}/api/facebook-ads?account=${slugParam}`),
+// ── Live ad data fetch via named imports (bypasses HTTP + requireAdmin gate) ──
+async function fetchAdData(account, googleConn, metaConn) {
+  const [gResult, mResult] = await Promise.allSettled([
+    googleConn ? fetchGoogleAdsData(account, googleConn) : Promise.resolve(null),
+    metaConn   ? fetchMetaAdsData(account, metaConn)     : Promise.resolve(null),
   ]);
 
-  const googleData = gRes.status === 'fulfilled'
-    ? await gRes.value.json().catch(() => null)
-    : null;
-  const metaData = mRes.status === 'fulfilled'
-    ? await mRes.value.json().catch(() => null)
-    : null;
+  const googleData = gResult.status === 'fulfilled' ? gResult.value : null;
+  const metaData   = mResult.status === 'fulfilled' ? mResult.value : null;
 
   return {
     google: googleData?.success ? googleData : null,
@@ -230,6 +227,7 @@ function parseAdPreview(text) {
 export default async function handler(req, res) {
   setCorsHeaders(req, res, { methods: 'GET, POST, OPTIONS', headers: 'Content-Type, x-account-slug' });
   if (req.method === 'OPTIONS') return res.status(200).end();
+  if (!requireAdmin(req, res)) return;
 
   // ── GET — load session history ────────────────────────────────────────────
   if (req.method === 'GET') {
@@ -311,9 +309,11 @@ export default async function handler(req, res) {
     // ── Step 3: Optionally attach live ad data to user message ──
     let userContent = message;
     if (includeAdData) {
-      const protocol = req.headers['x-forwarded-proto'] || 'https';
-      const host     = req.headers['x-forwarded-host'] || req.headers.host;
-      const { google, meta } = await fetchAdData(`${protocol}://${host}`, account.slug);
+      const [gConn, mConn] = await Promise.all([
+        getConnectionForAccount(account.id, 'google_ads'),
+        getConnectionForAccount(account.id, 'meta_ads'),
+      ]);
+      const { google, meta } = await fetchAdData(account, gConn, mConn);
 
       const dataParts = [];
       if (google) dataParts.push(`GOOGLE ADS DATA:\n${JSON.stringify(google, null, 2)}`);

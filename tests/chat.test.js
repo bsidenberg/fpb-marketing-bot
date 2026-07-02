@@ -15,6 +15,22 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
+// ── Named-export mocks for google-ads.js and facebook-ads.js ─────────────────
+const { mockFetchGoogleAds, mockFetchMetaAds } = vi.hoisted(() => ({
+  mockFetchGoogleAds: vi.fn(),
+  mockFetchMetaAds:   vi.fn(),
+}));
+
+vi.mock('../api/google-ads.js', () => ({
+  fetchGoogleAdsData: mockFetchGoogleAds,
+  default: vi.fn(),
+}));
+
+vi.mock('../api/facebook-ads.js', () => ({
+  fetchMetaAdsData: mockFetchMetaAds,
+  default: vi.fn(),
+}));
+
 // ── Per-(table, op) response overrides ───────────────────────────────────────
 const responses = {};
 function setResponse(key, response) { responses[key] = response; }
@@ -65,6 +81,16 @@ const FPB = { id: 'fpb-uuid', slug: 'fpb', status: 'active' };
 let mockAccount      = FPB;
 let mockResolveError = null;
 
+const VALID_GOOGLE_CONN = {
+  resolved_account_id_external: '8325311811',
+  resolved_manager_account_id:  '5435219372',
+  resolved_refresh_token:       'g-refresh',
+};
+const VALID_META_CONN = {
+  resolved_access_token:        'm-token',
+  resolved_account_id_external: '123456789',
+};
+
 vi.mock('../api/lib/accounts.js', () => {
   const getAccountSlugFromRequest = (req) =>
     req?.query?.account || req?.headers?.['x-account-slug'] || 'fpb';
@@ -78,6 +104,11 @@ vi.mock('../api/lib/accounts.js', () => {
     FPB_DEFAULT_SLUG: 'fpb',
     resolveAccountFromRequest,
     getAccountSlugFromRequest,
+    getConnectionForAccount: async (_id, platform) => {
+      if (platform === 'google_ads') return VALID_GOOGLE_CONN;
+      if (platform === 'meta_ads')   return VALID_META_CONN;
+      return null;
+    },
     getAccountBySlug,
     resolveForRead: async (req, res) => {
       const slug = getAccountSlugFromRequest(req);
@@ -191,6 +222,17 @@ beforeEach(() => {
     ok: true,
     json: async () => ({ content: [{ text: 'STRATEGY' }] }),
   }));
+
+  mockFetchGoogleAds.mockResolvedValue({
+    success: true,
+    summary: { totalSpend: '500', totalConversions: '5' },
+    campaigns: [{ id: 'g-camp-1', name: 'Google Test' }],
+  });
+  mockFetchMetaAds.mockResolvedValue({
+    success: true,
+    summary: { totalSpend: '300', totalConversions: 3 },
+    campaigns: [{ id: 'm-camp-1', name: 'Meta Test' }],
+  });
 
   process.env.ANTHROPIC_API_KEY = 'test-anthropic-key';
 });
@@ -460,6 +502,53 @@ describe('chat — ACTION block emission creates pending action row', () => {
     expect(res._body.success).toBe(true);
     expect(res._body.actionId).toBeNull();
     expect(insertsByTable['actions']).toBeUndefined();
+  });
+
+});
+
+// ============================================================================
+// Chat — DATA_QUESTION path: fetchAdData uses direct imports, not HTTP
+// ============================================================================
+
+describe('chat — DATA_QUESTION ad data via direct import (seam test)', () => {
+
+  it('calls fetchGoogleAdsData and fetchMetaAdsData directly when includeAdData is true', async () => {
+    // The chat flow is two-pass: first request returns { type: 'fetching' },
+    // then the client sends a second request with includeAdData: true in the body.
+    // This test simulates the second pass directly (includeAdData: true) which is
+    // the pass that calls fetchAdData → fetchGoogleAdsData / fetchMetaAdsData.
+    mockFetch.mockResolvedValueOnce({ // main Claude call (no intent detection call when includeAdData:true)
+      ok: true,
+      json: async () => ({
+        content: [{ text: 'Here is your ad performance summary.' }],
+        usage: { input_tokens: 300, output_tokens: 80 },
+      }),
+    });
+
+    const req = makeReq({
+      body: { message: 'How are my ads performing?', sessionId: 'sess-data', includeAdData: true },
+    });
+    const res = makeRes();
+    await handler(req, res);
+
+    // Both named exports must have been called with the account and its connections
+    expect(mockFetchGoogleAds).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'fpb-uuid', slug: 'fpb' }),
+      VALID_GOOGLE_CONN
+    );
+    expect(mockFetchMetaAds).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'fpb-uuid', slug: 'fpb' }),
+      VALID_META_CONN
+    );
+    // No internal HTTP fetch to /api/google-ads or /api/facebook-ads
+    const internalGoogleCall = mockFetch.mock.calls.find(
+      c => typeof c[0] === 'string' && c[0].includes('/api/google-ads')
+    );
+    const internalMetaCall = mockFetch.mock.calls.find(
+      c => typeof c[0] === 'string' && c[0].includes('/api/facebook-ads')
+    );
+    expect(internalGoogleCall).toBeUndefined();
+    expect(internalMetaCall).toBeUndefined();
   });
 
 });

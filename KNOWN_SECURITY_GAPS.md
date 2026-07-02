@@ -5,27 +5,6 @@ Each entry should be addressed in a dedicated security sprint, not bundled with 
 
 ## High Priority
 
-### /api/approve-action has no authentication
-- **Discovered:** Phase 0B inspection
-- **Risk:** Any caller with a valid action ID can trigger ad mutations on the resolved account's Google or Meta accounts.
-- **Mitigation in place:** Idempotency lock prevents double-execution. EXECUTE_SECRET on /api/execute-action is the deeper layer for direct execution.
-- **Why deferred:** Adding EXECUTE_SECRET to /api/approve-action would expose it to the browser dashboard. Proper fix requires admin auth (Supabase Auth, magic link, or session cookie) which deserves its own sprint.
-- **Plan:** Address in dedicated security sprint between Phase 1 and Phase 2.
-
-### PATCH /api/leads has no authentication
-- **Discovered:** Phase 0B inspection
-- **Risk:** Anyone can mutate lead status, qualification, booked_revenue, gross_profit on any lead.
-- **Mitigation in place:** None.
-- **Why deferred:** Same as above — would expose secret to browser. Needs admin auth.
-- **Plan:** Address in dedicated security sprint.
-
-### /api/accounts has no authentication
-- **Discovered:** Phase 1 Stage A1 (introduced)
-- **Risk:** Read-only endpoint exposes account configuration metadata (slugs, names, industries, websites, budgets, caps, targets, autonomy levels, health scores) without authentication.
-- **Mitigation in place:** Endpoint explicitly excludes token references, ad_platform_connections data, and any secrets via a field whitelist enforced through a hardcoded SELECT clause. Tests verify exclusion in three layers: response body content, SELECT clause content, and `from()` call recording (`tests/accounts-api.test.js`).
-- **Why deferred:** Phase 1 Stage A1 is internal-use only. No external clients have access yet.
-- **Plan:** Add admin auth in dedicated security sprint, alongside other auth gap fixes.
-
 ## Medium Priority
 
 ### Hardcoded Google Ads customer IDs in code
@@ -35,6 +14,13 @@ Each entry should be addressed in a dedicated security sprint, not bundled with 
 - **Plan:** Removed in Stage A2 (fail-fast pattern). After Stage A2, code throws if env unset, and customer IDs come from `ad_platform_connections.account_id_external`.
 
 ## Resolved
+
+### Dashboard routes had no authentication (16 routes)
+- **Discovered:** Phase 0B inspection
+- **Resolved:** July 2, 2026 — Admin Session Auth Sprint (Phase B)
+- **Fix:** `requireAdmin` middleware added to all 16 dashboard-facing API routes. Cookie-based session with HMAC-SHA256 signatures and 12-hour expiry. Password verified with `timingSafeEqual`. Production fail-closed (`AUTH_NOT_CONFIGURED` 503) when `ADMIN_PASSWORD` or `AUTH_SECRET` is unset. LoginScreen component in dashboard intercepts 401s via `prime:unauthorized` custom event.
+- **Routes covered:** `/api/accounts`, `/api/account-budget`, `/api/actions`, `/api/action-outcomes`, `/api/approve-action`, `/api/automation-log`, `/api/autonomy-holdout-classes`, `/api/cost-hours`, `/api/cost-rollup`, `/api/cost-subscriptions`, `/api/performance-snapshots`, `/api/leads` (GET + PATCH only; POST keeps `LEADS_INGEST_SECRET`), `/api/google-ads`, `/api/facebook-ads`, `/api/analyze-ads`, `/api/chat`.
+- **Internal callers fixed:** `api/analyze-ads.js` and `api/chat.js` previously HTTP-fetched `/api/google-ads` and `/api/facebook-ads`. Replaced with direct named-export imports (`fetchGoogleAdsData`, `fetchMetaAdsData`) — no internal HTTP to gated routes.
 
 ### RLS disabled / permissive policies on Supabase tables
 - **Discovered:** July 2, 2026 (Phase 0 audit via Supabase security advisors)

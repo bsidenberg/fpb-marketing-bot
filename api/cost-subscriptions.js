@@ -19,10 +19,12 @@
 import supabase from './lib/supabase.js';
 import { setCorsHeaders } from './lib/cors.js';
 import { resolveForRead, resolveForWrite } from './lib/accounts.js';
+import { requireAdmin } from './lib/require-admin.js';
 
 export default async function handler(req, res) {
   setCorsHeaders(req, res, { methods: 'GET, POST, OPTIONS', headers: 'Content-Type, x-account-slug' });
   if (req.method === 'OPTIONS') return res.status(200).end();
+  if (!requireAdmin(req, res)) return;
 
   // ── GET — list all subscriptions ────────────────────────────────────────
   if (req.method === 'GET') {

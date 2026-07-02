@@ -27,6 +27,7 @@ import { normalizePayload, buildDedupKey } from './lib/lead-ingest.js';
 import { resolveForRead, resolveForWrite } from './lib/accounts.js';
 import { setCorsHeaders } from './lib/cors.js';
 import { requireSecret } from './lib/require-secret.js';
+import { requireAdmin } from './lib/require-admin.js';
 
 const VALID_STATUSES   = ['new','qualified','unqualified','booked','lost','unknown'];
 const VALID_PLATFORMS  = ['google','meta','organic','referral','manual','unknown'];
@@ -37,6 +38,7 @@ export default async function handler(req, res) {
 
   // ── GET — list leads (read path; archived/inactive accounts allowed) ──────
   if (req.method === 'GET') {
+    if (!requireAdmin(req, res)) return;
     const account = await resolveForRead(req, res);
     if (!account) return;
 
@@ -135,9 +137,8 @@ export default async function handler(req, res) {
   }
 
   // ── PATCH — update qualification/revenue (write path, ownership-checked) ──
-  // Auth note: still unauthenticated session-wise. Only call from dashboard.
-  // Future: require Supabase Auth session.
   if (req.method === 'PATCH') {
+    if (!requireAdmin(req, res)) return;
     // req.query.id is set by the Vercel rewrite (/api/leads/:id → /api/leads?id=:id).
     // Fall back to path parsing for local dev / direct calls.
     const urlParts = (req.url || '').split('?')[0].split('/').filter(Boolean);

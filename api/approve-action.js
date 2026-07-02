@@ -47,10 +47,12 @@ import {
   checkConnectionFields,
 } from './lib/accounts.js';
 import { setCorsHeaders } from './lib/cors.js';
+import { requireAdmin } from './lib/require-admin.js';
 
 export default async function handler(req, res) {
   setCorsHeaders(req, res, { methods: 'POST, OPTIONS', headers: 'Content-Type, x-account-slug' });
   if (req.method === 'OPTIONS') return res.status(200).end();
+  if (!requireAdmin(req, res)) return;
   if (req.method !== 'POST') {
     return res.status(405).json({ success: false, error: 'Method not allowed' });
   }

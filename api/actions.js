@@ -5,10 +5,12 @@ import { setCorsHeaders } from './lib/cors.js';
 import { checkPostureForAction } from './lib/autonomy-coordinator.js';
 import { detectNovelty, detectConflict, detectExternalFlag, detectAnomaly } from './lib/autonomy-escalation.js';
 import { normalizeChannel } from './lib/normalize-channel.js';
+import { requireAdmin } from './lib/require-admin.js';
 
 export default async function handler(req, res) {
   setCorsHeaders(req, res, { methods: 'GET, POST, PATCH, OPTIONS', headers: 'Content-Type, x-account-slug' });
   if (req.method === 'OPTIONS') return res.status(200).end();
+  if (!requireAdmin(req, res)) return;
 
   // GET — list actions by status (read; archived/inactive allowed)
   if (req.method === 'GET') {

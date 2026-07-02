@@ -29,32 +29,9 @@ import {
 } from './lib/accounts.js';
 import { setCorsHeaders } from './lib/cors.js';
 import { recordAnthropicCost } from './lib/anthropic-cost.js';
-
-// ── Internal data fetchers (account-scoped) ───────────────────────────────────
-
-async function fetchGoogleAds(baseUrl, accountSlug) {
-  try {
-    // Explicit account param prevents accidental fallthrough to default FPB
-    const url = `${baseUrl}/api/google-ads?account=${encodeURIComponent(accountSlug)}`;
-    const res = await fetch(url);
-    const data = await res.json();
-    return data.success ? data : null;
-  } catch {
-    return null;
-  }
-}
-
-async function fetchMetaAds(baseUrl, accountSlug) {
-  try {
-    // Explicit account param prevents accidental fallthrough to default FPB
-    const url = `${baseUrl}/api/facebook-ads?account=${encodeURIComponent(accountSlug)}`;
-    const res = await fetch(url);
-    const data = await res.json();
-    return data.success ? data : null;
-  } catch {
-    return null;
-  }
-}
+import { requireAdmin } from './lib/require-admin.js';
+import { fetchGoogleAdsData } from './google-ads.js';
+import { fetchMetaAdsData } from './facebook-ads.js';
 
 async function callClaude(performanceData) {
   const systemPrompt = getFpbSystemPrompt();
@@ -171,9 +148,6 @@ export async function runAnalysisForAccount(account, { baseUrl, triggeredBy = 'm
   if (!account || !account.id || !account.slug) {
     throw new Error('runAnalysisForAccount requires account with id and slug');
   }
-  if (!baseUrl) {
-    throw new Error('runAnalysisForAccount requires baseUrl');
-  }
 
   const startedAt = new Date().toISOString();
 
@@ -198,10 +172,12 @@ export async function runAnalysisForAccount(account, { baseUrl, triggeredBy = 'm
   }
 
   // ── 1. Pull ad data for available platforms only ───────────────────────────
-  const [googleData, metaData] = await Promise.all([
-    googleAvailable ? fetchGoogleAds(baseUrl, account.slug) : Promise.resolve(null),
-    metaAvailable   ? fetchMetaAds(baseUrl, account.slug)   : Promise.resolve(null),
+  const [rawGoogleData, rawMetaData] = await Promise.all([
+    googleAvailable ? fetchGoogleAdsData(account, googleConn).catch(() => null) : Promise.resolve(null),
+    metaAvailable   ? fetchMetaAdsData(account, metaConn).catch(() => null)     : Promise.resolve(null),
   ]);
+  const googleData = rawGoogleData?.success ? rawGoogleData : null;
+  const metaData   = rawMetaData?.success   ? rawMetaData   : null;
 
   if (!googleData && !metaData) {
     return { success: false, error: 'No ad data available from either platform' };
@@ -361,6 +337,7 @@ export async function runAnalysisForAccount(account, { baseUrl, triggeredBy = 'm
 export default async function handler(req, res) {
   setCorsHeaders(req, res, { methods: 'GET, POST, OPTIONS', headers: 'Content-Type, x-account-slug' });
   if (req.method === 'OPTIONS') return res.status(200).end();
+  if (!requireAdmin(req, res)) return;
 
   const account = await resolveForWrite(req, res);
   if (!account) return;

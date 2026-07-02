@@ -15,10 +15,12 @@
 import { setCorsHeaders } from './lib/cors.js';
 import { resolveForRead } from './lib/accounts.js';
 import { computeMonthlyRollup } from './lib/cost-rollup.js';
+import { requireAdmin } from './lib/require-admin.js';
 
 export default async function handler(req, res) {
   setCorsHeaders(req, res, { methods: 'GET, OPTIONS', headers: 'Content-Type, x-account-slug' });
   if (req.method === 'OPTIONS') return res.status(200).end();
+  if (!requireAdmin(req, res)) return;
   if (req.method !== 'GET') {
     return res.status(405).json({ success: false, error: 'Method not allowed' });
   }

@@ -10,7 +10,12 @@ function accountFetch(url, options = {}, accountSlug = 'fpb') {
   const slug = accountSlug || 'fpb';
   const sep = url.includes('?') ? '&' : '?';
   const finalUrl = `${url}${sep}account=${encodeURIComponent(slug)}`;
-  return fetch(finalUrl, options);
+  const mergedOptions = { credentials: 'same-origin', ...options };
+  const p = fetch(finalUrl, mergedOptions);
+  // Surface 401 responses as a global unauthorized event so the login screen
+  // can intercept them without each call site needing its own handler.
+  p.then(r => { if (r.status === 401) window.dispatchEvent(new CustomEvent('prime:unauthorized')); });
+  return p;
 }
 
 // ── Stage B2: AccountSelector — header dropdown / label ──
@@ -2643,6 +2648,59 @@ function LeadTable({ leads, onUpdate, accountSlug = 'fpb' }) {
   );
 }
 
+// ── Admin login screen — shown when any API call returns 401 ──
+function LoginScreen({ onSuccess }) {
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setError(null);
+    setLoading(true);
+    try {
+      const r = await fetch('/api/auth', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password }),
+      });
+      const json = await r.json();
+      if (r.ok && json.success) {
+        onSuccess();
+      } else {
+        setError(json.error || 'Incorrect password');
+      }
+    } catch {
+      setError('Network error — please try again');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', fontFamily: 'system-ui, sans-serif', background: '#0f1117' }}>
+      <form onSubmit={handleSubmit} style={{ background: '#1a1d27', border: '1px solid #2a2d3a', borderRadius: 12, padding: 32, width: 320, display: 'flex', flexDirection: 'column', gap: 16 }}>
+        <div style={{ fontWeight: 700, fontSize: 18, color: '#f0f0f0' }}>Prime Dashboard</div>
+        <div style={{ fontSize: 13, color: '#888' }}>Enter your admin password to continue.</div>
+        <input
+          type="password"
+          value={password}
+          onChange={e => setPassword(e.target.value)}
+          placeholder="Password"
+          required
+          autoFocus
+          style={{ padding: '10px 12px', borderRadius: 8, border: '1px solid #2a2d3a', background: '#0f1117', color: '#f0f0f0', fontSize: 14, outline: 'none' }}
+        />
+        {error && <div style={{ fontSize: 12, color: '#f25c7a' }}>{error}</div>}
+        <button type="submit" disabled={loading} style={{ padding: '10px 0', borderRadius: 8, border: 'none', background: '#4f8ef7', color: '#fff', fontWeight: 600, fontSize: 14, cursor: loading ? 'not-allowed' : 'pointer', opacity: loading ? 0.7 : 1 }}>
+          {loading ? 'Signing in…' : 'Sign in'}
+        </button>
+      </form>
+    </div>
+  );
+}
+
 // ── Main component ──
 export default function MarketingBotDashboard() {
   const [state, dispatch] = useReducer(reducer, initialState);
@@ -2727,6 +2785,7 @@ export default function MarketingBotDashboard() {
   const [costsSubError, setCostsSubError] = useState(null);
   const [costsHoursError, setCostsHoursError] = useState(null);
   const [activeAccounts, setActiveAccounts] = useState([]);
+  const [showLogin, setShowLogin] = useState(false);
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -2751,10 +2810,19 @@ export default function MarketingBotDashboard() {
   }, [density]);
 
   useEffect(() => {
-    fetch('/api/accounts')
-      .then(r => r.json())
+    const onUnauthorized = () => setShowLogin(true);
+    window.addEventListener('prime:unauthorized', onUnauthorized);
+    return () => window.removeEventListener('prime:unauthorized', onUnauthorized);
+  }, []);
+
+  useEffect(() => {
+    fetch('/api/accounts', { credentials: 'same-origin' })
+      .then(r => {
+        if (r.status === 401) { window.dispatchEvent(new CustomEvent('prime:unauthorized')); return null; }
+        return r.json();
+      })
       .then(json => {
-        if (json.success && Array.isArray(json.data)) {
+        if (json && json.success && Array.isArray(json.data)) {
           setActiveAccounts(json.data.filter(a => a.status === 'active'));
         }
       })
@@ -3232,6 +3300,12 @@ export default function MarketingBotDashboard() {
     { id: "autonomy",    label: "Autonomy",                 icon: <Icons.Bot /> },
     { id: "setup",       label: "Setup Guide",              icon: <Icons.Settings /> },
   ];
+
+  if (showLogin) {
+    return (
+      <LoginScreen onSuccess={() => { setShowLogin(false); window.location.reload(); }} />
+    );
+  }
 
   return (
     <div style={{ fontFamily: F.sans, minHeight: "100vh" }}>

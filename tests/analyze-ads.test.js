@@ -16,6 +16,25 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
+// ── Named-export mocks for google-ads.js and facebook-ads.js ─────────────────
+// These replace the internal HTTP fetches that used to call /api/google-ads and
+// /api/facebook-ads directly. vi.hoisted ensures the mock refs are available
+// before the module is imported below.
+const { mockFetchGoogleAds, mockFetchMetaAds } = vi.hoisted(() => ({
+  mockFetchGoogleAds: vi.fn(),
+  mockFetchMetaAds:   vi.fn(),
+}));
+
+vi.mock('../api/google-ads.js', () => ({
+  fetchGoogleAdsData: mockFetchGoogleAds,
+  default: vi.fn(),
+}));
+
+vi.mock('../api/facebook-ads.js', () => ({
+  fetchMetaAdsData: mockFetchMetaAds,
+  default: vi.fn(),
+}));
+
 // ── Per-(table, op) response overrides ───────────────────────────────────────
 const responses = {};
 function setResponse(key, response) { responses[key] = response; }
@@ -209,6 +228,16 @@ beforeEach(() => {
     return null;
   };
   mockFetch.mockImplementation(defaultFetchHandler);
+  mockFetchGoogleAds.mockResolvedValue({
+    success: true,
+    summary: { totalSpend: '500', totalConversions: '5' },
+    campaigns: [{ id: 'g-camp-1', name: 'Google Test', spend: '500' }],
+  });
+  mockFetchMetaAds.mockResolvedValue({
+    success: true,
+    summary: { totalSpend: '300', totalConversions: 3 },
+    campaigns: [{ id: 'm-camp-1', name: 'Meta Test', spend: '300' }],
+  });
   process.env.ANTHROPIC_API_KEY = 'test-anthropic-key';
 });
 
@@ -306,15 +335,14 @@ describe('runAnalysisForAccount — happy path', () => {
     expect(insertsByTable['performance_snapshots'][0].account_id).toBe('fpb-uuid');
   });
 
-  it('passes ?account=<slug> on internal /api/google-ads and /api/facebook-ads fetches', async () => {
+  it('calls fetchGoogleAdsData and fetchMetaAdsData with the correct account and connection objects', async () => {
     queueAiRunInsertSuccess();
+    const weldAccount = { id: 'weld-uuid', slug: 'weld', status: 'active' };
 
-    await runAnalysisForAccount({ id: 'weld-uuid', slug: 'weld', status: 'active' }, { baseUrl: 'https://test.local' });
+    await runAnalysisForAccount(weldAccount, { baseUrl: 'https://test.local' });
 
-    const googleCall = mockFetch.mock.calls.find(c => typeof c[0] === 'string' && c[0].includes('/api/google-ads'));
-    const metaCall   = mockFetch.mock.calls.find(c => typeof c[0] === 'string' && c[0].includes('/api/facebook-ads'));
-    expect(googleCall[0]).toContain('account=weld');
-    expect(metaCall[0]).toContain('account=weld');
+    expect(mockFetchGoogleAds).toHaveBeenCalledWith(weldAccount, VALID_GOOGLE_CONN);
+    expect(mockFetchMetaAds).toHaveBeenCalledWith(weldAccount, VALID_META_CONN);
   });
 
 });
@@ -421,10 +449,8 @@ describe('runAnalysisForAccount — connection skips', () => {
     expect(result.analyzed).toEqual(['meta_ads']);
 
     // Only the meta data fetch happened; google was skipped
-    const googleCall = mockFetch.mock.calls.find(c => typeof c[0] === 'string' && c[0].includes('/api/google-ads'));
-    const metaCall   = mockFetch.mock.calls.find(c => typeof c[0] === 'string' && c[0].includes('/api/facebook-ads'));
-    expect(googleCall).toBeUndefined();
-    expect(metaCall).toBeDefined();
+    expect(mockFetchGoogleAds).not.toHaveBeenCalled();
+    expect(mockFetchMetaAds).toHaveBeenCalled();
     expect(warnSpy).toHaveBeenCalledWith(expect.stringMatching(/google_ads skipped/));
     warnSpy.mockRestore();
   });

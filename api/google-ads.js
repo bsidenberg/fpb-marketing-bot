@@ -13,6 +13,12 @@
 //   • Connection missing required resolved_* field: 503 CONNECTION_INCOMPLETE.
 //   • OAuth client_id / client_secret / developer_token remain global env
 //     (shared developer credentials, not per-account).
+//
+// Admin auth sprint:
+//   • requireAdmin gate added (after OPTIONS, before account resolution).
+//   • fetchGoogleAdsData extracted as a named export so api/analyze-ads.js
+//     and api/chat.js can call it directly without an internal HTTP round-trip
+//     (which would hit the new requireAdmin gate with no cookie).
 // ============================================================
 
 import {
@@ -22,10 +28,164 @@ import {
 } from './lib/accounts.js';
 import { setCorsHeaders } from './lib/cors.js';
 import { recordApiCall } from './lib/api-cost.js';
+import { requireAdmin } from './lib/require-admin.js';
+
+/**
+ * Fetch Google Ads campaign performance data for the given account.
+ * Pure code motion from the HTTP handler — no logic changes.
+ *
+ * @param {object} account    — account row with at least .id and .slug
+ * @param {object} connection — ad_platform_connections row (resolved_*)
+ * @returns {Promise<object>} — same shape as the HTTP 200 response body
+ */
+export async function fetchGoogleAdsData(account, connection) {
+  // Step 1: Get fresh access token using the connection's refresh token
+  const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      client_id:     process.env.GOOGLE_ADS_CLIENT_ID,
+      client_secret: process.env.GOOGLE_ADS_CLIENT_SECRET,
+      refresh_token: connection.resolved_refresh_token,
+      grant_type:    'refresh_token',
+    }),
+  });
+  const tokenJson = await tokenResponse.json();
+
+  if (!tokenJson.access_token) {
+    return {
+      success: false,
+      error: 'Failed to get access token from Google OAuth',
+      detail: JSON.stringify(tokenJson),
+      summary: { totalSpend: 0, totalClicks: 0, totalImpressions: 0, totalConversions: 0, roas: 0, cpl: 0, ctr: 0 },
+      campaigns: [],
+    };
+  }
+
+  const access_token = tokenJson.access_token;
+  const customerId   = connection.resolved_account_id_external.replace(/-/g, '');
+  const managerId    = connection.resolved_manager_account_id
+    ? connection.resolved_manager_account_id.replace(/-/g, '')
+    : undefined;
+
+  // Step 2: Query campaign performance for last 30 days
+  // campaign.campaign_budget exposes the budget resource name so the dashboard
+  // can display budget_id — Prime can then include it in ACTION blocks, allowing
+  // executeGoogleAdjustBudget to skip the extra GET-campaign lookup.
+  const query = `
+    SELECT
+      campaign.id,
+      campaign.name,
+      campaign.status,
+      campaign.campaign_budget,
+      metrics.impressions,
+      metrics.clicks,
+      metrics.cost_micros,
+      metrics.conversions,
+      metrics.ctr,
+      metrics.average_cpc,
+      metrics.conversions_from_interactions_rate
+    FROM campaign
+    WHERE segments.date DURING LAST_30_DAYS
+      AND campaign.status != 'REMOVED'
+    ORDER BY metrics.cost_micros DESC
+    LIMIT 10
+  `;
+
+  const apiUrl = `https://googleads.googleapis.com/v23/customers/${customerId}/googleAds:search`;
+
+  const adsResponse = await fetch(
+    apiUrl,
+    {
+      method: 'POST',
+      headers: {
+        'Authorization':     `Bearer ${access_token}`,
+        'developer-token':   process.env.GOOGLE_ADS_DEVELOPER_TOKEN,
+        'login-customer-id': managerId,
+        'Content-Type':      'application/json',
+      },
+      body: JSON.stringify({ query }),
+    }
+  );
+
+  const rawText = await adsResponse.text();
+  if (!adsResponse.ok) {
+    return {
+      success: false,
+      error: `Google Ads API error: ${adsResponse.status}`,
+      detail: rawText.substring(0, 500),
+      summary: { totalSpend: 0, totalClicks: 0, totalImpressions: 0, totalConversions: 0, roas: 0, cpl: 0, ctr: 0 },
+      campaigns: [],
+    };
+  }
+
+  let data;
+  try {
+    data = JSON.parse(rawText);
+  } catch(e) {
+    return {
+      success: false,
+      error: 'Failed to parse Google Ads response',
+      detail: rawText.substring(0, 300),
+      summary: { totalSpend: 0, totalClicks: 0, totalImpressions: 0, totalConversions: 0, roas: 0, cpl: 0, ctr: 0 },
+      campaigns: [],
+    };
+  }
+
+  // :search returns { results: [...] } not an array of batches
+  const results = data.results || [];
+
+  let totalSpend = 0, totalClicks = 0, totalImpressions = 0, totalConversions = 0;
+  const campaigns = [];
+
+  for (const result of results) {
+    const spend = (result.metrics?.costMicros || 0) / 1000000;
+    totalSpend += spend;
+    totalClicks += parseInt(result.metrics?.clicks || 0);
+    totalImpressions += parseInt(result.metrics?.impressions || 0);
+    totalConversions += parseFloat(result.metrics?.conversions || 0);
+    // campaign_budget resource name: "customers/X/campaignBudgets/Y" — extract Y
+    const budgetResource = result.campaign?.campaignBudget;
+    const budget_id = budgetResource ? budgetResource.split('/').pop() : null;
+    campaigns.push({
+      id: result.campaign?.id,
+      budget_id,
+      name: result.campaign?.name,
+      status: result.campaign?.status,
+      spend: spend.toFixed(2),
+      clicks: parseInt(result.metrics?.clicks || 0),
+      impressions: parseInt(result.metrics?.impressions || 0),
+      conversions: parseFloat(result.metrics?.conversions || 0).toFixed(1),
+      ctr: ((parseFloat(result.metrics?.ctr || 0)) * 100).toFixed(2),
+      avgCpc: ((result.metrics?.averageCpc || 0) / 1000000).toFixed(2),
+    });
+  }
+
+  const roas = totalSpend > 0 ? (totalConversions * 150 / totalSpend).toFixed(2) : '0.00';
+  const cpl = totalConversions > 0 ? (totalSpend / totalConversions).toFixed(2) : '0.00';
+
+  // Cost ledger — fire-and-forget
+  await recordApiCall('google_ads', 'campaigns_search', account.id);
+
+  return {
+    success: true,
+    summary: {
+      totalSpend: totalSpend.toFixed(2),
+      totalClicks,
+      totalImpressions,
+      totalConversions: totalConversions.toFixed(1),
+      roas,
+      cpl,
+      ctr: totalImpressions > 0 ? ((totalClicks / totalImpressions) * 100).toFixed(2) : '0.00',
+    },
+    campaigns,
+  };
+}
 
 export default async function handler(req, res) {
   setCorsHeaders(req, res, { methods: 'GET, POST, OPTIONS', headers: 'Content-Type, x-account-slug' });
   if (req.method === 'OPTIONS') return res.status(200).end();
+  if (!requireAdmin(req, res)) return;
 
   const account = await resolveForRead(req, res);
   if (!account) return;
@@ -49,148 +209,8 @@ export default async function handler(req, res) {
   }
 
   try {
-    // Step 1: Get fresh access token using the connection's refresh token
-    const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        client_id:     process.env.GOOGLE_ADS_CLIENT_ID,
-        client_secret: process.env.GOOGLE_ADS_CLIENT_SECRET,
-        refresh_token: connection.resolved_refresh_token,
-        grant_type:    'refresh_token',
-      }),
-    });
-    const tokenJson = await tokenResponse.json();
-
-    if (!tokenJson.access_token) {
-      return res.status(200).json({
-        success: false,
-        error: 'Failed to get access token from Google OAuth',
-        detail: JSON.stringify(tokenJson),
-        summary: { totalSpend: 0, totalClicks: 0, totalImpressions: 0, totalConversions: 0, roas: 0, cpl: 0, ctr: 0 },
-        campaigns: [],
-      });
-    }
-
-    const access_token = tokenJson.access_token;
-    const customerId   = connection.resolved_account_id_external.replace(/-/g, '');
-    const managerId    = connection.resolved_manager_account_id
-      ? connection.resolved_manager_account_id.replace(/-/g, '')
-      : undefined;
-
-    // Step 2: Query campaign performance for last 30 days
-    // campaign.campaign_budget exposes the budget resource name so the dashboard
-    // can display budget_id — Prime can then include it in ACTION blocks, allowing
-    // executeGoogleAdjustBudget to skip the extra GET-campaign lookup.
-    const query = `
-      SELECT
-        campaign.id,
-        campaign.name,
-        campaign.status,
-        campaign.campaign_budget,
-        metrics.impressions,
-        metrics.clicks,
-        metrics.cost_micros,
-        metrics.conversions,
-        metrics.ctr,
-        metrics.average_cpc,
-        metrics.conversions_from_interactions_rate
-      FROM campaign
-      WHERE segments.date DURING LAST_30_DAYS
-        AND campaign.status != 'REMOVED'
-      ORDER BY metrics.cost_micros DESC
-      LIMIT 10
-    `;
-
-    const apiUrl = `https://googleads.googleapis.com/v23/customers/${customerId}/googleAds:search`;
-
-    const adsResponse = await fetch(
-      apiUrl,
-      {
-        method: 'POST',
-        headers: {
-          'Authorization':     `Bearer ${access_token}`,
-          'developer-token':   process.env.GOOGLE_ADS_DEVELOPER_TOKEN,
-          'login-customer-id': managerId,
-          'Content-Type':      'application/json',
-        },
-        body: JSON.stringify({ query }),
-      }
-    );
-
-    const rawText = await adsResponse.text();
-    if (!adsResponse.ok) {
-      return res.status(200).json({
-        success: false,
-        error: `Google Ads API error: ${adsResponse.status}`,
-        detail: rawText.substring(0, 500),
-        summary: { totalSpend: 0, totalClicks: 0, totalImpressions: 0, totalConversions: 0, roas: 0, cpl: 0, ctr: 0 },
-        campaigns: [],
-      });
-    }
-
-    let data;
-    try {
-      data = JSON.parse(rawText);
-    } catch(e) {
-      return res.status(200).json({
-        success: false,
-        error: 'Failed to parse Google Ads response',
-        detail: rawText.substring(0, 300),
-        summary: { totalSpend: 0, totalClicks: 0, totalImpressions: 0, totalConversions: 0, roas: 0, cpl: 0, ctr: 0 },
-        campaigns: [],
-      });
-    }
-
-    // :search returns { results: [...] } not an array of batches
-    const results = data.results || [];
-
-    let totalSpend = 0, totalClicks = 0, totalImpressions = 0, totalConversions = 0;
-    const campaigns = [];
-
-    for (const result of results) {
-      const spend = (result.metrics?.costMicros || 0) / 1000000;
-      totalSpend += spend;
-      totalClicks += parseInt(result.metrics?.clicks || 0);
-      totalImpressions += parseInt(result.metrics?.impressions || 0);
-      totalConversions += parseFloat(result.metrics?.conversions || 0);
-      // campaign_budget resource name: "customers/X/campaignBudgets/Y" — extract Y
-      const budgetResource = result.campaign?.campaignBudget;
-      const budget_id = budgetResource ? budgetResource.split('/').pop() : null;
-      campaigns.push({
-        id: result.campaign?.id,
-        budget_id,
-        name: result.campaign?.name,
-        status: result.campaign?.status,
-        spend: spend.toFixed(2),
-        clicks: parseInt(result.metrics?.clicks || 0),
-        impressions: parseInt(result.metrics?.impressions || 0),
-        conversions: parseFloat(result.metrics?.conversions || 0).toFixed(1),
-        ctr: ((parseFloat(result.metrics?.ctr || 0)) * 100).toFixed(2),
-        avgCpc: ((result.metrics?.averageCpc || 0) / 1000000).toFixed(2),
-      });
-    }
-
-    const roas = totalSpend > 0 ? (totalConversions * 150 / totalSpend).toFixed(2) : '0.00';
-    const cpl = totalConversions > 0 ? (totalSpend / totalConversions).toFixed(2) : '0.00';
-
-    // Cost ledger — fire-and-forget
-    await recordApiCall('google_ads', 'campaigns_search', account.id);
-
-    return res.status(200).json({
-      success: true,
-      summary: {
-        totalSpend: totalSpend.toFixed(2),
-        totalClicks,
-        totalImpressions,
-        totalConversions: totalConversions.toFixed(1),
-        roas,
-        cpl,
-        ctr: totalImpressions > 0 ? ((totalClicks / totalImpressions) * 100).toFixed(2) : '0.00',
-      },
-      campaigns,
-    });
-
+    const result = await fetchGoogleAdsData(account, connection);
+    return res.status(200).json(result);
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
