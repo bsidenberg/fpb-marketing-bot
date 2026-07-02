@@ -45,7 +45,6 @@ const ACCOUNT_PUBLIC_COLUMNS = [
   'target_cost_per_qualified_lead',
   'target_cost_per_booked_job',
   'target_margin_goal',
-  'autonomy_level',
   'status',
   'tracking_health_score',
   'crm_hygiene_score',
