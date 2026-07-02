@@ -168,7 +168,7 @@ const mockFetch = vi.fn();
 vi.stubGlobal('fetch', mockFetch);
 
 // Import AFTER all mocks
-import handler from '../api/chat.js';
+import handler, { verifyAndEnrichAction } from '../api/chat.js';
 import { getFpbChatSystemPrompt } from '../api/lib/prompts/fpb.js';
 import { checkPostureForAction } from '../api/lib/autonomy-coordinator.js';
 // rate-limit.js is intentionally NOT mocked — the chat handler exercises
@@ -227,7 +227,7 @@ beforeEach(() => {
   mockFetchGoogleAds.mockResolvedValue({
     success: true,
     summary: { totalSpend: '500', totalConversions: '5' },
-    campaigns: [{ id: 'g-camp-1', name: 'Google Test' }],
+    campaigns: [{ id: 'g-camp-1', budget_id: 'bgt-001', daily_budget: '50.00', name: 'Google Test' }],
   });
   mockFetchMetaAds.mockResolvedValue({
     success: true,
@@ -435,8 +435,10 @@ describe('chat — ACTION block emission creates pending action row', () => {
 
   it('inserts a pending action row and returns actionId when Claude emits an ACTION block', async () => {
     setResponse('actions.insert.single', { data: { id: 'action-uuid-123' }, error: null });
+    // Use campaign_id that matches the mock (g-camp-1 / "Google Test") so verification
+    // succeeds and status stays 'pending' (not 'requires_review').
     makeActionFetch(
-      'I recommend pausing this campaign.\nACTION:{"action_type":"pause_campaign","channel":"google_ads","campaign_id":"camp-123","campaign_name":"FPB Kit Campaign","description":"CPL over $150","current_value":"$160","recommended_value":"paused"}'
+      'I recommend pausing this campaign.\nACTION:{"action_type":"pause_campaign","channel":"google_ads","campaign_id":"g-camp-1","campaign_name":"Google Test","description":"CPL over $150","current_value":"$160","recommended_value":"paused"}'
     );
 
     const req = makeReq();
@@ -452,10 +454,10 @@ describe('chat — ACTION block emission creates pending action row', () => {
     expect(inserted).toBeDefined();
     expect(inserted.action_type).toBe('pause_campaign');
     expect(inserted.channel).toBe('google_ads');
-    expect(inserted.status).toBe('pending');
+    expect(inserted.status).toBe('pending'); // verified → pending
     expect(inserted.account_id).toBe('fpb-uuid');
-    expect(inserted.execution_data.campaign_id).toBe('camp-123');
-    expect(inserted.execution_data.current_value).toBe('$160');
+    expect(inserted.execution_data.campaign_id).toBe('g-camp-1');
+    expect(inserted.execution_data.current_value).toBe('$160'); // LLM value preserved
   });
 
   it('returns actionId: null when coordinator returns block verdict — chat response still 200', async () => {
@@ -607,6 +609,213 @@ describe('chat — prompt honesty (Session-02)', () => {
     const prompt = getFpbChatSystemPrompt();
     // adjust_bid must not appear as an available action type
     expect(prompt).not.toMatch(/^- adjust_bid:/m);
+  });
+
+});
+
+// ============================================================================
+// Session-06: verifyAndEnrichAction — pure unit tests
+// ============================================================================
+
+describe('verifyAndEnrichAction — server-side campaign verification', () => {
+
+  const LIVE_CAMPAIGNS = [
+    { id: '21541565583', budget_id: 'bgt-111', daily_budget: '50.00', name: 'LP Search - Location' },
+    { id: '99999999999', budget_id: 'bgt-222', daily_budget: '75.00', name: 'Kit Campaign' },
+  ];
+
+  it('passes non-google_ads actions through unchanged with status passthrough', () => {
+    const payload = { action_type: 'pause_campaign', channel: 'meta_ads', campaign_id: 'meta-123' };
+    const { payload: result, status } = verifyAndEnrichAction(payload, LIVE_CAMPAIGNS);
+    expect(result).toBe(payload); // exact same reference — no copy
+    expect(status).toBe('passthrough');
+  });
+
+  it('injects budget_id and fills current_value from daily_budget on ID match', () => {
+    const payload = {
+      action_type: 'adjust_budget',
+      channel:     'google_ads',
+      campaign_id: '21541565583',
+      campaign_name: 'LP Search - Location',
+      description: 'Increase budget',
+    };
+    const { payload: result, status } = verifyAndEnrichAction(payload, LIVE_CAMPAIGNS);
+    expect(status).toBe('id_match');
+    expect(result.budget_id).toBe('bgt-111');
+    expect(result.current_value).toBe('50.00');
+    expect(result.campaign_id).toBe('21541565583'); // unchanged
+  });
+
+  it('preserves LLM current_value on ID match when it was already provided', () => {
+    const payload = {
+      action_type:   'adjust_budget',
+      channel:       'google_ads',
+      campaign_id:   '21541565583',
+      current_value: '$45.00', // LLM supplied this
+    };
+    const { payload: result, status } = verifyAndEnrichAction(payload, LIVE_CAMPAIGNS);
+    expect(status).toBe('id_match');
+    expect(result.current_value).toBe('$45.00'); // LLM value kept, not overwritten
+    expect(result.budget_id).toBe('bgt-111');
+  });
+
+  it('does NOT fall back to LLM-supplied budget_id when live campaign budget_id is missing', () => {
+    // Safety invariant: unverified LLM budget_id must never reach execution_data.
+    // If the live campaign has no budget_id, execution_data.budget_id must be null so
+    // execute-action-logic falls back to deriving it from the verified campaign_id.
+    const campaignsNoBudget = [
+      { id: '21541565583', budget_id: null, daily_budget: '50.00', name: 'LP Search - Location' },
+    ];
+    const payload = {
+      action_type: 'adjust_budget',
+      channel:     'google_ads',
+      campaign_id: '21541565583',
+      budget_id:   'llm-supplied-budget-id', // LLM hallucinated this
+    };
+    const { payload: result, status } = verifyAndEnrichAction(payload, campaignsNoBudget);
+    expect(status).toBe('id_match');
+    expect(result.budget_id).toBeNull(); // live value (null) wins; LLM value discarded
+  });
+
+  it('corrects campaign_id and injects budget_id on exact name match (wrong ID in payload)', () => {
+    const payload = {
+      action_type:   'adjust_budget',
+      channel:       'google_ads',
+      campaign_id:   '21541565583_HALLUCINATED',
+      campaign_name: 'LP Search - Location',
+      description:   'Increase budget',
+    };
+    const { payload: result, status } = verifyAndEnrichAction(payload, LIVE_CAMPAIGNS);
+    expect(status).toBe('name_match');
+    expect(result.campaign_id).toBe('21541565583');
+    expect(result.budget_id).toBe('bgt-111');
+    expect(result.description).toMatch(/campaign_id corrected from model output by server verification/);
+  });
+
+  it('flags unverified when neither campaign_id nor campaign_name matches any live campaign', () => {
+    const payload = {
+      action_type:   'adjust_budget',
+      channel:       'google_ads',
+      campaign_id:   'ghost-id',
+      campaign_name: 'Nonexistent Campaign',
+      description:   'Increase budget',
+    };
+    const { payload: result, status } = verifyAndEnrichAction(payload, LIVE_CAMPAIGNS);
+    expect(status).toBe('unverified');
+    expect(result.description).toMatch(/^\[UNVERIFIED - campaign not found in live data\]/);
+  });
+
+  it('flags unverified when fetched campaigns list is empty', () => {
+    const payload = {
+      action_type: 'adjust_budget',
+      channel:     'google_ads',
+      campaign_id: '21541565583',
+    };
+    const { payload: result, status } = verifyAndEnrichAction(payload, []);
+    expect(status).toBe('unverified');
+    expect(result.description).toMatch(/\[UNVERIFIED - campaign not found in live data\]/);
+  });
+
+  it('flags unverified when fetched campaigns is null (no live data available)', () => {
+    const payload = {
+      action_type: 'adjust_budget',
+      channel:     'google_ads',
+      campaign_id: '21541565583',
+    };
+    const { payload: result, status } = verifyAndEnrichAction(payload, null);
+    expect(status).toBe('unverified');
+    expect(result.description).toMatch(/\[UNVERIFIED - campaign not found in live data\]/);
+  });
+
+  it('daily_budget from the google-ads fetch shape is used as current_value on ID match', () => {
+    // Validates that verifyAndEnrichAction correctly reads the daily_budget field
+    // that fetchGoogleAdsData now emits (Session-06 GAQL addition).
+    const mockShapedCampaign = { id: 'g-camp-1', budget_id: 'bgt-001', daily_budget: '50.00', name: 'Google Test' };
+    const { payload: result, status } = verifyAndEnrichAction(
+      { action_type: 'adjust_budget', channel: 'google_ads', campaign_id: 'g-camp-1' },
+      [mockShapedCampaign]
+    );
+    expect(status).toBe('id_match');
+    expect(result.current_value).toBe('50.00');
+    expect(result.budget_id).toBe('bgt-001');
+  });
+
+});
+
+// ============================================================================
+// Session-06: handler integration — verify-and-enrich wired into action save
+// ============================================================================
+
+describe('chat — verifyAndEnrichAction wired into action save (Session-06)', () => {
+
+  it('saves budget_id in execution_data when action is verified against turn-fetched campaigns', async () => {
+    setResponse('actions.insert.single', { data: { id: 'action-enrich-uuid' }, error: null });
+    // includeAdData: true → turn data is fetched; mockFetchGoogleAds returns campaign with budget_id
+    mockFetch.mockResolvedValueOnce({ // main Claude call (no intent detection when includeAdData)
+      ok: true,
+      json: async () => ({
+        content: [{ text: 'Adjust budget.\nACTION:{"action_type":"adjust_budget","channel":"google_ads","campaign_id":"g-camp-1","campaign_name":"Google Test","description":"Increase budget"}' }],
+        usage: { input_tokens: 500, output_tokens: 100 },
+      }),
+    });
+
+    const req = makeReq({
+      body: { message: 'Increase the Google campaign budget', sessionId: 'sess-enrich', includeAdData: true },
+    });
+    const res = makeRes();
+    await handler(req, res);
+
+    expect(res._statusCode).toBe(200);
+    const inserted = (insertsByTable['actions'] || [])[0];
+    expect(inserted.execution_data.budget_id).toBe('bgt-001');
+    expect(inserted.execution_data.current_value).toBe('50.00');
+    expect(inserted.status).toBe('pending'); // verified → stays pending
+  });
+
+  it('fetches google-ads server-side for verification when no ad data was included in the turn', async () => {
+    setResponse('actions.insert.single', { data: { id: 'action-server-fetch-uuid' }, error: null });
+    makeActionFetch(
+      'Adjust budget.\nACTION:{"action_type":"adjust_budget","channel":"google_ads","campaign_id":"g-camp-1","campaign_name":"Google Test","description":"Increase budget"}'
+    );
+
+    const req = makeReq({
+      body: { message: 'Adjust the campaign budget', sessionId: 'sess-server-fetch', includeAdData: false },
+    });
+    const res = makeRes();
+    await handler(req, res);
+
+    expect(res._statusCode).toBe(200);
+    // fetchGoogleAdsData called for server-side verification
+    expect(mockFetchGoogleAds).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'fpb-uuid' }),
+      VALID_GOOGLE_CONN
+    );
+    const inserted = (insertsByTable['actions'] || [])[0];
+    expect(inserted.execution_data.budget_id).toBe('bgt-001');
+    expect(inserted.status).toBe('pending');
+  });
+
+  it('saves requires_review status when google_ads campaign cannot be verified against live data', async () => {
+    setResponse('actions.insert.single', { data: { id: 'action-unverified-uuid' }, error: null });
+    // Override mock to return a campaign that does NOT match the ACTION block's IDs
+    mockFetchGoogleAds.mockResolvedValue({
+      success:   true,
+      campaigns: [{ id: 'other-campaign', budget_id: 'bgt-999', daily_budget: '30.00', name: 'Other Campaign' }],
+    });
+    makeActionFetch(
+      'I recommend adjusting budget.\nACTION:{"action_type":"adjust_budget","channel":"google_ads","campaign_id":"ghost-id","campaign_name":"Ghost Campaign","description":"Increase budget"}'
+    );
+
+    const req = makeReq({
+      body: { message: 'Adjust campaign budget', sessionId: 'sess-unverified', includeAdData: false },
+    });
+    const res = makeRes();
+    await handler(req, res);
+
+    expect(res._statusCode).toBe(200);
+    const inserted = (insertsByTable['actions'] || [])[0];
+    expect(inserted.status).toBe('requires_review');
+    expect(inserted.description).toMatch(/^\[UNVERIFIED - campaign not found in live data\]/);
   });
 
 });

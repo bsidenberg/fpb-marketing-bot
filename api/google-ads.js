@@ -72,12 +72,15 @@ export async function fetchGoogleAdsData(account, connection) {
   // campaign.campaign_budget exposes the budget resource name so the dashboard
   // can display budget_id — Prime can then include it in ACTION blocks, allowing
   // executeGoogleAdjustBudget to skip the extra GET-campaign lookup.
+  // campaign_budget.amount_micros gives the current daily budget amount so
+  // verifyAndEnrichAction can inject daily_budget into verified action payloads.
   const query = `
     SELECT
       campaign.id,
       campaign.name,
       campaign.status,
       campaign.campaign_budget,
+      campaign_budget.amount_micros,
       metrics.impressions,
       metrics.clicks,
       metrics.cost_micros,
@@ -147,9 +150,11 @@ export async function fetchGoogleAdsData(account, connection) {
     // campaign_budget resource name: "customers/X/campaignBudgets/Y" — extract Y
     const budgetResource = result.campaign?.campaignBudget;
     const budget_id = budgetResource ? budgetResource.split('/').pop() : null;
+    const daily_budget = ((result.campaignBudget?.amountMicros || 0) / 1_000_000).toFixed(2);
     campaigns.push({
       id: result.campaign?.id,
       budget_id,
+      daily_budget,
       name: result.campaign?.name,
       status: result.campaign?.status,
       spend: spend.toFixed(2),

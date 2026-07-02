@@ -219,6 +219,71 @@ function parseCreativeReady(text) {
   return { displayText, creativeReady };
 }
 
+// ── Verify and enrich a google_ads ACTION payload against live campaign data ──
+// Pure function — never mutates the input payload.
+// Non-google_ads payloads are returned unchanged (status: 'passthrough').
+// Matching priority: exact campaign_id → single campaign_name → unverified.
+export function verifyAndEnrichAction(actionPayload, fetchedCampaigns) {
+  if (!actionPayload || actionPayload.channel !== 'google_ads') {
+    return { payload: actionPayload, status: 'passthrough' };
+  }
+
+  const campaigns = Array.isArray(fetchedCampaigns) ? fetchedCampaigns : [];
+
+  if (campaigns.length === 0) {
+    return {
+      payload: {
+        ...actionPayload,
+        description: `[UNVERIFIED - campaign not found in live data] ${actionPayload.description || ''}`.trim(),
+      },
+      status: 'unverified',
+    };
+  }
+
+  // ID match — most reliable path
+  const idMatch = campaigns.find(c => String(c.id) === String(actionPayload.campaign_id));
+  if (idMatch) {
+    return {
+      payload: {
+        ...actionPayload,
+        // Use only the verified live budget_id; null lets execute-action-logic derive it safely.
+        // Never fall back to the LLM-supplied value — it is unverified and could target a
+        // different campaign's budget in the fast-path mutator.
+        budget_id:     idMatch.budget_id     || null,
+        current_value: actionPayload.current_value || idMatch.daily_budget  || null,
+      },
+      status: 'id_match',
+    };
+  }
+
+  // Name match — exactly one campaign must match
+  if (actionPayload.campaign_name) {
+    const nameMatches = campaigns.filter(c => c.name === actionPayload.campaign_name);
+    if (nameMatches.length === 1) {
+      const m = nameMatches[0];
+      return {
+        payload: {
+          ...actionPayload,
+          campaign_id:   String(m.id),
+          budget_id:     m.budget_id     || null,  // verified live value only
+          current_value: actionPayload.current_value || m.daily_budget  || null,
+          description:   `${actionPayload.description || ''} (campaign_id corrected from model output by server verification)`.trim(),
+        },
+        status: 'name_match',
+      };
+    }
+  }
+
+  // Neither matches — flag for manual review; never silently pass an unverifiable ID
+  return {
+    payload: {
+      ...actionPayload,
+      description: `[UNVERIFIED - campaign not found in live data] ${actionPayload.description || ''}`.trim(),
+    },
+    status: 'unverified',
+  };
+}
+
 // ── Parse AD_PREVIEW block from Claude response ───────────────────────────────
 function parseAdPreview(text) {
   const match = text.match(/^AD_PREVIEW:(\{.+\})\s*$/m);
@@ -316,12 +381,14 @@ export default async function handler(req, res) {
 
     // ── Step 3: Optionally attach live ad data to user message ──
     let userContent = message;
+    let fetchedGoogleCampaigns = null;
     if (includeAdData) {
       const [gConn, mConn] = await Promise.all([
         getConnectionForAccount(account.id, 'google_ads'),
         getConnectionForAccount(account.id, 'meta_ads'),
       ]);
       const { google, meta } = await fetchAdData(account, gConn, mConn);
+      fetchedGoogleCampaigns = google?.campaigns || null;
 
       const dataParts = [];
       if (google) dataParts.push(`GOOGLE ADS DATA:\n${JSON.stringify(google, null, 2)}`);
@@ -412,23 +479,43 @@ export default async function handler(req, res) {
         };
         const { verdict } = await checkPostureForAction(account.id, pillar, actionPayload.action_type, context);
         if (verdict !== 'block') {
+          // Verify google_ads campaign IDs against live data before saving.
+          // If this turn didn't fetch ad data, fetch server-side solely for verification.
+          let actionForInsert = actionPayload;
+          let verificationStatus = 'passthrough';
+          if (actionPayload.channel === 'google_ads') {
+            let campaigns = fetchedGoogleCampaigns;
+            if (!campaigns) {
+              try {
+                const gConnForVerify = await getConnectionForAccount(account.id, 'google_ads');
+                if (gConnForVerify) {
+                  const googleData = await fetchGoogleAdsData(account, gConnForVerify);
+                  campaigns = googleData?.success ? googleData.campaigns : null;
+                }
+              } catch (_verifyErr) { /* non-fatal — proceed as unverified */ }
+            }
+            ({ payload: actionForInsert, status: verificationStatus } =
+              verifyAndEnrichAction(actionPayload, campaigns));
+          }
+
           const { data: actionRow, error: actionErr } = await supabase
             .from('actions')
             .insert({
               account_id:     account.id,
-              channel:        normalizeChannel(actionPayload.channel || 'other'),
-              action_type:    actionPayload.action_type,
-              title:          (actionPayload.action_type || '').replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
-              description:    actionPayload.description || '',
-              priority:       actionPayload.priority || 'medium',
+              channel:        normalizeChannel(actionForInsert.channel || 'other'),
+              action_type:    actionForInsert.action_type,
+              title:          (actionForInsert.action_type || '').replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
+              description:    actionForInsert.description || '',
+              priority:       actionForInsert.priority || 'medium',
               auto_execute:   false,
               execution_data: {
-                campaign_id:       actionPayload.campaign_id       || null,
-                campaign_name:     actionPayload.campaign_name     || null,
-                current_value:     actionPayload.current_value     || null,
-                recommended_value: actionPayload.recommended_value || null,
+                campaign_id:       actionForInsert.campaign_id       || null,
+                campaign_name:     actionForInsert.campaign_name     || null,
+                budget_id:         actionForInsert.budget_id         || null,
+                current_value:     actionForInsert.current_value     || null,
+                recommended_value: actionForInsert.recommended_value || null,
               },
-              status: 'pending',
+              status: verificationStatus === 'unverified' ? 'requires_review' : 'pending',
             })
             .select('id')
             .single();
