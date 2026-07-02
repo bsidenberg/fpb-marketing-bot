@@ -169,6 +169,7 @@ vi.stubGlobal('fetch', mockFetch);
 
 // Import AFTER all mocks
 import handler from '../api/chat.js';
+import { getFpbChatSystemPrompt } from '../api/lib/prompts/fpb.js';
 import { checkPostureForAction } from '../api/lib/autonomy-coordinator.js';
 // rate-limit.js is intentionally NOT mocked — the chat handler exercises
 // the real limiter; clearRateLimits() resets its state between tests.
@@ -549,6 +550,63 @@ describe('chat — DATA_QUESTION ad data via direct import (seam test)', () => {
     );
     expect(internalGoogleCall).toBeUndefined();
     expect(internalMetaCall).toBeUndefined();
+  });
+
+});
+
+// ============================================================================
+// Session-02: affirmative follow-up triggers data fetch
+// ============================================================================
+
+describe('chat — affirmative follow-up triggers data fetch', () => {
+
+  it('returns fetching signal when intent resolves DATA_QUESTION for short affirmative with prior data history', async () => {
+    // Simulate the Haiku intent detector correctly classifying "yes do it" as
+    // DATA_QUESTION after seeing the prior assistant message context.
+    mockFetch.mockResolvedValueOnce({
+      ok:   true,
+      json: async () => ({ content: [{ text: 'DATA_QUESTION' }] }),
+    });
+
+    const req = makeReq({
+      body: {
+        message:             'yes do it',
+        sessionId:           'sess-affirmative',
+        conversationHistory: [
+          { role: 'user',      content: 'How are my campaigns performing?' },
+          { role: 'assistant', content: 'LP Search - Location is at $45 CPL — below the $50 target. Budget of $2500 is fully utilized.' },
+        ],
+        includeAdData: false,
+      },
+    });
+    const res = makeRes();
+    await handler(req, res);
+
+    expect(res._statusCode).toBe(200);
+    expect(res._body.type).toBe('fetching');
+  });
+
+});
+
+// ============================================================================
+// Session-02: prompt honesty — no CSV export instructions
+// ============================================================================
+
+describe('chat — prompt honesty (Session-02)', () => {
+
+  it('chat system prompt does not contain CSV export or manual upload instructions', () => {
+    const prompt = getFpbChatSystemPrompt();
+    expect(prompt.toLowerCase()).not.toMatch(/export.*csv/);
+    expect(prompt.toLowerCase()).not.toMatch(/csv.*export/);
+    expect(prompt.toLowerCase()).not.toMatch(/upload.*file/);
+    // Fetch-first instruction is present
+    expect(prompt).toMatch(/never ask.*export|never.*upload|automatically fetch|fetches it automatically/i);
+  });
+
+  it('chat system prompt does not claim adjust_bid or bid strategy actions', () => {
+    const prompt = getFpbChatSystemPrompt();
+    // adjust_bid must not appear as an available action type
+    expect(prompt).not.toMatch(/^- adjust_bid:/m);
   });
 
 });

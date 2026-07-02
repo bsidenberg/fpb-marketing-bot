@@ -158,12 +158,20 @@ async function callClaude({ model, system, messages, max_tokens }) {
 }
 
 // ── Intent detection ─────────────────────────────────────────────────────────
-async function detectIntent(message, accountId = null) {
+async function detectIntent(message, conversationHistory = [], accountId = null) {
+  // Include the last assistant turn as context so short affirmatives ("yes do it",
+  // "go ahead") following a data analysis are correctly classified as DATA_QUESTION
+  // rather than STRATEGY.
+  const lastAssistant = [...(conversationHistory || [])].reverse().find(m => m.role === 'assistant');
+  const contextSuffix = lastAssistant
+    ? `\n\nFor context, the prior assistant message began: "${String(lastAssistant.content).substring(0, 300)}"`
+    : '';
+
   const json = await callClaude({
     model:      'claude-haiku-4-5',
     max_tokens: 10,
-    system:     'Classify this message into one of three intents: DATA_QUESTION (needs live ad performance data to answer), ACTION_REQUEST (user wants to make a change to a campaign), STRATEGY (general advice, explanation, or question that does not need live data). Respond with only one word: DATA_QUESTION, ACTION_REQUEST, or STRATEGY.',
-    messages:   [{ role: 'user', content: message }],
+    system:     'Classify this message into one of three intents: DATA_QUESTION (needs live ad performance data to answer), ACTION_REQUEST (user wants to make a change to a campaign), STRATEGY (general advice, explanation, or question that does not need live data). If the message is a short affirmative ("yes", "do it", "go ahead", "sounds good", "proceed") following a prior data analysis in the conversation, classify as DATA_QUESTION. Respond with only one word: DATA_QUESTION, ACTION_REQUEST, or STRATEGY.',
+    messages:   [{ role: 'user', content: message + contextSuffix }],
   });
   // Cost ledger — fire-and-forget
   await recordAnthropicCost(json, accountId, 'intent_detection');
@@ -292,7 +300,7 @@ export default async function handler(req, res) {
 
   try {
     // ── Step 1: Intent detection (skip if client already knows to include ad data) ──
-    let intent = includeAdData ? 'DATA_QUESTION' : await detectIntent(message, account.id);
+    let intent = includeAdData ? 'DATA_QUESTION' : await detectIntent(message, conversationHistory, account.id);
 
     // ── Step 2: If DATA_QUESTION and not yet fetching, signal the frontend ──
     if (intent === 'DATA_QUESTION' && !includeAdData) {
