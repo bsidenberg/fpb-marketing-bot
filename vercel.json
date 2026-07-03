@@ -16,6 +16,10 @@
   ],
   "crons": [
     {
+      "path": "/api/cron-daily-stats",
+      "schedule": "45 11 * * *"
+    },
+    {
       "path": "/api/cron-analyze",
       "schedule": "30 12 * * *"
     },
