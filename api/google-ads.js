@@ -31,15 +31,14 @@ import { recordApiCall } from './lib/api-cost.js';
 import { requireAdmin } from './lib/require-admin.js';
 
 /**
- * Fetch Google Ads campaign performance data for the given account.
- * Pure code motion from the HTTP handler — no logic changes.
+ * Get a fresh OAuth access token using the connection's refresh token.
+ * Extracted from fetchGoogleAdsData (same behavior, no logic change) so
+ * fetchSearchTerms can share it.
  *
- * @param {object} account    — account row with at least .id and .slug
  * @param {object} connection — ad_platform_connections row (resolved_*)
- * @returns {Promise<object>} — same shape as the HTTP 200 response body
+ * @returns {Promise<{ access_token: string } | { error: true, tokenJson: object }>}
  */
-export async function fetchGoogleAdsData(account, connection) {
-  // Step 1: Get fresh access token using the connection's refresh token
+async function getAccessToken(connection) {
   const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -53,16 +52,35 @@ export async function fetchGoogleAdsData(account, connection) {
   const tokenJson = await tokenResponse.json();
 
   if (!tokenJson.access_token) {
+    return { error: true, tokenJson };
+  }
+
+  return { access_token: tokenJson.access_token };
+}
+
+/**
+ * Fetch Google Ads campaign performance data for the given account.
+ * Pure code motion from the HTTP handler — no logic changes.
+ *
+ * @param {object} account    — account row with at least .id and .slug
+ * @param {object} connection — ad_platform_connections row (resolved_*)
+ * @returns {Promise<object>} — same shape as the HTTP 200 response body
+ */
+export async function fetchGoogleAdsData(account, connection) {
+  // Step 1: Get fresh access token using the connection's refresh token
+  const tokenResult = await getAccessToken(connection);
+
+  if (tokenResult.error) {
     return {
       success: false,
       error: 'Failed to get access token from Google OAuth',
-      detail: JSON.stringify(tokenJson),
+      detail: JSON.stringify(tokenResult.tokenJson),
       summary: { totalSpend: 0, totalClicks: 0, totalImpressions: 0, totalConversions: 0, roas: 0, cpl: 0, ctr: 0 },
       campaigns: [],
     };
   }
 
-  const access_token = tokenJson.access_token;
+  const access_token = tokenResult.access_token;
   const customerId   = connection.resolved_account_id_external.replace(/-/g, '');
   const managerId    = connection.resolved_manager_account_id
     ? connection.resolved_manager_account_id.replace(/-/g, '')
@@ -275,6 +293,144 @@ export async function fetchGoogleAdsData(account, connection) {
       ctr: totalImpressions > 0 ? ((totalClicks / totalImpressions) * 100).toFixed(2) : '0.00',
     },
     campaigns,
+  };
+}
+
+/**
+ * Fetch Google Ads search-term-view data for waste analysis (negative
+ * keyword recommendations). Same conventions as fetchGoogleAdsData:
+ * token fetch via getAccessToken, customerId/managerId derived from
+ * connection.resolved_* fields, error shape on failure, cost-ledger call.
+ *
+ * @param {object} account    — account row with at least .id and .slug
+ * @param {object} connection — ad_platform_connections row (resolved_*)
+ * @param {object} [options]
+ * @param {string} [options.campaignId] — restrict to a single campaign
+ * @param {number} [options.days=30]    — lookback window in days
+ * @returns {Promise<object>}
+ */
+export async function fetchSearchTerms(account, connection, { campaignId, days = 30 } = {}) {
+  // Step 1: Get fresh access token using the connection's refresh token
+  const tokenResult = await getAccessToken(connection);
+
+  if (tokenResult.error) {
+    return {
+      success: false,
+      error: 'Failed to get access token from Google OAuth',
+      detail: JSON.stringify(tokenResult.tokenJson),
+      searchTerms: [],
+    };
+  }
+
+  const access_token = tokenResult.access_token;
+  const customerId   = connection.resolved_account_id_external.replace(/-/g, '');
+  const managerId    = connection.resolved_manager_account_id
+    ? connection.resolved_manager_account_id.replace(/-/g, '')
+    : undefined;
+
+  // Step 2: Compute explicit date range (segments.date BETWEEN, not DURING
+  // LAST_30_DAYS) so arbitrary `days` values work.
+  const fmt = (d) => d.toISOString().slice(0, 10);
+  const endDateObj = new Date();
+  const startDateObj = new Date(endDateObj);
+  startDateObj.setUTCDate(startDateObj.getUTCDate() - days);
+  const endDate = fmt(endDateObj);
+  const startDate = fmt(startDateObj);
+
+  // campaignId is interpolated directly into the GAQL string (no parameterized
+  // query support) — reject anything that isn't digits-only before it ever
+  // reaches the query, same defensive posture as the campaign_id format check
+  // in executeGoogleAddNegativeKeyword.
+  if (campaignId != null && !/^\d+$/.test(String(campaignId))) {
+    return {
+      success: false,
+      error: 'Invalid campaignId — must be digits only',
+      detail: String(campaignId).substring(0, 100),
+      searchTerms: [],
+    };
+  }
+
+  const query = `
+    SELECT
+      search_term_view.search_term,
+      campaign.id,
+      campaign.name,
+      metrics.clicks,
+      metrics.cost_micros,
+      metrics.conversions
+    FROM search_term_view
+    WHERE segments.date BETWEEN '${startDate}' AND '${endDate}'
+      ${campaignId ? `AND campaign.id = ${campaignId}` : ''}
+    ORDER BY metrics.cost_micros DESC
+    LIMIT 200
+  `;
+
+  const apiUrl = `https://googleads.googleapis.com/v23/customers/${customerId}/googleAds:search`;
+
+  const response = await fetch(
+    apiUrl,
+    {
+      method: 'POST',
+      headers: {
+        'Authorization':     `Bearer ${access_token}`,
+        'developer-token':   process.env.GOOGLE_ADS_DEVELOPER_TOKEN,
+        'login-customer-id': managerId,
+        'Content-Type':      'application/json',
+      },
+      body: JSON.stringify({ query }),
+    }
+  );
+
+  const rawText = await response.text();
+  if (!response.ok) {
+    return {
+      success: false,
+      error: `Google Ads API error: ${response.status}`,
+      detail: rawText.substring(0, 500),
+      searchTerms: [],
+    };
+  }
+
+  let data;
+  try {
+    data = JSON.parse(rawText);
+  } catch (e) {
+    return {
+      success: false,
+      error: 'Failed to parse Google Ads response',
+      detail: rawText.substring(0, 300),
+      searchTerms: [],
+    };
+  }
+
+  const results = data.results || [];
+
+  const searchTerms = results.map((result) => ({
+    searchTerm:  result.searchTermView?.searchTerm,
+    campaignId:  result.campaign?.id,
+    campaignName: result.campaign?.name,
+    clicks:      parseInt(result.metrics?.clicks || 0),
+    cost:        parseFloat((((result.metrics?.costMicros || 0) / 1_000_000)).toFixed(2)),
+    conversions: parseFloat(result.metrics?.conversions || 0),
+  }));
+
+  const wasteRows = searchTerms
+    .filter((row) => row.conversions === 0 && row.cost > 0)
+    .sort((a, b) => b.cost - a.cost);
+
+  const totalWastedSpend = wasteRows.reduce((sum, row) => sum + row.cost, 0).toFixed(2);
+  const wasteSummary = {
+    totalWastedSpend,
+    topWaste: wasteRows.slice(0, 20),
+  };
+
+  // Cost ledger — fire-and-forget
+  await recordApiCall('google_ads', 'search_terms', account.id);
+
+  return {
+    success: true,
+    searchTerms,
+    wasteSummary,
   };
 }
 

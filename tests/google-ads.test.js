@@ -33,7 +33,7 @@ vi.mock('../api/lib/supabase.js', () => ({
 const mockFetch = vi.fn();
 vi.stubGlobal('fetch', mockFetch);
 
-import { fetchGoogleAdsData } from '../api/google-ads.js';
+import { fetchGoogleAdsData, fetchSearchTerms } from '../api/google-ads.js';
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 const ACCOUNT = { id: 'acct-uuid', slug: 'fpb' };
@@ -208,5 +208,88 @@ describe('fetchGoogleAdsData — roster merge (SESSION-07a)', () => {
 
     expect(mockRecordApiCall).toHaveBeenCalledWith('google_ads', 'campaigns_search', ACCOUNT.id);
     expect(mockRecordApiCall).toHaveBeenCalledWith('google_ads', 'campaigns_roster', ACCOUNT.id);
+  });
+});
+
+// ============================================================================
+// fetchSearchTerms — SESSION-07b
+// ============================================================================
+
+function searchTermRow(searchTerm, campaignId, campaignName, clicks, costMicros, conversions) {
+  return {
+    searchTermView: { searchTerm },
+    campaign: { id: campaignId, name: campaignName },
+    metrics: {
+      clicks:      String(clicks),
+      costMicros:  String(costMicros),
+      conversions,
+    },
+  };
+}
+
+function queueSearchTermsHappyPath(results) {
+  mockFetch
+    .mockResolvedValueOnce({ ok: true, json: async () => ({ access_token: 'tok' }) })
+    .mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify({ results }) });
+}
+
+describe('fetchSearchTerms (SESSION-07b)', () => {
+  it('ST1: query text pins — FROM search_term_view and segments.date BETWEEN', async () => {
+    queueSearchTermsHappyPath([
+      searchTermRow('shed builder', '111', 'Location', 5, 10_000_000, 0),
+    ]);
+    await fetchSearchTerms(ACCOUNT, CONNECTION);
+
+    const body = mockFetch.mock.calls[1][1].body;
+    expect(body).toContain('FROM search_term_view');
+    expect(body).toContain('segments.date BETWEEN');
+  });
+
+  it('ST2: waste ranking — topWaste contains only zero-conversion rows, sorted by cost descending', async () => {
+    queueSearchTermsHappyPath([
+      searchTermRow('pole barn kits florida', '111', 'Location', 20, 5_000_000, 3),   // converted, excluded
+      searchTermRow('free shed plans', '111', 'Location', 15, 30_000_000, 0),         // waste, $30
+      searchTermRow('metal building contractor', '111', 'Location', 10, 45_000_000, 0), // waste, $45 — highest
+      searchTermRow('storage building', '111', 'Location', 8, 12_000_000, 0),         // waste, $12
+    ]);
+    const result = await fetchSearchTerms(ACCOUNT, CONNECTION);
+
+    expect(result.success).toBe(true);
+    expect(result.wasteSummary.topWaste).toHaveLength(3);
+    expect(result.wasteSummary.topWaste.map(r => r.searchTerm)).toEqual([
+      'metal building contractor',
+      'free shed plans',
+      'storage building',
+    ]);
+    expect(result.wasteSummary.totalWastedSpend).toBe('87.00'); // 45 + 30 + 12
+  });
+
+  it('ST3: campaignId filter — query text includes campaign.id = <id> when passed', async () => {
+    queueSearchTermsHappyPath([
+      searchTermRow('shed builder', '111', 'Location', 5, 10_000_000, 0),
+    ]);
+    await fetchSearchTerms(ACCOUNT, CONNECTION, { campaignId: '111' });
+
+    const body = mockFetch.mock.calls[1][1].body;
+    expect(body).toContain('campaign.id = 111');
+  });
+
+  it('ST4: records cost ledger call with search_terms', async () => {
+    queueSearchTermsHappyPath([
+      searchTermRow('shed builder', '111', 'Location', 5, 10_000_000, 0),
+    ]);
+    await fetchSearchTerms(ACCOUNT, CONNECTION);
+
+    expect(mockRecordApiCall).toHaveBeenCalledWith('google_ads', 'search_terms', ACCOUNT.id);
+  });
+
+  it('ST5: non-ok API response fails closed — success:false, searchTerms: []', async () => {
+    mockFetch
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ access_token: 'tok' }) })
+      .mockResolvedValueOnce({ ok: false, status: 500, text: async () => 'INTERNAL' });
+
+    const result = await fetchSearchTerms(ACCOUNT, CONNECTION);
+    expect(result.success).toBe(false);
+    expect(result.searchTerms).toEqual([]);
   });
 });

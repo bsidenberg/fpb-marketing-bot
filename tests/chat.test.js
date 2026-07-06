@@ -16,13 +16,15 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // ── Named-export mocks for google-ads.js and facebook-ads.js ─────────────────
-const { mockFetchGoogleAds, mockFetchMetaAds } = vi.hoisted(() => ({
-  mockFetchGoogleAds: vi.fn(),
-  mockFetchMetaAds:   vi.fn(),
+const { mockFetchGoogleAds, mockFetchMetaAds, mockFetchSearchTerms } = vi.hoisted(() => ({
+  mockFetchGoogleAds:   vi.fn(),
+  mockFetchMetaAds:     vi.fn(),
+  mockFetchSearchTerms: vi.fn(),
 }));
 
 vi.mock('../api/google-ads.js', () => ({
   fetchGoogleAdsData: mockFetchGoogleAds,
+  fetchSearchTerms:   mockFetchSearchTerms,
   default: vi.fn(),
 }));
 
@@ -233,6 +235,11 @@ beforeEach(() => {
     success: true,
     summary: { totalSpend: '300', totalConversions: 3 },
     campaigns: [{ id: 'm-camp-1', name: 'Meta Test' }],
+  });
+  mockFetchSearchTerms.mockResolvedValue({
+    success: true,
+    searchTerms: [{ searchTerm: 'free shed plans', campaignId: 'g-camp-1', campaignName: 'Google Test', clicks: 5, cost: 12.5, conversions: 0 }],
+    wasteSummary: { totalWastedSpend: '12.50', topWaste: [{ searchTerm: 'free shed plans', cost: 12.5 }] },
   });
 
   process.env.ANTHROPIC_API_KEY = 'test-anthropic-key';
@@ -763,6 +770,74 @@ describe('verifyAndEnrichAction — server-side campaign verification', () => {
 });
 
 // ============================================================================
+// Session-07b: verifyAndEnrichAction — add_negative_keyword match_type gate
+// ============================================================================
+
+describe('verifyAndEnrichAction — add_negative_keyword match_type gate (S07b)', () => {
+
+  const LIVE_CAMPAIGNS = [
+    { id: '21541565583', budget_id: 'bgt-111', daily_budget: '50.00', name: 'LP Search - Location' },
+  ];
+
+  it('valid match_type BROAD with matching campaign_id → id_match, keyword fields preserved', () => {
+    const payload = {
+      action_type:  'add_negative_keyword',
+      channel:      'google_ads',
+      campaign_id:  '21541565583',
+      keyword_text: 'free shed plans',
+      match_type:   'BROAD',
+      evidence:     { search_term: 'free shed plans', spend: '12.50', conversions: 0 },
+    };
+    const { payload: result, status } = verifyAndEnrichAction(payload, LIVE_CAMPAIGNS);
+    expect(status).toBe('id_match');
+    expect(result.keyword_text).toBe('free shed plans');
+    expect(result.match_type).toBe('BROAD');
+    expect(result.evidence).toEqual({ search_term: 'free shed plans', spend: '12.50', conversions: 0 });
+  });
+
+  it('invalid match_type downgrades to unverified with prefixed description', () => {
+    const payload = {
+      action_type:  'add_negative_keyword',
+      channel:      'google_ads',
+      campaign_id:  '21541565583',
+      keyword_text: 'free shed plans',
+      match_type:   'garbage',
+      description:  'Add negative keyword',
+    };
+    const { payload: result, status } = verifyAndEnrichAction(payload, LIVE_CAMPAIGNS);
+    expect(status).toBe('unverified');
+    expect(result.description).toMatch(/^\[UNVERIFIED - invalid match_type "garbage", expected BROAD\/PHRASE\/EXACT\]/);
+  });
+
+  it('absent match_type is NOT downgraded — still id_match, no invalid-match-type prefix', () => {
+    const payload = {
+      action_type:  'add_negative_keyword',
+      channel:      'google_ads',
+      campaign_id:  '21541565583',
+      keyword_text: 'free shed plans',
+      description:  'Add negative keyword',
+    };
+    const { payload: result, status } = verifyAndEnrichAction(payload, LIVE_CAMPAIGNS);
+    expect(status).toBe('id_match');
+    expect(result.description).not.toMatch(/UNVERIFIED - invalid match_type/);
+  });
+
+  it('lowercase match_type ("broad") is valid but normalized to canonical uppercase on the stored payload', () => {
+    const payload = {
+      action_type:  'add_negative_keyword',
+      channel:      'google_ads',
+      campaign_id:  '21541565583',
+      keyword_text: 'free shed plans',
+      match_type:   'broad',
+    };
+    const { payload: result, status } = verifyAndEnrichAction(payload, LIVE_CAMPAIGNS);
+    expect(status).toBe('id_match');
+    expect(result.match_type).toBe('BROAD');
+  });
+
+});
+
+// ============================================================================
 // Session-06: handler integration — verify-and-enrich wired into action save
 // ============================================================================
 
@@ -836,6 +911,87 @@ describe('chat — verifyAndEnrichAction wired into action save (Session-06)', (
     const inserted = (insertsByTable['actions'] || [])[0];
     expect(inserted.status).toBe('requires_review');
     expect(inserted.description).toMatch(/^\[UNVERIFIED - campaign not found in live data\]/);
+  });
+
+});
+
+// ============================================================================
+// Session-07b: whitelist fix — keyword_text/match_type/evidence survive the
+// actions.insert execution_data allow-list (previously silently dropped).
+// ============================================================================
+
+describe('chat — add_negative_keyword execution_data whitelist fix (S07b)', () => {
+
+  it('preserves keyword_text, match_type, and evidence in execution_data on insert', async () => {
+    setResponse('actions.insert.single', { data: { id: 'action-negkw-uuid' }, error: null });
+    makeActionFetch(
+      'Add this as a negative keyword.\nACTION:{"action_type":"add_negative_keyword","channel":"google_ads","campaign_id":"g-camp-1","campaign_name":"Google Test","keyword_text":"free shed plans","match_type":"BROAD","description":"Zero conversions, $12.50 spend","evidence":{"search_term":"free shed plans","spend":"12.50","conversions":0}}'
+    );
+
+    const req = makeReq();
+    const res = makeRes();
+    await handler(req, res);
+
+    expect(res._statusCode).toBe(200);
+    const inserted = (insertsByTable['actions'] || [])[0];
+    expect(inserted).toBeDefined();
+    expect(inserted.execution_data.keyword_text).toBe('free shed plans');
+    expect(inserted.execution_data.match_type).toBe('BROAD');
+    expect(inserted.execution_data.evidence).toEqual({ search_term: 'free shed plans', spend: '12.50', conversions: 0 });
+    // Existing fields still present, unaffected
+    expect(inserted.execution_data.campaign_id).toBe('g-camp-1');
+  });
+
+});
+
+// ============================================================================
+// Session-07b: waste-question trigger — additive fetchSearchTerms call
+// ============================================================================
+
+describe('chat — waste-question trigger fetches search terms (S07b)', () => {
+
+  it('calls fetchSearchTerms when the message matches WASTE_QUESTION_RE and a google connection exists', async () => {
+    mockFetch.mockResolvedValueOnce({ // main Claude call (includeAdData:true skips intent detection)
+      ok: true,
+      json: async () => ({
+        content: [{ text: 'Here is your wasted spend breakdown.' }],
+        usage: { input_tokens: 300, output_tokens: 80 },
+      }),
+    });
+
+    const req = makeReq({
+      body: { message: 'What search terms are wasting spend?', sessionId: 'sess-waste', includeAdData: true },
+    });
+    const res = makeRes();
+    await handler(req, res);
+
+    expect(res._statusCode).toBe(200);
+    expect(mockFetchSearchTerms).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'fpb-uuid' }),
+      VALID_GOOGLE_CONN
+    );
+    // Additive — existing google/meta ad-data fetch still happens in the same request
+    expect(mockFetchGoogleAds).toHaveBeenCalled();
+    expect(mockFetchMetaAds).toHaveBeenCalled();
+  });
+
+  it('does NOT call fetchSearchTerms when the message does not match WASTE_QUESTION_RE', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        content: [{ text: 'Here is your ad performance summary.' }],
+        usage: { input_tokens: 300, output_tokens: 80 },
+      }),
+    });
+
+    const req = makeReq({
+      body: { message: 'How are my ads performing?', sessionId: 'sess-no-waste', includeAdData: true },
+    });
+    const res = makeRes();
+    await handler(req, res);
+
+    expect(res._statusCode).toBe(200);
+    expect(mockFetchSearchTerms).not.toHaveBeenCalled();
   });
 
 });

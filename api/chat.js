@@ -50,10 +50,17 @@ import { inferPillar } from './lib/action-states.js';
 import { checkPostureForAction } from './lib/autonomy-coordinator.js';
 import { detectNovelty, detectConflict, detectExternalFlag, detectAnomaly } from './lib/autonomy-escalation.js';
 import { requireAdmin } from './lib/require-admin.js';
-import { fetchGoogleAdsData } from './google-ads.js';
+import { fetchGoogleAdsData, fetchSearchTerms } from './google-ads.js';
 import { fetchMetaAdsData } from './facebook-ads.js';
 
 const CHAT_MODEL = 'claude-sonnet-4-6';
+
+// S07b: waste/search-term questions additionally trigger a search_term_view
+// fetch (whole-account) so Prime can recommend evidenced negative keywords.
+const WASTE_QUESTION_RE = /waste|search term|junk|negative keyword|wasted spend/i;
+
+// S07b: valid Google Ads negative-keyword match types (add_negative_keyword gate).
+const VALID_NEGATIVE_MATCH_TYPES = ['BROAD', 'PHRASE', 'EXACT'];
 
 // ── chat_messages table existence preflight ──────────────────────────────────
 // Returns true if the table exists (or appears to), false if it is missing.
@@ -224,6 +231,32 @@ function parseCreativeReady(text) {
 // Non-google_ads payloads are returned unchanged (status: 'passthrough').
 // Matching priority: exact campaign_id → single campaign_name → unverified.
 export function verifyAndEnrichAction(actionPayload, fetchedCampaigns) {
+  const result = verifyAndEnrichActionByCampaign(actionPayload, fetchedCampaigns);
+
+  // S07b: additional gate for add_negative_keyword — an invalid match_type
+  // (present but not BROAD/PHRASE/EXACT) downgrades to 'unverified' regardless
+  // of the campaign id/name match above. Absent match_type is NOT downgraded —
+  // the executor already defaults it to 'BROAD'.
+  if (actionPayload && actionPayload.action_type === 'add_negative_keyword' && actionPayload.match_type != null) {
+    const normalized = String(actionPayload.match_type).toUpperCase();
+    if (!VALID_NEGATIVE_MATCH_TYPES.includes(normalized)) {
+      return {
+        payload: {
+          ...result.payload,
+          description: `[UNVERIFIED - invalid match_type "${actionPayload.match_type}", expected BROAD/PHRASE/EXACT] ${result.payload?.description || ''}`.trim(),
+        },
+        status: 'unverified',
+      };
+    }
+    // Store the canonical uppercase enum — Google's API rejects lowercase
+    // (e.g. "broad") even though it passes this validation case-insensitively.
+    return { ...result, payload: { ...result.payload, match_type: normalized } };
+  }
+
+  return result;
+}
+
+function verifyAndEnrichActionByCampaign(actionPayload, fetchedCampaigns) {
   if (!actionPayload || actionPayload.channel !== 'google_ads') {
     return { payload: actionPayload, status: 'passthrough' };
   }
@@ -394,6 +427,14 @@ export default async function handler(req, res) {
       if (google) dataParts.push(`GOOGLE ADS DATA:\n${JSON.stringify(google, null, 2)}`);
       if (meta)   dataParts.push(`META ADS DATA:\n${JSON.stringify(meta, null, 2)}`);
 
+      // S07b: additive waste-keyword trigger — whole-account search-term view.
+      if (WASTE_QUESTION_RE.test(message) && gConn) {
+        const searchTermsResult = await fetchSearchTerms(account, gConn);
+        if (searchTermsResult.success) {
+          dataParts.push(`SEARCH TERMS (waste analysis):\n${JSON.stringify(searchTermsResult, null, 2)}`);
+        }
+      }
+
       if (dataParts.length > 0) {
         userContent = `${message}\n\n--- LIVE AD DATA ---\n${dataParts.join('\n\n')}`;
       }
@@ -520,6 +561,9 @@ export default async function handler(req, res) {
                 budget_id:         actionForInsert.budget_id         || null,
                 current_value:     actionForInsert.current_value     || null,
                 recommended_value: actionForInsert.recommended_value || null,
+                keyword_text:      actionForInsert.keyword_text       || null,
+                match_type:        actionForInsert.match_type         || null,
+                evidence:          actionForInsert.evidence           || null,
               },
               status: verificationStatus === 'unverified' ? 'requires_review' : 'pending',
             })
