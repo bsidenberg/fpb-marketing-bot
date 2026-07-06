@@ -159,7 +159,10 @@ describe('acquireLockAndExecute', () => {
     mockFetch
       .mockResolvedValueOnce({ ok: true, json: async () => ({ access_token: 'test-token' }) })
       .mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify({
-        results: [{ campaign: { campaignBudget: 'customers/8325311811/campaignBudgets/987654321' } }],
+        results: [{
+          campaign:       { campaignBudget: 'customers/8325311811/campaignBudgets/987654321' },
+          campaignBudget: { amountMicros: '25000000' }, // S06B: before-snapshot rides the lookup
+        }],
       }) })
       .mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify({ results: [] }) });
 
@@ -221,7 +224,10 @@ describe('acquireLockAndExecute', () => {
     mockFetch
       .mockResolvedValueOnce({ ok: true, json: async () => ({ access_token: 'test-token' }) })
       .mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify({
-        results: [{ campaign: { campaignBudget: 'customers/8325311811/campaignBudgets/987654321' } }],
+        results: [{
+          campaign:       { campaignBudget: 'customers/8325311811/campaignBudgets/987654321' },
+          campaignBudget: { amountMicros: '25000000' }, // S06B: before-snapshot rides the lookup
+        }],
       }) })
       .mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify({ results: [] }) });
 
@@ -245,7 +251,10 @@ describe('acquireLockAndExecute', () => {
     mockFetch
       .mockResolvedValueOnce({ ok: true, json: async () => ({ access_token: 'test-token' }) })
       .mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify({
-        results: [{ campaign: { campaignBudget: 'customers/8325311811/campaignBudgets/987654321' } }],
+        results: [{
+          campaign:       { campaignBudget: 'customers/8325311811/campaignBudgets/987654321' },
+          campaignBudget: { amountMicros: '25000000' }, // S06B: before-snapshot rides the lookup
+        }],
       }) })
       .mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify({ results: [] }) });
 
@@ -305,7 +314,10 @@ describe('acquireLockAndExecute', () => {
     mockFetch
       .mockResolvedValueOnce({ ok: true, json: async () => ({ access_token: 'test-token' }) })
       .mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify({
-        results: [{ campaign: { campaignBudget: 'customers/8325311811/campaignBudgets/987654321' } }],
+        results: [{
+          campaign:       { campaignBudget: 'customers/8325311811/campaignBudgets/987654321' },
+          campaignBudget: { amountMicros: '25000000' }, // S06B: before-snapshot rides the lookup
+        }],
       }) })
       .mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify({ results: [] }) });
 
@@ -328,7 +340,10 @@ describe('acquireLockAndExecute', () => {
     mockFetch
       .mockResolvedValueOnce({ ok: true, json: async () => ({ access_token: 'test-token' }) })
       .mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify({
-        results: [{ campaign: { campaignBudget: 'customers/8325311811/campaignBudgets/987654321' } }],
+        results: [{
+          campaign:       { campaignBudget: 'customers/8325311811/campaignBudgets/987654321' },
+          campaignBudget: { amountMicros: '25000000' }, // S06B: before-snapshot rides the lookup
+        }],
       }) })
       .mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify({ results: [] }) });
 
@@ -351,7 +366,10 @@ describe('acquireLockAndExecute', () => {
     mockFetch
       .mockResolvedValueOnce({ ok: true, json: async () => ({ access_token: 'test-token' }) })
       .mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify({
-        results: [{ campaign: { campaignBudget: 'customers/8325311811/campaignBudgets/987654321' } }],
+        results: [{
+          campaign:       { campaignBudget: 'customers/8325311811/campaignBudgets/987654321' },
+          campaignBudget: { amountMicros: '25000000' }, // S06B: before-snapshot rides the lookup
+        }],
       }) })
       .mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify({ results: [] }) });
 
@@ -380,7 +398,7 @@ describe('acquireLockAndExecute', () => {
 
   // ── Bug 17: budget_id fast-path and GET-campaign error paths ─────────────────
 
-  it('adjust_budget uses budget_id directly when supplied — skips GET-campaign (2 fetch calls)', async () => {
+  it('adjust_budget uses budget_id directly when supplied — skips GET-campaign, adds one snapshot read (S06B)', async () => {
     const action = makeAction({
       action_type:    'adjust_budget',
       channel:        'google',
@@ -392,15 +410,19 @@ describe('acquireLockAndExecute', () => {
     );
     mockFetch
       .mockResolvedValueOnce({ ok: true, json: async () => ({ access_token: 'test-token' }) })
+      .mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify({
+        results: [{ campaignBudget: { id: '987654321', amountMicros: '25000000' } }],
+      }) })
       .mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify({ results: [] }) });
 
     const { httpStatus, body } = await acquireLockAndExecute('action-123', { account: FPB_ACCOUNT, connection: GOOGLE_CONN });
     expect(httpStatus).toBe(200);
     expect(body.executed).toBe(true);
     expect(body.new_budget_usd).toBe(50);
-    // Only 2 calls: OAuth + mutate — no GET-campaign search
-    expect(mockFetch).toHaveBeenCalledTimes(2);
-    expect(mockFetch.mock.calls[1][0]).toContain('campaignBudgets:mutate');
+    // 3 calls: OAuth + dedicated before-snapshot read + mutate — no GET-campaign search
+    expect(mockFetch).toHaveBeenCalledTimes(3);
+    expect(mockFetch.mock.calls[1][0]).toContain('googleAds:search');
+    expect(mockFetch.mock.calls[2][0]).toContain('campaignBudgets:mutate');
   });
 
   it('adjust_budget throws when GET-campaign lookup returns non-ok response', async () => {
@@ -482,14 +504,15 @@ describe('acquireLockAndExecute', () => {
     );
     mockFetch
       .mockResolvedValueOnce({ ok: true, json: async () => ({ access_token: 'test-token' }) })
+      .mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify({ results: [{ campaign: { status: 'PAUSED' } }] }) })
       .mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify({ results: [] }) });
 
     const { httpStatus, body } = await acquireLockAndExecute('action-123', { account: FPB_ACCOUNT, connection: GOOGLE_CONN });
     expect(httpStatus).toBe(200);
     expect(body.success).toBe(true);
     expect(body.executed).toBe(true);
-    // Verify ENABLED was sent (not PAUSED)
-    const googleApiBody = JSON.parse(mockFetch.mock.calls[1][1].body);
+    // Verify ENABLED was sent (not PAUSED) — call 2 is the mutate (call 1 is the S06B status read)
+    const googleApiBody = JSON.parse(mockFetch.mock.calls[2][1].body);
     expect(googleApiBody.operations[0].update.status).toBe('ENABLED');
   });
 
@@ -532,11 +555,16 @@ describe('acquireLockAndExecute', () => {
       { data: lockedRow, error: null },  // lock acquired
     );
 
-    // Meta campaign status API
-    mockFetch.mockResolvedValueOnce({
-      ok:   true,
-      json: async () => ({ success: true }),
-    });
+    // Meta status snapshot read (S06B), then campaign status mutate
+    mockFetch
+      .mockResolvedValueOnce({
+        ok:   true,
+        json: async () => ({ status: 'ACTIVE' }),
+      })
+      .mockResolvedValueOnce({
+        ok:   true,
+        json: async () => ({ success: true }),
+      });
 
     const { httpStatus, body } = await acquireLockAndExecute('action-123', { account: FPB_ACCOUNT, connection: META_CONN });
     expect(httpStatus).toBe(200);
@@ -569,11 +597,15 @@ describe('acquireLockAndExecute', () => {
       { data: lockedRow, error: null },
     );
 
-    // Two fetch calls: OAuth token exchange, then Google Ads mutate
+    // Three fetch calls: OAuth token exchange, status snapshot read (S06B), then mutate
     mockFetch
       .mockResolvedValueOnce({
         ok:   true,
         json: async () => ({ access_token: 'gads-access-token' }),
+      })
+      .mockResolvedValueOnce({
+        ok:   true,
+        text: async () => JSON.stringify({ results: [{ campaign: { status: 'ENABLED' } }] }),
       })
       .mockResolvedValueOnce({
         ok:   true,
@@ -584,9 +616,10 @@ describe('acquireLockAndExecute', () => {
     expect(httpStatus).toBe(200);
     expect(body.success).toBe(true);
     expect(body.executed).toBe(true);
-    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(mockFetch).toHaveBeenCalledTimes(3);
     expect(mockFetch.mock.calls[0][0]).toContain('oauth2.googleapis.com');
-    expect(mockFetch.mock.calls[1][0]).toContain('googleads.googleapis.com');
+    expect(mockFetch.mock.calls[1][0]).toContain('googleAds:search');
+    expect(mockFetch.mock.calls[2][0]).toContain('campaigns:mutate');
     // Verify the OAuth refresh token came from the connection, not env
     const oauthBody = mockFetch.mock.calls[0][1].body.toString();
     expect(oauthBody).toContain('refresh_token=test-google-refresh-token');
@@ -782,6 +815,7 @@ describe('acquireLockAndExecute — budget guard gate', () => {
     });
     mockFetch
       .mockResolvedValueOnce({ ok: true, json: async () => ({ access_token: 'test-token' }) })
+      .mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify({ results: [{ campaign: { status: 'ENABLED' } }] }) })
       .mockResolvedValueOnce({ ok: true, text: async () => '{"results":[]}' });
 
     const { httpStatus, body } = await acquireLockAndExecute('action-123', { account: FPB_ACCOUNT, connection: GOOGLE_CONN });
@@ -801,6 +835,7 @@ describe('acquireLockAndExecute — budget guard gate', () => {
     );
     mockFetch
       .mockResolvedValueOnce({ ok: true, json: async () => ({ access_token: 'test-token' }) })
+      .mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify({ results: [{ campaign: { status: 'ENABLED' } }] }) })
       .mockResolvedValueOnce({ ok: true, text: async () => '{"results":[]}' });
 
     await acquireLockAndExecute('action-123', { account: FPB_ACCOUNT, connection: GOOGLE_CONN });
@@ -841,6 +876,7 @@ describe('executeTransient — budget guard gate', () => {
     });
     mockFetch
       .mockResolvedValueOnce({ ok: true, json: async () => ({ access_token: 'test-token' }) })
+      .mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify({ results: [{ campaign: { status: 'ENABLED' } }] }) })
       .mockResolvedValueOnce({ ok: true, text: async () => '{"results":[]}' });
 
     const { httpStatus, body } = await executeTransient(

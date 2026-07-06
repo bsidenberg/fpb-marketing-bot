@@ -39,6 +39,12 @@ import { recordApiCall } from './api-cost.js';
 import { recordActionOutcome } from './autonomy-coordinator.js';
 import { runBudgetGuardsForExecution } from './budget-guards.js';
 
+// ── Execution audit (SESSION-06B) ────────────────────────────────────────────
+// A dry-run finalizes the row with this non-null result, which action-states
+// isFinal() treats as terminal BY DESIGN: a simulated row is consumed and can
+// never be confused with (or upgraded to) a live execution — re-stage to run live.
+const DRY_RUN_RESULT = 'dry_run_success';
+
 // ── Platform normaliser ───────────────────────────────────────────────────────
 export function normalizePlatform(platform) {
   if (['google', 'google_ads', 'Google Ads'].includes(platform)) return 'google';
@@ -88,7 +94,7 @@ async function getGoogleAccessToken(refreshToken) {
   return json.access_token;
 }
 
-export async function executeGoogle(action, { account, connection }) {
+export async function executeGoogle(action, { account, connection, mode = 'live' }) {
   if (!connection) {
     throw new Error(`executeGoogle requires a google_ads connection (account=${account?.slug ?? 'unknown'})`);
   }
@@ -114,6 +120,50 @@ export async function executeGoogle(action, { account, connection }) {
   const status      = actionType === 'pause_campaign' ? 'PAUSED' : 'ENABLED';
   const accessToken = await getGoogleAccessToken(refreshToken);
 
+  // ── Before-snapshot (SESSION-06B): read current campaign status ─────────────
+  // Fail closed on live mutations: no before-snapshot → no mutation, and no
+  // rollback_payload is ever derived from missing data. Dry-run alone may
+  // proceed with a noted-null snapshot.
+  const searchUrl = `https://googleads.googleapis.com/v23/customers/${customerId}/googleAds:search`;
+  let beforeSnapshot  = null;
+  let rollbackPayload = null;
+  try {
+    const readRes = await fetch(searchUrl, {
+      method: 'POST',
+      headers: {
+        Authorization:       `Bearer ${accessToken}`,
+        'developer-token':   process.env.GOOGLE_ADS_DEVELOPER_TOKEN,
+        'login-customer-id': managerAccountId,
+        'Content-Type':      'application/json',
+      },
+      body: JSON.stringify({
+        query: `SELECT campaign.status FROM campaign WHERE campaign.id = ${campaignId} LIMIT 1`,
+      }),
+    });
+    const readText = await readRes.text();
+    if (!readRes.ok) throw new Error(`status read failed (${readRes.status}): ${readText.substring(0, 300)}`);
+    const priorStatus = JSON.parse(readText).results?.[0]?.campaign?.status;
+    if (!priorStatus) throw new Error(`campaign ${campaignId} status missing from read response`);
+    await recordApiCall('google_ads', 'snapshot_read', account.id);
+    beforeSnapshot  = { campaign_id: campaignId, status: priorStatus, source: 'google_ads', captured_at: new Date().toISOString() };
+    rollbackPayload = {
+      action_type: priorStatus === 'ENABLED' ? 'resume_campaign' : 'pause_campaign',
+      campaign_id: campaignId,
+    };
+  } catch (snapErr) {
+    if (mode !== 'dry_run') {
+      throw new Error(`Snapshot capture failed — live mutation aborted: ${snapErr.message}`);
+    }
+    beforeSnapshot = { unavailable: true, reason: snapErr.message, captured_at: new Date().toISOString() };
+  }
+
+  const audit = { before_snapshot: beforeSnapshot, after_snapshot: null, rollback_payload: rollbackPayload };
+
+  if (mode === 'dry_run') {
+    audit.after_snapshot = { campaign_id: campaignId, status, derived: true, simulated: true };
+    return { campaign_id: campaignId, status, simulated: true, audit };
+  }
+
   const url = `https://googleads.googleapis.com/v23/customers/${customerId}/campaigns:mutate`;
   const res = await fetch(url, {
     method: 'POST',
@@ -134,11 +184,12 @@ export async function executeGoogle(action, { account, connection }) {
   if (!res.ok) throw new Error(`Google Ads API ${res.status}: ${text.substring(0, 400)}`);
   // Cost ledger — fire-and-forget
   await recordApiCall('google_ads', 'campaign_mutate', account.id);
-  return JSON.parse(text);
+  audit.after_snapshot = { campaign_id: campaignId, status, derived: true };
+  return { campaign_id: campaignId, status, audit };
 }
 
 // ── Google Ads: adjust campaign budget ───────────────────────────────────────
-export async function executeGoogleAdjustBudget(action, { account, connection }) {
+export async function executeGoogleAdjustBudget(action, { account, connection, mode = 'live' }) {
   if (!connection) {
     throw new Error(`executeGoogleAdjustBudget requires a google_ads connection (account=${account?.slug ?? 'unknown'})`);
   }
@@ -187,22 +238,29 @@ export async function executeGoogleAdjustBudget(action, { account, connection })
   // Slow path: fetch the campaign record to find its linked campaignBudget resource name,
   // then extract the numeric ID. This avoids incorrectly using campaign_id as budget_id
   // (they are unrelated IDs in the Google Ads data model).
+  // SESSION-06B: the slow-path lookup also selects campaign_budget.amount_micros so
+  // the before-snapshot rides the read that already happens (no extra API call).
+  // The fast path needs one dedicated snapshot read (cost-ledger recorded).
+  const searchUrl = `https://googleads.googleapis.com/v23/customers/${customerId}/googleAds:search`;
+  const searchHeaders = {
+    Authorization:       `Bearer ${accessToken}`,
+    'developer-token':   process.env.GOOGLE_ADS_DEVELOPER_TOKEN,
+    'login-customer-id': managerAccountId,
+    'Content-Type':      'application/json',
+  };
+
   let budgetId = action.execution_data?.budget_id
     ? String(action.execution_data.budget_id)
     : null;
+  let beforeAmountMicros = null;
+  let snapshotFailure    = null;
 
   if (!budgetId) {
-    const searchUrl = `https://googleads.googleapis.com/v23/customers/${customerId}/googleAds:search`;
     const searchRes = await fetch(searchUrl, {
-      method: 'POST',
-      headers: {
-        Authorization:       `Bearer ${accessToken}`,
-        'developer-token':   process.env.GOOGLE_ADS_DEVELOPER_TOKEN,
-        'login-customer-id': managerAccountId,
-        'Content-Type':      'application/json',
-      },
+      method:  'POST',
+      headers: searchHeaders,
       body: JSON.stringify({
-        query: `SELECT campaign.campaign_budget FROM campaign WHERE campaign.id = ${campaignId} LIMIT 1`,
+        query: `SELECT campaign.campaign_budget, campaign_budget.amount_micros FROM campaign WHERE campaign.id = ${campaignId} LIMIT 1`,
       }),
     });
     const searchText = await searchRes.text();
@@ -220,6 +278,65 @@ export async function executeGoogleAdjustBudget(action, { account, connection })
       throw new Error(`Could not find campaign budget resource for campaign ${campaignId} — provide budget_id in execution_data`);
     }
     budgetId = budgetResource.split('/').pop();
+    const rawMicros = searchData.results?.[0]?.campaignBudget?.amountMicros;
+    beforeAmountMicros = rawMicros != null && Number.isFinite(Number(rawMicros)) ? Number(rawMicros) : null;
+    if (beforeAmountMicros == null) {
+      snapshotFailure = `campaign budget amount missing from lookup response for budget ${budgetId}`;
+    }
+  } else {
+    try {
+      const readRes = await fetch(searchUrl, {
+        method:  'POST',
+        headers: searchHeaders,
+        body: JSON.stringify({
+          query: `SELECT campaign_budget.id, campaign_budget.amount_micros FROM campaign_budget WHERE campaign_budget.id = ${budgetId} LIMIT 1`,
+        }),
+      });
+      const readText = await readRes.text();
+      if (!readRes.ok) throw new Error(`budget read failed (${readRes.status}): ${readText.substring(0, 300)}`);
+      const rawMicros = JSON.parse(readText).results?.[0]?.campaignBudget?.amountMicros;
+      if (rawMicros == null || !Number.isFinite(Number(rawMicros))) {
+        throw new Error(`budget amount missing from read response for budget ${budgetId}`);
+      }
+      beforeAmountMicros = Number(rawMicros);
+      await recordApiCall('google_ads', 'snapshot_read', account.id);
+    } catch (snapErr) {
+      snapshotFailure = snapErr.message;
+    }
+  }
+
+  // ── Snapshot / rollback assembly (SESSION-06B) ──────────────────────────────
+  // Fail closed on live mutations: no before-snapshot → no mutation, and no
+  // rollback_payload is ever derived from missing data. Dry-run alone may
+  // proceed with a noted-null snapshot.
+  let beforeSnapshot  = null;
+  let rollbackPayload = null;
+  if (beforeAmountMicros != null) {
+    beforeSnapshot = {
+      campaign_id:   campaignId,
+      budget_id:     budgetId,
+      amount_micros: beforeAmountMicros,
+      amount_usd:    beforeAmountMicros / 1_000_000,
+      source:        'google_ads',
+      captured_at:   new Date().toISOString(),
+    };
+    rollbackPayload = {
+      action_type:       'adjust_budget',
+      campaign_id:       campaignId,
+      budget_id:         budgetId,
+      recommended_value: beforeAmountMicros / 1_000_000,
+    };
+  } else if (mode !== 'dry_run') {
+    throw new Error(`Snapshot capture failed — live mutation aborted: ${snapshotFailure}`);
+  } else {
+    beforeSnapshot = { unavailable: true, reason: snapshotFailure, captured_at: new Date().toISOString() };
+  }
+
+  const audit = { before_snapshot: beforeSnapshot, after_snapshot: null, rollback_payload: rollbackPayload };
+
+  if (mode === 'dry_run') {
+    audit.after_snapshot = { budget_id: budgetId, amount_micros: amountMicros, amount_usd: budget, derived: true, simulated: true };
+    return { campaign_id: campaignId, new_budget_usd: budget, amount_micros: amountMicros, simulated: true, audit };
   }
 
   const url = `https://googleads.googleapis.com/v23/customers/${customerId}/campaignBudgets:mutate`;
@@ -246,11 +363,12 @@ export async function executeGoogleAdjustBudget(action, { account, connection })
 
   await recordApiCall('google_ads', 'budget_mutate', account.id);
 
-  return { campaign_id: campaignId, new_budget_usd: budget, amount_micros: amountMicros };
+  audit.after_snapshot = { budget_id: budgetId, amount_micros: amountMicros, amount_usd: budget, derived: true };
+  return { campaign_id: campaignId, new_budget_usd: budget, amount_micros: amountMicros, audit };
 }
 
 // ── Google Ads: add negative keyword to a campaign ────────────────────────────
-export async function executeGoogleAddNegativeKeyword(action, { account, connection }) {
+export async function executeGoogleAddNegativeKeyword(action, { account, connection, mode = 'live' }) {
   if (!connection) {
     throw new Error(`executeGoogleAddNegativeKeyword requires a google_ads connection (account=${account?.slug ?? 'unknown'})`);
   }
@@ -274,6 +392,27 @@ export async function executeGoogleAddNegativeKeyword(action, { account, connect
   }
   if (!keywordText || typeof keywordText !== 'string' || !keywordText.trim()) {
     throw new Error('executeGoogleAddNegativeKeyword requires execution_data.keyword_text');
+  }
+
+  // SESSION-06B audit: creation action — the prior platform state is absence,
+  // so the before-snapshot needs no read. The rollback (remove the criterion)
+  // can only be derived from the mutate response's resource name.
+  const audit = {
+    before_snapshot: {
+      campaign_id:  campaignId,
+      keyword_text: keywordText.trim(),
+      match_type:   matchType,
+      criterion:    null,
+      note:         'creation — keyword did not exist before',
+      captured_at:  new Date().toISOString(),
+    },
+    after_snapshot:   null,
+    rollback_payload: null,
+  };
+
+  if (mode === 'dry_run') {
+    audit.after_snapshot = { campaign_id: campaignId, keyword_text: keywordText.trim(), match_type: matchType, simulated: true };
+    return { campaign_id: campaignId, keyword_text: keywordText.trim(), match_type: matchType, simulated: true, audit };
   }
 
   const customerId       = connection.resolved_account_id_external.replace(/-/g, '');
@@ -306,11 +445,26 @@ export async function executeGoogleAddNegativeKeyword(action, { account, connect
 
   await recordApiCall('google_ads', 'negative_keyword_add', account.id);
 
-  return { campaign_id: campaignId, keyword_text: keywordText.trim(), match_type: matchType };
+  let criterionResourceName = null;
+  try {
+    criterionResourceName = JSON.parse(text)?.results?.[0]?.resourceName ?? null;
+  } catch (e) { /* mutate succeeded but response not parseable — rollback stays null */ }
+  audit.after_snapshot = {
+    campaign_id:             campaignId,
+    criterion_resource_name: criterionResourceName,
+    keyword_text:            keywordText.trim(),
+    match_type:              matchType,
+    derived:                 true,
+  };
+  // Never store a rollback derived from missing data (SESSION-06B refinement)
+  audit.rollback_payload = criterionResourceName
+    ? { action_type: 'remove_negative_keyword', campaign_id: campaignId, criterion_resource_name: criterionResourceName }
+    : null;
+  return { campaign_id: campaignId, keyword_text: keywordText.trim(), match_type: matchType, audit };
 }
 
 // ── Meta campaign status ──────────────────────────────────────────────────────
-export async function executeMeta(action, { account, connection }) {
+export async function executeMeta(action, { account, connection, mode = 'live' }) {
   if (!connection) {
     throw new Error(`executeMeta requires a meta_ads connection (account=${account?.slug ?? 'unknown'})`);
   }
@@ -326,7 +480,42 @@ export async function executeMeta(action, { account, connection }) {
   }
 
   const status = actionType === 'pause_campaign' ? 'PAUSED' : 'ACTIVE';
-  const url    = new URL(`https://graph.facebook.com/v19.0/${campaignId}`);
+
+  // ── Before-snapshot (SESSION-06B): read current campaign status ─────────────
+  // Fail closed on live mutations: no before-snapshot → no mutation, and no
+  // rollback_payload is ever derived from missing data. Dry-run alone may
+  // proceed with a noted-null snapshot.
+  let beforeSnapshot  = null;
+  let rollbackPayload = null;
+  try {
+    const readUrl = new URL(`https://graph.facebook.com/v19.0/${campaignId}`);
+    readUrl.searchParams.set('fields', 'status');
+    readUrl.searchParams.set('access_token', accessToken);
+    const readRes  = await fetch(readUrl.toString());
+    const readJson = await readRes.json();
+    if (readJson.error) throw new Error(readJson.error.message || `Meta status read error code ${readJson.error.code}`);
+    if (!readJson.status) throw new Error(`campaign ${campaignId} status missing from read response`);
+    await recordApiCall('meta_ads', 'snapshot_read', account.id);
+    beforeSnapshot  = { campaign_id: campaignId, status: readJson.status, source: 'meta_ads', captured_at: new Date().toISOString() };
+    rollbackPayload = {
+      action_type: readJson.status === 'PAUSED' ? 'pause_campaign' : 'resume_campaign',
+      campaign_id: campaignId,
+    };
+  } catch (snapErr) {
+    if (mode !== 'dry_run') {
+      throw new Error(`Snapshot capture failed — live mutation aborted: ${snapErr.message}`);
+    }
+    beforeSnapshot = { unavailable: true, reason: snapErr.message, captured_at: new Date().toISOString() };
+  }
+
+  const audit = { before_snapshot: beforeSnapshot, after_snapshot: null, rollback_payload: rollbackPayload };
+
+  if (mode === 'dry_run') {
+    audit.after_snapshot = { campaign_id: campaignId, status, derived: true, simulated: true };
+    return { campaign_id: campaignId, status, simulated: true, audit };
+  }
+
+  const url = new URL(`https://graph.facebook.com/v19.0/${campaignId}`);
   url.searchParams.set('access_token', accessToken);
   url.searchParams.set('status', status);
 
@@ -335,11 +524,12 @@ export async function executeMeta(action, { account, connection }) {
   if (json.error) throw new Error(json.error.message || `Meta API error code ${json.error.code}`);
   // Cost ledger — fire-and-forget
   await recordApiCall('meta_ads', 'campaign_mutate', account.id);
-  return json;
+  audit.after_snapshot = { campaign_id: campaignId, status, derived: true };
+  return { campaign_id: campaignId, status, audit };
 }
 
 // ── Meta creative publish ─────────────────────────────────────────────────────
-export async function executePublishCreative(action, { account, connection }) {
+export async function executePublishCreative(action, { account, connection, mode = 'live' }) {
   if (!connection) {
     throw new Error(`executePublishCreative requires a meta_ads connection (account=${account?.slug ?? 'unknown'})`);
   }
@@ -374,6 +564,18 @@ export async function executePublishCreative(action, { account, connection }) {
     SIGN_UP: 'SIGN_UP', SUBSCRIBE: 'SUBSCRIBE',
   };
   const ctaType = ctaMap[callToAction] || 'LEARN_MORE';
+
+  // SESSION-06B audit: creation action — prior platform state is absence.
+  const audit = {
+    before_snapshot:  { note: 'creation — no prior platform state', captured_at: new Date().toISOString() },
+    after_snapshot:   null,
+    rollback_payload: null,
+  };
+
+  if (mode === 'dry_run') {
+    audit.after_snapshot = { simulated: true, would_create: { ad_name: adName, format, headline, call_to_action: ctaType } };
+    return { simulated: true, format, audit };
+  }
 
   // Step 1: upload image
   const boundary = '----FPBBoundary' + Date.now().toString(16);
@@ -421,16 +623,19 @@ export async function executePublishCreative(action, { account, connection }) {
   // Cost ledger — fire-and-forget (image upload + creative = 2 calls)
   await recordApiCall('meta_ads', 'creative_upload', account.id, { format });
 
+  audit.after_snapshot   = { creative_id: creativeJson.id, image_hash: imageHash, format, derived: true };
+  audit.rollback_payload = { action_type: 'delete_creative', creative_id: creativeJson.id, note: 'stored only — deletion is never auto-executed' };
   return {
     creative_id: creativeJson.id,
     image_hash:  imageHash,
     format,
     preview_url: `https://www.facebook.com/ads/creativehub/creative/?id=${creativeJson.id}`,
+    audit,
   };
 }
 
 // ── Meta campaign creation ────────────────────────────────────────────────────
-export async function executeCreateMetaCampaign(action, { account, connection }) {
+export async function executeCreateMetaCampaign(action, { account, connection, mode = 'live' }) {
   if (!connection) {
     throw new Error(`executeCreateMetaCampaign requires a meta_ads connection (account=${account?.slug ?? 'unknown'})`);
   }
@@ -456,6 +661,18 @@ export async function executeCreateMetaCampaign(action, { account, connection })
   // Stage B1 preserves the existing behavior. Don't try to "fix" the discrepancy.
   const adAccountId = connection.resolved_account_id_external;
   const apiBase     = 'https://graph.facebook.com/v19.0';
+
+  // SESSION-06B audit: creation action — prior platform state is absence.
+  const audit = {
+    before_snapshot:  { note: 'creation — no prior platform state', captured_at: new Date().toISOString() },
+    after_snapshot:   null,
+    rollback_payload: null,
+  };
+
+  if (mode === 'dry_run') {
+    audit.after_snapshot = { simulated: true, would_create: { campaign_name: campaignName, objective, daily_budget_usd: dailyBudget, status: 'PAUSED' } };
+    return { simulated: true, status: 'PAUSED', audit };
+  }
 
   // Create campaign — always PAUSED; must be manually activated in Ads Manager
   const campaignRes  = await fetch(`${apiBase}/act_${adAccountId}/campaigns`, {
@@ -499,10 +716,13 @@ export async function executeCreateMetaCampaign(action, { account, connection })
   // Cost ledger — fire-and-forget (campaign + adset = 2 API calls, logged as one event)
   await recordApiCall('meta_ads', 'campaign_create', account.id);
 
+  audit.after_snapshot   = { campaign_id: campaignData.id, ad_set_id: adSetData.id, status: 'PAUSED', derived: true };
+  audit.rollback_payload = { action_type: 'delete_campaign', campaign_id: campaignData.id, ad_set_id: adSetData.id, note: 'stored only — deletion is never auto-executed' };
   return {
     campaign_id: campaignData.id,
     ad_set_id:   adSetData.id,
     status:      'PAUSED',
+    audit,
   };
 }
 
@@ -529,16 +749,24 @@ export async function executeCreateMetaCampaign(action, { account, connection })
  * Throws (rather than returning a structured response) ONLY on TOCTOU mismatch.
  * The route handler's outer try/catch (or platform error handler) converts to 500.
  */
-export async function acquireLockAndExecute(actionId, { account, connection }) {
+export async function acquireLockAndExecute(actionId, { account, connection, reviewedBy, dryRun }) {
   if (!account) {
     throw new Error('acquireLockAndExecute requires { account } context');
   }
-  const now = new Date().toISOString();
+  const now  = new Date().toISOString();
+  const mode = dryRun === true ? 'dry_run' : 'live';
+
+  // SESSION-06B: reviewed_by is NEVER null on a finalized row. auto_execute=true
+  // rows are coordinator-staged and always attribute to 'system:auto' regardless
+  // of which endpoint fired them; otherwise the caller's identity wins
+  // ('admin' from approve-action, 'system:execute-secret' from execute-action).
+  const resolveReviewer = (row) =>
+    row?.auto_execute === true ? 'system:auto' : (reviewedBy || 'system:execute-secret');
 
   // Fetch current state so we can validate before acquiring the lock
   const { data: current, error: fetchErr } = await supabase
     .from('actions')
-    .select('account_id, status, result, action_type, channel, execution_data')
+    .select('account_id, status, result, action_type, channel, execution_data, auto_execute')
     .eq('id', actionId)
     .maybeSingle();
 
@@ -566,6 +794,7 @@ export async function acquireLockAndExecute(actionId, { account, connection }) {
     const { error: manualUpdateErr } = await supabase.from('actions').update({
       status:      STATUS.APPROVED,
       reviewed_at: now,
+      reviewed_by: resolveReviewer(current),
       result:      EXEC_RESULT.REQUIRES_MANUAL,
     }).eq('id', actionId);
     if (manualUpdateErr) {
@@ -669,20 +898,18 @@ export async function acquireLockAndExecute(actionId, { account, connection }) {
     }
 
     if (actionType === 'publish_creative') {
-      extraMeta = await executePublishCreative(locked, { account, connection });
+      extraMeta = await executePublishCreative(locked, { account, connection, mode });
     } else if (actionType === 'create_meta_campaign') {
-      extraMeta = await executeCreateMetaCampaign(locked, { account, connection });
+      extraMeta = await executeCreateMetaCampaign(locked, { account, connection, mode });
     } else if (actionType === 'adjust_budget') {
-      extraMeta = await executeGoogleAdjustBudget(locked, { account, connection });
+      extraMeta = await executeGoogleAdjustBudget(locked, { account, connection, mode });
     } else if (actionType === 'add_negative_keyword') {
-      extraMeta = await executeGoogleAddNegativeKeyword(locked, { account, connection });
+      extraMeta = await executeGoogleAddNegativeKeyword(locked, { account, connection, mode });
     } else if (normalizedPlatform === 'google' && campaignId) {
       // handles pause_campaign, enable_campaign, resume_campaign
-      await executeGoogle(locked, { account, connection });
-      extraMeta = { campaign_id: campaignId };
+      extraMeta = await executeGoogle(locked, { account, connection, mode });
     } else if (normalizedPlatform === 'meta' && campaignId) {
-      await executeMeta(locked, { account, connection });
-      extraMeta = { campaign_id: campaignId };
+      extraMeta = await executeMeta(locked, { account, connection, mode });
     } else {
       throw new Error(`No executor for action_type=${actionType} platform=${normalizedPlatform}`);
     }
@@ -691,37 +918,75 @@ export async function acquireLockAndExecute(actionId, { account, connection }) {
   }
 
   // ── Update action row ─────────────────────────────────────────────────────────
-  const finalResult = executionError || EXEC_RESULT.SUCCESS;
-  const { error: finalUpdateErr } = await supabase.from('actions').update({
-    status:      STATUS.APPROVED,
-    reviewed_at: now,
-    executed_at: now,
-    result:      finalResult,
-  }).eq('id', actionId);
+  // SESSION-06B: snapshots, rollback, execution_mode, and reviewed_by land on
+  // the SAME update that finalizes the row — no window where a finalized row
+  // has a null approver or a live mutation lacks its audit trail. A throw
+  // before/during the mutate leaves audit null (and therefore rollback null).
+  const { audit = null, ...responseMeta } = extraMeta || {};
+  const succeeded   = !executionError;
+  const finalResult = executionError || (mode === 'dry_run' ? DRY_RUN_RESULT : EXEC_RESULT.SUCCESS);
+  const finalUpdate = {
+    reviewed_at:      now,
+    reviewed_by:      resolveReviewer(locked),
+    result:           finalResult,
+    execution_mode:   mode,
+    before_snapshot:  audit?.before_snapshot ?? null,
+    after_snapshot:   audit?.after_snapshot ?? null,
+    rollback_payload: audit?.rollback_payload ?? null,
+  };
+  if (mode === 'live') {
+    // Dry-run leaves status untouched and executed_at unset — nothing was
+    // approved or executed; the mode column is the authoritative marker.
+    finalUpdate.status      = STATUS.APPROVED;
+    finalUpdate.executed_at = now;
+  }
+  const { error: finalUpdateErr } = await supabase.from('actions').update(finalUpdate).eq('id', actionId);
   if (finalUpdateErr) {
     console.error('[execute-action-logic] final status update failed:', finalUpdateErr.code, finalUpdateErr.message);
   }
 
   // ── Audit log ─────────────────────────────────────────────────────────────────
-  const succeeded = !executionError;
   await writeLog({
     actionId, accountId: account.id, now,
     actionType,
     platform:    supabasePlatform,
     status:      succeeded ? 'complete' : 'error',
     description: succeeded
-      ? buildSuccessDesc(actionType, extraMeta)
+      ? (mode === 'dry_run'
+          ? `DRY RUN (no platform change): ${buildSuccessDesc(actionType, responseMeta)}`
+          : buildSuccessDesc(actionType, responseMeta))
       : `${actionType} failed: ${executionError}`,
-    metadata: { ...extraMeta, ...(executionError ? { error: executionError } : {}) },
+    metadata: { ...responseMeta, execution_mode: mode, ...(executionError ? { error: executionError } : {}) },
   });
 
   // ── Record outcome for autonomy posture tracking (fire-and-forget) ────────────
-  recordActionOutcome(actionId, account.id, inferPillar(actionType), actionType, succeeded);
+  // Dry-runs are simulations — they must not feed autonomy graduation stats.
+  if (mode === 'live') {
+    recordActionOutcome(actionId, account.id, inferPillar(actionType), actionType, succeeded);
+  }
 
   if (succeeded) {
-    return { httpStatus: 200, body: { success: true, executed: true, ...flattenMeta(extraMeta) } };
+    return {
+      httpStatus: 200,
+      body: {
+        success:        true,
+        executed:       mode === 'live',
+        execution_mode: mode,
+        ...(mode === 'dry_run' ? { dry_run: true } : {}),
+        ...flattenMeta(responseMeta),
+      },
+    };
   } else {
-    return { httpStatus: 200, body: { success: true, executed: false, error: executionError } };
+    return {
+      httpStatus: 200,
+      body: {
+        success:        true,
+        executed:       false,
+        execution_mode: mode,
+        ...(mode === 'dry_run' ? { dry_run: true } : {}),
+        error:          executionError,
+      },
+    };
   }
 }
 
@@ -791,12 +1056,16 @@ export async function executeTransient({ platform, actionType, campaignId }, { a
   let extraMeta      = {};
 
   try {
+    // SESSION-06B: executors capture before/after snapshots + rollback even on
+    // the transient path (fail-closed applies). There is no action row here,
+    // so the audit lands in automation_log metadata below.
+    let r;
     if (normalizedPlatform === 'google') {
-      await executeGoogle(action, { account, connection });
+      r = await executeGoogle(action, { account, connection });
     } else {
-      await executeMeta(action, { account, connection });
+      r = await executeMeta(action, { account, connection });
     }
-    extraMeta = { campaign_id: campaignId };
+    extraMeta = { campaign_id: campaignId, ...(r?.audit ? { audit: r.audit } : {}) };
   } catch (err) {
     executionError = err.message;
   }

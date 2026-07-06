@@ -4,6 +4,8 @@
 // POST /api/execute-action
 //   Requires: x-execute-secret header
 //   Optional: x-account-slug header (defaults to 'fpb')
+//   Optional: ?dry_run=true (DB-backed path only) — simulate: guards +
+//             snapshots run, platform mutate is skipped
 //   Body (DB-backed):   { actionId }
 //   Body (transient):   { platform, actionType, campaignId }
 //
@@ -47,6 +49,7 @@ export default async function handler(req, res) {
   if (!account) return;
 
   const { actionId, platform, actionType, campaignId } = req.body || {};
+  const dryRun = req.query?.dry_run === 'true'; // mirrors evaluate-outcomes
 
   // ── DB-backed path ────────────────────────────────────────────────────────────
   if (actionId) {
@@ -103,7 +106,11 @@ export default async function handler(req, res) {
       }
     }
 
-    const { httpStatus, body } = await acquireLockAndExecute(actionId, { account, connection });
+    // SESSION-06B: rows with auto_execute=true attribute to 'system:auto'
+    // inside the shared logic regardless of this caller identity.
+    const { httpStatus, body } = await acquireLockAndExecute(actionId, {
+      account, connection, reviewedBy: 'system:execute-secret', dryRun,
+    });
     return res.status(httpStatus).json(body);
   }
 
@@ -111,6 +118,14 @@ export default async function handler(req, res) {
   // No DB row, so account comes from request envelope only.
   // Connection still resolved via getConnectionForAccount.
   if (platform && actionType) {
+    // SESSION-06B: dry-run requires an action row to record the simulation on;
+    // the transient path has none, so the combination is rejected outright.
+    if (dryRun) {
+      return res.status(400).json({
+        success: false,
+        error:   'dry_run requires actionId — transient executions have no action row to audit',
+      });
+    }
     const channelPlatform = normalizePlatform(platform);
     if (!['google', 'meta'].includes(channelPlatform)) {
       return res.status(400).json({ success: false, error: `Unsupported platform: ${platform}` });

@@ -3,6 +3,8 @@
 //
 // POST /api/approve-action
 //   Body: { actionId: string }
+//   Query: dry_run=true (optional) — simulate: guards + snapshots run,
+//          platform mutate is skipped (mirrors evaluate-outcomes pattern)
 //   Headers: x-account-slug (optional, defaults to 'fpb')
 //
 // This endpoint is called directly by the browser dashboard.
@@ -133,6 +135,11 @@ export default async function handler(req, res) {
   }
 
   // ── Delegate to shared execution logic ──────────────────────────────────
-  const { httpStatus, body } = await acquireLockAndExecute(actionId, { account, connection });
+  // SESSION-06B: requireAdmin exposes no session subject (boolean gate), so the
+  // human-approve path attributes to the stable identifier 'admin'.
+  const dryRun = req.query?.dry_run === 'true'; // mirrors evaluate-outcomes
+  const { httpStatus, body } = await acquireLockAndExecute(actionId, {
+    account, connection, reviewedBy: 'admin', dryRun,
+  });
   return res.status(httpStatus).json(body);
 }
