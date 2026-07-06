@@ -59,8 +59,9 @@ vi.mock('../api/lib/accounts.js', () => ({
 }));
 
 // ── Autonomy mocks — allow everything so we can reach the insert ──────────────
+// vi.fn so tests can also assert what context the handler passes through.
 vi.mock('../api/lib/autonomy-coordinator.js', () => ({
-  checkPostureForAction: async () => ({ verdict: 'require_approval', reason: null }),
+  checkPostureForAction: vi.fn(async () => ({ verdict: 'require_approval', reason: null })),
 }));
 
 vi.mock('../api/lib/autonomy-escalation.js', () => ({
@@ -71,6 +72,7 @@ vi.mock('../api/lib/autonomy-escalation.js', () => ({
 }));
 
 import handler from '../api/actions.js';
+import { checkPostureForAction } from '../api/lib/autonomy-coordinator.js';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function makeReq(bodyOverrides = {}) {
@@ -171,6 +173,35 @@ describe('POST /api/actions — channel normalization', () => {
     await handler(makeReq({ channel: 'google_ads' }), res);
 
     expect(lastActionsInsert()?.account_id).toBe(FPB.id);
+  });
+
+});
+
+// ── SESSION-05: budget-guard staging consult — execution_data pass-through ────
+
+describe('POST /api/actions — coordinator receives execution_data for budget guards', () => {
+
+  it('passes the request execution_data into the coordinator context', async () => {
+    const executionData = { campaign_id: '11111111', current_value: 100, recommended_value: 118 };
+    const res = makeRes();
+    await handler(makeReq({
+      channel:        'google_ads',
+      action_type:    'adjust_budget',
+      execution_data: executionData,
+    }), res);
+
+    expect(res._statusCode).toBe(201);
+    expect(checkPostureForAction).toHaveBeenCalledTimes(1);
+    const context = checkPostureForAction.mock.calls[0][3];
+    expect(context.execution_data).toEqual(executionData);
+  });
+
+  it('passes an empty object when the request has no execution_data (body default)', async () => {
+    const res = makeRes();
+    await handler(makeReq({ channel: 'google_ads' }), res);
+
+    const context = checkPostureForAction.mock.calls[0][3];
+    expect(context.execution_data).toEqual({});
   });
 
 });

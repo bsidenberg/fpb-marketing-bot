@@ -476,6 +476,12 @@ export default async function handler(req, res) {
           conflict,
           anomaly:       detectAnomaly(),
           external_flag: detectExternalFlag(actionPayload),
+          // SESSION-05: budget-guard staging consult (magnitude/protection)
+          execution_data: {
+            campaign_id:       actionPayload.campaign_id       || null,
+            current_value:     actionPayload.current_value     || null,
+            recommended_value: actionPayload.recommended_value || null,
+          },
         };
         const { verdict } = await checkPostureForAction(account.id, pillar, actionPayload.action_type, context);
         if (verdict !== 'block') {

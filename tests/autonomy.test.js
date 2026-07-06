@@ -289,6 +289,107 @@ describe('checkPostureForAction — escalation triggers (full tier)', () => {
   });
 });
 
+// ── checkPostureForAction — budget-guard staging consult (SESSION-05) ─────────
+// The real budget-guards module runs here (not mocked) against the table-keyed
+// Supabase mock: agent_config → guard config, campaign_daily_stats → lookback.
+
+describe('checkPostureForAction — budget guards (staging consult)', () => {
+  function setupFullTier() {
+    setHoldoutResponse(null);
+    setPostureResponse({
+      tier: 'full', holdout: false, cap_per_window: null,
+      cycles_completed: 25, success_count: 24,
+    });
+  }
+
+  function setGoodLookback() {
+    mockResponses['campaign_daily_stats'] = {
+      data: [{ spend: 300, conversions: 6 }],
+      error: null,
+    };
+  }
+
+  it('requires approval for an over-limit budget increase, with the guard reason', async () => {
+    setupFullTier();
+    setGoodLookback();
+    const result = await checkPostureForAction(ACCOUNT_ID, PILLAR, 'adjust_budget', {
+      execution_data: { campaign_id: '11111111', current_value: 100, recommended_value: 118 },
+    });
+    expect(result.verdict).toBe('require_approval');
+    expect(result.reason).toMatch(/budget guard/);
+    expect(result.reason).toMatch(/exceeds max_budget_increase_pct_per_day/);
+  });
+
+  it('flags a >= 25% change as always requiring approval regardless of tier', async () => {
+    setupFullTier();
+    setGoodLookback();
+    const result = await checkPostureForAction(ACCOUNT_ID, PILLAR, 'adjust_budget', {
+      execution_data: { campaign_id: '11111111', current_value: 100, recommended_value: 125 },
+    });
+    expect(result.verdict).toBe('require_approval');
+    expect(result.reason).toMatch(/regardless of autonomy tier/);
+  });
+
+  it('lets a within-limit change with healthy data continue to allow_auto', async () => {
+    setupFullTier();
+    setGoodLookback();
+    const result = await checkPostureForAction(ACCOUNT_ID, PILLAR, 'adjust_budget', {
+      execution_data: { campaign_id: '11111111', current_value: 100, recommended_value: 110 },
+    });
+    expect(result.verdict).toBe('allow_auto');
+  });
+
+  it('requires approval to decrease a protected campaign', async () => {
+    setupFullTier();
+    setGoodLookback();
+    const result = await checkPostureForAction(ACCOUNT_ID, PILLAR, 'adjust_budget', {
+      execution_data: { campaign_id: '21613067518', current_value: 100, recommended_value: 95 },
+    });
+    expect(result.verdict).toBe('require_approval');
+    expect(result.reason).toMatch(/protected list/);
+  });
+
+  it('fails closed on pause at staging — enabled-campaign list is execution-time data', async () => {
+    setupFullTier();
+    setGoodLookback();
+    const result = await checkPostureForAction(ACCOUNT_ID, PILLAR, 'pause_campaign', {
+      execution_data: { campaign_id: '11111111' },
+    });
+    expect(result.verdict).toBe('require_approval');
+    expect(result.reason).toMatch(/last enabled lead-gen campaign/);
+  });
+
+  it('honors agent_config overrides — thresholds are config, not constants', async () => {
+    setupFullTier();
+    setGoodLookback();
+    mockResponses['agent_config'] = {
+      data:  { config_value: { defaults: { max_budget_increase_pct_per_day: 30 } } },
+      error: null,
+    };
+    const result = await checkPostureForAction(ACCOUNT_ID, PILLAR, 'adjust_budget', {
+      execution_data: { campaign_id: '11111111', current_value: 100, recommended_value: 118 },
+    });
+    expect(result.verdict).toBe('allow_auto'); // 18% < 30% override
+  });
+
+  it('guard reason wins over the generic recommend-tier reason', async () => {
+    setHoldoutResponse(null);
+    setPostureResponse({ tier: 'recommend', holdout: false, cap_per_window: null });
+    setGoodLookback();
+    const result = await checkPostureForAction(ACCOUNT_ID, PILLAR, 'adjust_budget', {
+      execution_data: { campaign_id: '11111111', current_value: 100, recommended_value: 130 },
+    });
+    expect(result.verdict).toBe('require_approval');
+    expect(result.reason).toMatch(/budget guard/);
+  });
+
+  it('skips the guard consult entirely when context has no execution_data (back-compat)', async () => {
+    setupFullTier();
+    const result = await checkPostureForAction(ACCOUNT_ID, PILLAR, 'adjust_budget', {});
+    expect(result.verdict).toBe('allow_auto');
+  });
+});
+
 // ── recordActionOutcome ───────────────────────────────────────────────────────
 
 describe('recordActionOutcome', () => {

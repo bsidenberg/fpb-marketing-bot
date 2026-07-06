@@ -113,6 +113,7 @@ export default async function handler(req, res) {
       anomaly:       detectAnomaly(),
       external_flag: detectExternalFlag(req.body),
       confidence:    req.body.confidence ?? undefined,
+      execution_data, // SESSION-05: budget-guard staging consult (magnitude/protection)
     };
 
     const { verdict, reason } = await checkPostureForAction(account.id, pillar, action_type, context);

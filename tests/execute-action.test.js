@@ -41,14 +41,24 @@ vi.mock('../api/lib/supabase.js', () => ({
 const mockFetch = vi.fn();
 vi.stubGlobal('fetch', mockFetch);
 
+// ── Mock budget guards (SESSION-05) ───────────────────────────────────────────
+// Rule correctness is proven in tests/budget-guards.test.js; this file tests
+// the WIRING: verdicts default to 'allow' so executor tests stay isolated,
+// and individual tests override the verdict to exercise the guard gate.
+vi.mock('../api/lib/budget-guards.js', () => ({
+  runBudgetGuardsForExecution: vi.fn(async () => ({ verdict: 'allow', reason: null, triggered: [] })),
+}));
+
 // Import AFTER mocks are registered
 import {
   acquireLockAndExecute,
+  executeTransient,
   executeGoogle,
   executeMeta,
   executePublishCreative,
   executeCreateMetaCampaign,
 } from '../api/lib/execute-action-logic.js';
+import { runBudgetGuardsForExecution } from '../api/lib/budget-guards.js';
 
 // ── Account + connection fixtures ─────────────────────────────────────────────
 const FPB_ACCOUNT = { id: 'fpb-uuid', slug: 'fpb', status: 'active' };
@@ -96,6 +106,10 @@ function queueResults(...results) {
 beforeEach(() => {
   vi.clearAllMocks();
   singleQueue.length = 0;
+
+  // Budget guards default to 'allow' — individual tests override per verdict
+  runBudgetGuardsForExecution.mockReset();
+  runBudgetGuardsForExecution.mockResolvedValue({ verdict: 'allow', reason: null, triggered: [] });
 
   // Globals that intentionally remain in env (per Stage B1 design)
   process.env.GOOGLE_ADS_CLIENT_ID       = 'test-client-id';
@@ -667,6 +681,174 @@ describe('acquireLockAndExecute', () => {
     await expect(
       acquireLockAndExecute('action-123', { connection: null })
     ).rejects.toThrow(/requires \{ account \} context/);
+  });
+
+});
+
+// ── Budget guard wiring (SESSION-05) ──────────────────────────────────────────
+
+describe('acquireLockAndExecute — budget guard gate', () => {
+
+  it('finalizes the action with the guard reason and makes NO platform call on block verdict', async () => {
+    const action = makeAction({
+      action_type:    'adjust_budget',
+      channel:        'google',
+      execution_data: { campaign_id: '123456789', recommended_value: 500 },
+    });
+    queueResults(
+      { data: action, error: null },
+      { data: action, error: null },
+    );
+    runBudgetGuardsForExecution.mockResolvedValueOnce({
+      verdict: 'block',
+      reason:  'projected account daily spend $210 exceeds the account daily spend cap $160',
+      triggered: ['account_daily_cap'],
+    });
+
+    const { httpStatus, body } = await acquireLockAndExecute('action-123', { account: FPB_ACCOUNT, connection: GOOGLE_CONN });
+    expect(httpStatus).toBe(200);
+    expect(body.executed).toBe(false);
+    expect(body.error).toMatch(/blocked by budget guard/i);
+    expect(body.error).toMatch(/daily spend cap/);
+    expect(mockFetch).not.toHaveBeenCalled(); // no OAuth, no mutate — nothing touched the platform
+  });
+
+  it('block is terminal even on the human-approve path (status approved, auto_execute false)', async () => {
+    // A human clicking approve CANNOT override a block verdict.
+    const action = makeAction({
+      action_type:    'pause_campaign',
+      channel:        'google',
+      status:         STATUS.APPROVED,
+      auto_execute:   false,
+      execution_data: { campaign_id: '123456789' },
+    });
+    queueResults(
+      { data: action, error: null },
+      { data: action, error: null },
+    );
+    runBudgetGuardsForExecution.mockResolvedValueOnce({
+      verdict: 'block',
+      reason:  'campaign 123456789 is the last enabled lead-gen campaign for this account — pausing it would halt all lead generation',
+      triggered: ['last_lead_gen_campaign'],
+    });
+
+    const { httpStatus, body } = await acquireLockAndExecute('action-123', { account: FPB_ACCOUNT, connection: GOOGLE_CONN });
+    expect(httpStatus).toBe(200);
+    expect(body.executed).toBe(false);
+    expect(body.error).toMatch(/last enabled lead-gen campaign/);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('defers require_approval verdicts on auto-executed actions back to the human queue', async () => {
+    const action = makeAction({
+      action_type:    'adjust_budget',
+      channel:        'google',
+      auto_execute:   true, // coordinator granted allow_auto at staging
+      execution_data: { campaign_id: '123456789', recommended_value: 120 },
+    });
+    queueResults(
+      { data: action, error: null },
+      { data: action, error: null },
+    );
+    runBudgetGuardsForExecution.mockResolvedValueOnce({
+      verdict: 'require_approval',
+      reason:  'budget increase of 20% exceeds max_budget_increase_pct_per_day 15%',
+      triggered: ['increase_limit'],
+    });
+
+    const { httpStatus, body } = await acquireLockAndExecute('action-123', { account: FPB_ACCOUNT, connection: GOOGLE_CONN });
+    expect(httpStatus).toBe(200);
+    expect(body.executed).toBe(false);
+    expect(body.requires_approval).toBe(true);
+    expect(body.reason).toMatch(/exceeds max_budget_increase_pct_per_day/);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('executes a require_approval action when it was human-initiated (auto_execute false)', async () => {
+    const action = makeAction({
+      action_type:    'pause_campaign',
+      channel:        'google',
+      auto_execute:   false, // only reachable via approve-action or the operator secret
+      execution_data: { campaign_id: '123456789' },
+    });
+    queueResults(
+      { data: action, error: null },
+      { data: action, error: null },
+    );
+    runBudgetGuardsForExecution.mockResolvedValueOnce({
+      verdict: 'require_approval',
+      reason:  'campaign 123456789 is on the protected list — pausing always requires approval',
+      triggered: ['protected_campaign'],
+    });
+    mockFetch
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ access_token: 'test-token' }) })
+      .mockResolvedValueOnce({ ok: true, text: async () => '{"results":[]}' });
+
+    const { httpStatus, body } = await acquireLockAndExecute('action-123', { account: FPB_ACCOUNT, connection: GOOGLE_CONN });
+    expect(httpStatus).toBe(200);
+    expect(body.executed).toBe(true); // human approval satisfies require_approval
+  });
+
+  it('consults the guard with the locked action row', async () => {
+    const action = makeAction({
+      action_type:    'pause_campaign',
+      channel:        'google',
+      execution_data: { campaign_id: '123456789' },
+    });
+    queueResults(
+      { data: action, error: null },
+      { data: action, error: null },
+    );
+    mockFetch
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ access_token: 'test-token' }) })
+      .mockResolvedValueOnce({ ok: true, text: async () => '{"results":[]}' });
+
+    await acquireLockAndExecute('action-123', { account: FPB_ACCOUNT, connection: GOOGLE_CONN });
+    expect(runBudgetGuardsForExecution).toHaveBeenCalledTimes(1);
+    const [guardAction, ctx] = runBudgetGuardsForExecution.mock.calls[0];
+    expect(guardAction.action_type).toBe('pause_campaign');
+    expect(guardAction.execution_data.campaign_id).toBe('123456789');
+    expect(ctx.account).toBe(FPB_ACCOUNT);
+  });
+
+});
+
+describe('executeTransient — budget guard gate', () => {
+
+  it('refuses a blocked transient pause with the guard reason and no platform call', async () => {
+    runBudgetGuardsForExecution.mockResolvedValueOnce({
+      verdict: 'block',
+      reason:  'campaign 123456789 is the last enabled lead-gen campaign for this account — pausing it would halt all lead generation',
+      triggered: ['last_lead_gen_campaign'],
+    });
+
+    const { httpStatus, body } = await executeTransient(
+      { platform: 'google', actionType: 'pause_campaign', campaignId: '123456789' },
+      { account: FPB_ACCOUNT, connection: GOOGLE_CONN },
+    );
+    expect(httpStatus).toBe(200);
+    expect(body.executed).toBe(false);
+    expect(body.blocked).toBe(true);
+    expect(body.error).toMatch(/blocked by budget guard/i);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('proceeds on require_approval — a transient execution is a human confirmation click', async () => {
+    runBudgetGuardsForExecution.mockResolvedValueOnce({
+      verdict: 'require_approval',
+      reason:  'protected campaign',
+      triggered: ['protected_campaign'],
+    });
+    mockFetch
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ access_token: 'test-token' }) })
+      .mockResolvedValueOnce({ ok: true, text: async () => '{"results":[]}' });
+
+    const { httpStatus, body } = await executeTransient(
+      { platform: 'google', actionType: 'pause_campaign', campaignId: '123456789' },
+      { account: FPB_ACCOUNT, connection: GOOGLE_CONN },
+    );
+    expect(httpStatus).toBe(200);
+    expect(body.executed).toBe(true);
   });
 
 });

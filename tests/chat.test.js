@@ -460,6 +460,26 @@ describe('chat — ACTION block emission creates pending action row', () => {
     expect(inserted.execution_data.current_value).toBe('$160'); // LLM value preserved
   });
 
+  it('passes ACTION-block magnitude fields to the coordinator as context.execution_data (SESSION-05)', async () => {
+    setResponse('actions.insert.single', { data: { id: 'action-uuid-456' }, error: null });
+    makeActionFetch(
+      'Raise the budget.\nACTION:{"action_type":"adjust_budget","channel":"google_ads","campaign_id":"g-camp-1","campaign_name":"Google Test","description":"Scale winner","current_value":"$100","recommended_value":"$118"}'
+    );
+
+    const req = makeReq();
+    const res = makeRes();
+    await handler(req, res);
+
+    expect(res._statusCode).toBe(200);
+    expect(checkPostureForAction).toHaveBeenCalled();
+    const context = checkPostureForAction.mock.calls[0][3];
+    expect(context.execution_data).toEqual({
+      campaign_id:       'g-camp-1',
+      current_value:     '$100',
+      recommended_value: '$118',
+    });
+  });
+
   it('returns actionId: null when coordinator returns block verdict — chat response still 200', async () => {
     checkPostureForAction.mockResolvedValueOnce({ verdict: 'block', reason: 'cap exceeded' });
     makeActionFetch(

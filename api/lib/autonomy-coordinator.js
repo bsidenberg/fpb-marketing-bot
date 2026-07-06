@@ -17,6 +17,7 @@
 
 import supabase from './supabase.js';
 import { detectAnomaly } from './autonomy-escalation.js';
+import { runBudgetGuardsForStaging } from './budget-guards.js';
 
 /**
  * Gate function — call before inserting any action into the queue.
@@ -67,6 +68,24 @@ export async function checkPostureForAction(accountId, pillar, actionClass, cont
         verdict: 'block',
         reason: `cadence cap exceeded: ${capResult.count} actions in last ${capResult.windowDays} days (cap: ${capResult.cap})`,
       };
+    }
+
+    // ── Step 3.5: budget guards — spend magnitude & protection (SESSION-05) ─
+    // Runs only when the caller supplies execution_data in context. Uses
+    // staging-visible data (execution_data values + daily-stats lookback);
+    // live-state rules (account cap, last-campaign) are re-enforced at
+    // execution time by runBudgetGuardsForExecution. Placed BEFORE the tier
+    // check so major-change rules fire regardless of autonomy tier.
+    if (context.execution_data) {
+      const guard = await runBudgetGuardsForStaging(accountId, actionClass, context.execution_data);
+      if (guard.verdict === 'block') {
+        log('block', accountId, pillar, actionClass, `budget guard: ${guard.reason}`);
+        return { verdict: 'block', reason: `budget guard: ${guard.reason}` };
+      }
+      if (guard.verdict === 'require_approval') {
+        log('require_approval', accountId, pillar, actionClass, `budget guard: ${guard.reason}`);
+        return { verdict: 'require_approval', reason: `budget guard: ${guard.reason}` };
+      }
     }
 
     // ── Step 4: tier check ───────────────────────────────────────────────────

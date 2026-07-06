@@ -37,6 +37,7 @@ import {
 } from './action-states.js';
 import { recordApiCall } from './api-cost.js';
 import { recordActionOutcome } from './autonomy-coordinator.js';
+import { runBudgetGuardsForExecution } from './budget-guards.js';
 
 // ── Platform normaliser ───────────────────────────────────────────────────────
 export function normalizePlatform(platform) {
@@ -612,7 +613,7 @@ export async function acquireLockAndExecute(actionId, { account, connection }) {
     .eq('id', actionId)
     .in('status', [STATUS.PENDING, STATUS.APPROVED])
     .is('result', null)
-    .select('account_id, action_type, channel, execution_data')
+    .select('account_id, action_type, channel, execution_data, auto_execute')
     .single();
 
   // PGRST116 = no rows matched the WHERE (already locked or executed)
@@ -634,6 +635,39 @@ export async function acquireLockAndExecute(actionId, { account, connection }) {
   let extraMeta      = {};
 
   try {
+    // ── Budget guards (SESSION-05) — spend magnitude & protection ─────────────
+    // 'block' is terminal: thrown into the shared error path, so the row is
+    // finalized with the guard reason and NO execution path — including a
+    // human approve click — may proceed. 'require_approval' refuses only
+    // auto-execution (auto_execute=true rows) and returns the action to the
+    // human queue; auto_execute=false rows only reach here via approve-action
+    // or the operator secret, which satisfies the approval requirement.
+    const guard = await runBudgetGuardsForExecution(locked, { account, connection });
+    if (guard.verdict === 'block') {
+      throw new Error(`Blocked by budget guard: ${guard.reason}`);
+    }
+    if (guard.verdict === 'require_approval' && locked.auto_execute === true) {
+      const { error: releaseErr } = await supabase
+        .from('actions')
+        .update({ result: null, auto_execute: false })
+        .eq('id', actionId);
+      if (releaseErr) {
+        console.error('[execute-action-logic] guard lock release failed:', releaseErr.code, releaseErr.message);
+      }
+      await writeLog({
+        actionId, accountId: account.id, now,
+        actionType,
+        platform:    supabasePlatform,
+        status:      'complete',
+        description: `${actionType} auto-execution deferred by budget guard — requires human approval: ${guard.reason}`,
+        metadata:    { budget_guard: 'require_approval', reason: guard.reason, ...(campaignId ? { campaign_id: campaignId } : {}) },
+      });
+      return {
+        httpStatus: 200,
+        body: { success: true, executed: false, requires_approval: true, reason: guard.reason },
+      };
+    }
+
     if (actionType === 'publish_creative') {
       extraMeta = await executePublishCreative(locked, { account, connection });
     } else if (actionType === 'create_meta_campaign') {
@@ -731,10 +765,28 @@ export async function executeTransient({ platform, actionType, campaignId }, { a
   // Synthetic action so executors have a uniform contract whether DB-backed or not
   const action = {
     action_type:    actionType,
+    channel:        normalizedPlatform, // budget guards fetch live Google state by channel
     execution_data: { campaign_id: campaignId },
   };
 
   const supabasePlatform = normalizedPlatform === 'google' ? 'google_ads' : 'meta_ads';
+
+  // ── Budget guards (SESSION-05) — transient path enforces 'block' only ───────
+  // Transient executions are always human-initiated (chat confirmation click),
+  // so 'require_approval' is satisfied by the click; 'block' stays terminal.
+  const guard = await runBudgetGuardsForExecution(action, { account, connection });
+  if (guard.verdict === 'block') {
+    await writeLog({
+      actionId: null, accountId: account.id, now,
+      actionType,
+      platform:    supabasePlatform,
+      status:      'error',
+      description: `${actionType} blocked by budget guard (transient): ${guard.reason}`,
+      metadata:    { campaign_id: campaignId, transient: true, budget_guard: 'block', reason: guard.reason },
+    });
+    return { httpStatus: 200, body: { success: true, executed: false, blocked: true, error: `Blocked by budget guard: ${guard.reason}` } };
+  }
+
   let executionError = null;
   let extraMeta      = {};
 

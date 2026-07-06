@@ -19,7 +19,7 @@ Every unattended run ends by writing HARNESS-RUN-NN.md at repo root (next NN): p
 - **Never commit. Never push.** Brian does both manually after reviewing diffs. Do not claim a commit happened — only `git log --oneline` is proof.
 - **Windows/PowerShell only.** No bash/Linux syntax in anything Brian will run.
 - **Phase gates:** Phase A = read + plan, then STOP for approval. Phase B = implement. Phase C = test + report. Never skip A on any session that writes code.
-- **Test floor: 480.** `npx vitest run` must finish ≥480 passing, 0 failures, before a session may be reported complete. New features add tests; the floor rises and never falls.
+- **Test floor: 535 `npx vitest run` must finish ≥535 sing, 0 failures, before a session may be reported complete. New features add tests; the floor rises and never falls.
 - **File scope binding:** touch only files named in the session contract. Finding a problem outside scope → report it, don't fix it.
 - **Database:** never apply migrations. Write SQL to `sql/NNN_name.sql` for Brian to review and apply. Supabase prod: `olpyqfuphiwdongzmazi`.
 - **Secrets:** never print env values; never hardcode credentials or account IDs (resolve via `ad_platform_connections`).
