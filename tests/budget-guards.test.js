@@ -625,3 +625,108 @@ describe('runBudgetGuardsForExecution', () => {
     expect(r.triggered).toContain('guard_error');
   });
 });
+
+// ── SESSION-07a — cap-sum status filtering and target-not-found fail-close ───
+// 7/6 incident fixture: 4 ENABLED campaigns (30/22/6/15 = $73), 1 PAUSED ($12),
+// 1 REMOVED ($9, defensively included even though GAQL filters it server-side).
+// account.daily_spend_cap = 90.
+describe('SESSION-07a — cap-sum status filtering and target-not-found fail-close', () => {
+  const FIXTURE_CAMPAIGNS = [
+    { id: '111',   status: 'ENABLED', budgetUsd: 30 }, // Location
+    { id: '222',   status: 'ENABLED', budgetUsd: 22 }, // Kits
+    { id: '333',   status: 'ENABLED', budgetUsd: 6 },  // Pole Barns
+    { id: BRANDED, status: 'ENABLED', budgetUsd: 15 }, // Branded
+    { id: '555',   status: 'PAUSED',  budgetUsd: 12 },
+    { id: '666',   status: 'REMOVED', budgetUsd: 9 },
+  ];
+
+  beforeEach(() => {
+    mockResponses['campaign_daily_stats'] = { data: [{ spend: 300, conversions: 6 }], error: null };
+  });
+
+  it('T1: 7/6 regression — paused ($12) and removed ($9) budgets excluded from cap sum (allow)', async () => {
+    mockGoogleLiveState(FIXTURE_CAMPAIGNS);
+    const account = { ...EXEC_ACCOUNT, daily_spend_cap: 90 };
+    const action  = { ...adjust(25, '222'), channel: 'google' };
+    const r = await runBudgetGuardsForExecution(action, { account, connection: GOOGLE_CONN });
+    // If either the $12 paused or $9 removed budget leaked into the sum,
+    // projected spend would be 76+12=88 or 76+9=85 — still under 90 here,
+    // so T2 below pins the exact sum at the boundary instead.
+    expect(r.verdict).toBe('allow');
+  });
+
+  it('T2: paused excluded from cap sum, boundary-precise (othersSum exactly $51)', async () => {
+    mockGoogleLiveState(FIXTURE_CAMPAIGNS);
+    const accountAllow = { ...EXEC_ACCOUNT, daily_spend_cap: 77 };
+    const actionAllow  = { ...adjust(25, '222'), channel: 'google' };
+    const rAllow = await runBudgetGuardsForExecution(actionAllow, { account: accountAllow, connection: GOOGLE_CONN });
+    expect(rAllow.verdict).toBe('allow'); // projected 51+25=76 <= 77
+
+    mockGoogleLiveState(FIXTURE_CAMPAIGNS);
+    const accountBlock = { ...EXEC_ACCOUNT, daily_spend_cap: 75 };
+    const actionBlock  = { ...adjust(25, '222'), channel: 'google' };
+    const rBlock = await runBudgetGuardsForExecution(actionBlock, { account: accountBlock, connection: GOOGLE_CONN });
+    expect(rBlock.verdict).toBe('block'); // projected 51+25=76 > 75
+    expect(rBlock.triggered).toContain('account_daily_cap');
+    // Pin the exact othersSum: $51, not $63 (+paused) or $60 (+removed).
+    expect(rBlock.reason).toMatch(/\$51\/day across other enabled campaigns/);
+    expect(rBlock.reason).toMatch(/projected account daily spend \$76/);
+  });
+
+  it('T3: removed campaign excluded from cap sum even with a large budget', async () => {
+    mockGoogleLiveState([
+      { id: '111',   status: 'ENABLED', budgetUsd: 30 },
+      { id: '222',   status: 'ENABLED', budgetUsd: 22 },
+      { id: '333',   status: 'ENABLED', budgetUsd: 6 },
+      { id: BRANDED, status: 'ENABLED', budgetUsd: 15 },
+      { id: '555',   status: 'PAUSED',  budgetUsd: 12 },
+      { id: '666',   status: 'REMOVED', budgetUsd: 50 },
+    ]);
+    const account = { ...EXEC_ACCOUNT, daily_spend_cap: 90 };
+    const action  = { ...adjust(25, '222'), channel: 'google' };
+    const r = await runBudgetGuardsForExecution(action, { account, connection: GOOGLE_CONN });
+    expect(r.verdict).toBe('allow');
+  });
+
+  it('T4: genuine over-cap with a valid target still blocks (even though major_change also fires)', async () => {
+    mockGoogleLiveState(FIXTURE_CAMPAIGNS);
+    const account = { ...EXEC_ACCOUNT, daily_spend_cap: 90 };
+    const action  = { ...adjust(45, '222'), channel: 'google' }; // 22 -> 45 is also major_change (>25%)
+    const r = await runBudgetGuardsForExecution(action, { account, connection: GOOGLE_CONN });
+    expect(r.verdict).toBe('block'); // projected 51+45=96 > 90
+    expect(r.triggered).toContain('account_daily_cap');
+  });
+
+  it('T5: target-not-found fails closed to unknown_current_budget — current_value is NOT used as fallback', async () => {
+    mockGoogleLiveState(FIXTURE_CAMPAIGNS); // no row has id '999'
+    const account = { ...EXEC_ACCOUNT, daily_spend_cap: 90 };
+    const action  = { ...adjust(25, '999', { current_value: '22' }), channel: 'google' };
+    const r = await runBudgetGuardsForExecution(action, { account, connection: GOOGLE_CONN });
+    expect(r.verdict).toBe('require_approval');
+    expect(r.triggered).toContain('unknown_current_budget');
+    expect(r.triggered).not.toContain('account_daily_cap');
+    expect(r.verdict).not.toBe('block');
+  });
+
+  it('T6: live fetch failure keeps the execution_data fallback (cap_unverifiable, not unknown_current_budget)', async () => {
+    mockFetch
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ access_token: 'live-token' }) })
+      .mockResolvedValueOnce({ ok: false, status: 500, text: async () => 'INTERNAL' });
+    const account = { ...EXEC_ACCOUNT, daily_spend_cap: 90 };
+    const action  = { ...adjust(25, '222', { current_value: '22' }), channel: 'google' };
+    const r = await runBudgetGuardsForExecution(action, { account, connection: GOOGLE_CONN });
+    expect(r.triggered).not.toContain('unknown_current_budget');
+    expect(r.triggered).toContain('cap_unverifiable');
+    expect(r.verdict).toBe('require_approval');
+  });
+
+  it('T7: Meta path unchanged — no live fetch, cap_unverifiable (not unknown_current_budget)', async () => {
+    const account = { ...EXEC_ACCOUNT, daily_spend_cap: 90 };
+    const action  = { ...adjust(25, '222', { current_value: '22' }), channel: 'meta_ads' };
+    const r = await runBudgetGuardsForExecution(action, { account, connection: GOOGLE_CONN });
+    expect(mockFetch).not.toHaveBeenCalled();
+    expect(r.triggered).toContain('cap_unverifiable');
+    expect(r.triggered).not.toContain('unknown_current_budget');
+    expect(r.verdict).toBe('require_approval');
+  });
+});

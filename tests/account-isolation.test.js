@@ -353,9 +353,11 @@ describe('google-ads handler — account scoping', () => {
 
   it('GET with no account header defaults to FPB and uses the FPB google_ads connection', async () => {
     mockAccount = FPB;
-    // 1st fetch: OAuth token exchange. 2nd fetch: Google Ads search.
+    // 1st fetch: OAuth token exchange. 2nd fetch: Google Ads metrics search.
+    // 3rd fetch: campaign roster search (S07a — full non-removed campaign set).
     mockFetch
       .mockResolvedValueOnce({ ok: true, json: async () => ({ access_token: 'oauth-token' }) })
+      .mockResolvedValueOnce({ ok: true, text: async () => '{"results":[]}' })
       .mockResolvedValueOnce({ ok: true, text: async () => '{"results":[]}' });
 
     const req = { method: 'GET', headers: {}, query: {}, url: '/api/google-ads' };
@@ -364,9 +366,10 @@ describe('google-ads handler — account scoping', () => {
 
     expect(res._statusCode).toBe(200);
     expect(res._body.success).toBe(true);
-    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(mockFetch).toHaveBeenCalledTimes(3);
     expect(mockFetch.mock.calls[0][0]).toContain('oauth2.googleapis.com');
     expect(mockFetch.mock.calls[1][0]).toContain('googleads.googleapis.com');
+    expect(mockFetch.mock.calls[2][0]).toContain('googleads.googleapis.com');
     // OAuth body uses the connection's resolved refresh token, not env
     const oauthBody = mockFetch.mock.calls[0][1].body.toString();
     expect(oauthBody).toContain('refresh_token=g-refresh');

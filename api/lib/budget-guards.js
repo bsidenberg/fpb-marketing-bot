@@ -350,6 +350,12 @@ export async function getCampaignLookbackStats(accountId, campaignId, lookbackDa
  * budget/status plus every enabled campaign's budget (feeds the account-cap
  * projection and the last-campaign rule). Returns null on ANY failure —
  * the evaluator fails closed on the rules that need this data.
+ *
+ * S07a status semantics: the query keeps status != 'REMOVED' (not = 'ENABLED')
+ * on purpose — GAQL has no OR, and this same search must surface a PAUSED
+ * target's live budget so magnitude checks never run on agent-claimed values.
+ * The cap sum is ENABLED-only via the enabledCampaigns filter below: PAUSED
+ * and REMOVED budgets never count toward the account-spend projection.
  */
 async function fetchGoogleCampaignState(campaignId, { account, connection }) {
   try {
@@ -408,6 +414,7 @@ async function fetchGoogleCampaignState(campaignId, { account, connection }) {
 
     const target = rows.find((r) => r.id === String(campaignId));
     return {
+      targetFound:        Boolean(target),
       currentDailyBudget: target?.dailyBudget ?? null,
       campaignStatus:     target?.status ?? null,
       enabledCampaigns:   rows
@@ -451,8 +458,28 @@ export async function runBudgetGuardsForExecution(action, { account, connection 
     // Session 07): live-state rules fail closed to require_approval.
     const live = isGoogle ? await fetchGoogleCampaignState(campaignId, { account, connection }) : null;
 
+    // S07a fail-close: the live fetch SUCCEEDED but the target id matched no
+    // non-removed campaign — the id is wrong or the campaign no longer exists.
+    // The old fallback to agent-supplied current_value masked exactly this
+    // failure on 7/6: the unexcluded target double-counted into the cap
+    // projection ($98 phantom vs $73 real). Live-verified state or nothing:
+    // null routes the evaluator to require_approval (unknown_current_budget)
+    // and skips the cap projection. live === null (Meta, or Google fetch
+    // failure) keeps the fallback — those rules fail closed elsewhere.
+    const targetMissingFromLive = live !== null && !live.targetFound;
+
+    if (live !== null) {
+      console.log('[BUDGET-GUARDS] cap projection state:', JSON.stringify({
+        campaign_id:  campaignId || null,
+        target_found: live.targetFound,
+        enabled:      live.enabledCampaigns.map((c) => `${c.id}:$${c.dailyBudget}`),
+      }));
+    }
+
     const campaignState = {
-      currentDailyBudget:   live?.currentDailyBudget ?? parseBudgetValue(executionData.current_value),
+      currentDailyBudget:   targetMissingFromLive
+        ? null
+        : (live?.currentDailyBudget ?? parseBudgetValue(executionData.current_value)),
       campaignStatus:       live?.campaignStatus ?? null,
       enabledCampaigns:     live?.enabledCampaigns ?? null,
       conversionsLookback:  stats.conversions,

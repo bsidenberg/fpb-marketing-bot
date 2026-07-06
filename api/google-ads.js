@@ -74,6 +74,8 @@ export async function fetchGoogleAdsData(account, connection) {
   // executeGoogleAdjustBudget to skip the extra GET-campaign lookup.
   // campaign_budget.amount_micros gives the current daily budget amount so
   // verifyAndEnrichAction can inject daily_budget into verified action payloads.
+  // S07a: LIMIT raised 10 -> 100 (top-N truncation hid campaigns from chat);
+  // 100 bounds prompt size for pathological accounts, not this one.
   const query = `
     SELECT
       campaign.id,
@@ -92,7 +94,7 @@ export async function fetchGoogleAdsData(account, connection) {
     WHERE segments.date DURING LAST_30_DAYS
       AND campaign.status != 'REMOVED'
     ORDER BY metrics.cost_micros DESC
-    LIMIT 10
+    LIMIT 100
   `;
 
   const apiUrl = `https://googleads.googleapis.com/v23/customers/${customerId}/googleAds:search`;
@@ -166,11 +168,99 @@ export async function fetchGoogleAdsData(account, connection) {
     });
   }
 
+  // ── S07a: roster query — every non-removed campaign, no date segment ──────
+  // The metrics query above is date-segmented (LAST_30_DAYS) and the API drops
+  // zero-impression rows from segmented results: an ENABLED campaign with no
+  // recent traffic would be invisible to chat while the budget guard counts
+  // its budget toward the account cap. This metrics-free second query
+  // guarantees the full campaign set; campaigns absent from the metrics
+  // results are appended with zeroed metrics. Both queries must succeed —
+  // partial data would recreate the chat-vs-guard disagreement this exists
+  // to close.
+  const rosterQuery = `
+    SELECT
+      campaign.id,
+      campaign.name,
+      campaign.status,
+      campaign.campaign_budget,
+      campaign_budget.amount_micros
+    FROM campaign
+    WHERE campaign.status != 'REMOVED'
+  `;
+
+  const rosterResponse = await fetch(
+    apiUrl,
+    {
+      method: 'POST',
+      headers: {
+        'Authorization':     `Bearer ${access_token}`,
+        'developer-token':   process.env.GOOGLE_ADS_DEVELOPER_TOKEN,
+        'login-customer-id': managerId,
+        'Content-Type':      'application/json',
+      },
+      body: JSON.stringify({ query: rosterQuery }),
+    }
+  );
+
+  const rosterText = await rosterResponse.text();
+  if (!rosterResponse.ok) {
+    return {
+      success: false,
+      error: `Google Ads API error (campaign roster): ${rosterResponse.status}`,
+      detail: rosterText.substring(0, 500),
+      summary: { totalSpend: 0, totalClicks: 0, totalImpressions: 0, totalConversions: 0, roas: 0, cpl: 0, ctr: 0 },
+      campaigns: [],
+    };
+  }
+
+  let rosterData;
+  try {
+    rosterData = JSON.parse(rosterText);
+  } catch(e) {
+    return {
+      success: false,
+      error: 'Failed to parse Google Ads campaign roster response',
+      detail: rosterText.substring(0, 300),
+      summary: { totalSpend: 0, totalClicks: 0, totalImpressions: 0, totalConversions: 0, roas: 0, cpl: 0, ctr: 0 },
+      campaigns: [],
+    };
+  }
+
+  const seenIds = new Set(campaigns.map((c) => String(c.id)));
+  for (const row of rosterData.results || []) {
+    const id = row.campaign?.id;
+    if (id == null || seenIds.has(String(id))) continue;
+    if (row.campaign?.status === 'REMOVED') continue; // defensive — query already filters
+    const rosterBudgetResource = row.campaign?.campaignBudget;
+    campaigns.push({
+      id,
+      budget_id: rosterBudgetResource ? rosterBudgetResource.split('/').pop() : null,
+      daily_budget: ((row.campaignBudget?.amountMicros || 0) / 1_000_000).toFixed(2),
+      name: row.campaign?.name,
+      status: row.campaign?.status,
+      spend: '0.00',
+      clicks: 0,
+      impressions: 0,
+      conversions: '0.0',
+      ctr: '0.00',
+      avgCpc: '0.00',
+    });
+    seenIds.add(String(id));
+  }
+
   const roas = totalSpend > 0 ? (totalConversions * 150 / totalSpend).toFixed(2) : '0.00';
   const cpl = totalConversions > 0 ? (totalSpend / totalConversions).toFixed(2) : '0.00';
 
+  // Consistency invariant (S07a): same status semantics as the budget guard's
+  // cap sum — ENABLED campaigns only. Chat quotes the same account total the
+  // guard computes; PAUSED campaigns stay visible in the list but never count.
+  const totalDailyBudget = campaigns
+    .filter((c) => c.status === 'ENABLED')
+    .reduce((sum, c) => sum + (parseFloat(c.daily_budget) || 0), 0);
+
   // Cost ledger — fire-and-forget
   await recordApiCall('google_ads', 'campaigns_search', account.id);
+  await recordApiCall('google_ads', 'campaigns_roster', account.id);
 
   return {
     success: true,
@@ -179,6 +269,7 @@ export async function fetchGoogleAdsData(account, connection) {
       totalClicks,
       totalImpressions,
       totalConversions: totalConversions.toFixed(1),
+      totalDailyBudget: totalDailyBudget.toFixed(2),
       roas,
       cpl,
       ctr: totalImpressions > 0 ? ((totalClicks / totalImpressions) * 100).toFixed(2) : '0.00',
