@@ -838,6 +838,57 @@ describe('verifyAndEnrichAction — add_negative_keyword match_type gate (S07b)'
 });
 
 // ============================================================================
+// Session-07c: fail-early keyword_text staging guard
+// ============================================================================
+
+describe('verifyAndEnrichAction — missing keyword_text staging guard (S07c)', () => {
+
+  const LIVE_CAMPAIGNS = [
+    { id: '21541565583', budget_id: 'bgt-111', daily_budget: '50.00', name: 'LP Search - Location' },
+  ];
+
+  it('missing keyword_text on add_negative_keyword -> unverified with clear reason', () => {
+    const payload = {
+      action_type: 'add_negative_keyword',
+      channel:     'google_ads',
+      campaign_id: '21541565583',
+      match_type:  'BROAD',
+      description: 'Zero conversions',
+    };
+    const { payload: result, status } = verifyAndEnrichAction(payload, LIVE_CAMPAIGNS);
+    expect(status).toBe('unverified');
+    expect(result.description).toMatch(/^\[UNVERIFIED - negative keyword action missing keyword_text\]/);
+  });
+
+  it('whitespace-only keyword_text on add_negative_keyword -> unverified with clear reason', () => {
+    const payload = {
+      action_type:  'add_negative_keyword',
+      channel:      'google_ads',
+      campaign_id:  '21541565583',
+      keyword_text: '   ',
+      match_type:   'BROAD',
+    };
+    const { payload: result, status } = verifyAndEnrichAction(payload, LIVE_CAMPAIGNS);
+    expect(status).toBe('unverified');
+    expect(result.description).toMatch(/^\[UNVERIFIED - negative keyword action missing keyword_text\]/);
+  });
+
+  it('populated keyword_text still reaches id_match, unaffected by the new guard', () => {
+    const payload = {
+      action_type:  'add_negative_keyword',
+      channel:      'google_ads',
+      campaign_id:  '21541565583',
+      keyword_text: 'free shed plans',
+      match_type:   'BROAD',
+    };
+    const { payload: result, status } = verifyAndEnrichAction(payload, LIVE_CAMPAIGNS);
+    expect(status).toBe('id_match');
+    expect(result.keyword_text).toBe('free shed plans');
+  });
+
+});
+
+// ============================================================================
 // Session-06: handler integration — verify-and-enrich wired into action save
 // ============================================================================
 
@@ -940,6 +991,78 @@ describe('chat — add_negative_keyword execution_data whitelist fix (S07b)', ()
     expect(inserted.execution_data.evidence).toEqual({ search_term: 'free shed plans', spend: '12.50', conversions: 0 });
     // Existing fields still present, unaffected
     expect(inserted.execution_data.campaign_id).toBe('g-camp-1');
+  });
+
+});
+
+// ============================================================================
+// Session-07c: missing keyword_text is caught at staging, not the executor
+// ============================================================================
+
+describe('chat — missing keyword_text downgrades action to requires_review at staging (S07c)', () => {
+
+  it('add_negative_keyword ACTION block with no keyword_text is inserted as requires_review, never pending', async () => {
+    setResponse('actions.insert.single', { data: { id: 'action-negkw-missing-uuid' }, error: null });
+    makeActionFetch(
+      'I recommend negating this term.\nACTION:{"action_type":"add_negative_keyword","channel":"google_ads","campaign_id":"g-camp-1","campaign_name":"Google Test","match_type":"BROAD","description":"Zero conversions, $12.50 spend"}'
+    );
+
+    const req = makeReq();
+    const res = makeRes();
+    await handler(req, res);
+
+    expect(res._statusCode).toBe(200);
+    const inserted = (insertsByTable['actions'] || [])[0];
+    expect(inserted).toBeDefined();
+    expect(inserted.status).toBe('requires_review');
+    expect(inserted.description).toMatch(/negative keyword action missing keyword_text/);
+    expect(inserted.execution_data.keyword_text).toBeNull();
+  });
+
+});
+
+// ============================================================================
+// Session-07c: multi-term negation stages one concrete term per turn, not
+// batched into a single keyword_text or multiple ACTION blocks (fpb.js S07c)
+// ============================================================================
+
+describe('chat — multi-term negation stages one concrete term per turn (S07c)', () => {
+
+  it('first turn: model lists several junk terms in prose but stages only the first as the ACTION, keyword_text populated', async () => {
+    setResponse('actions.insert.single', { data: { id: 'action-negkw-1' }, error: null });
+    makeActionFetch(
+      'These search terms are wasting spend: "free shed plans", "diy barn kits", "used pole barns". ' +
+      'I\'ll stage the first one now — say "next" and I will stage the next term.\n' +
+      'ACTION:{"action_type":"add_negative_keyword","channel":"google_ads","campaign_id":"g-camp-1","campaign_name":"Google Test","keyword_text":"free shed plans","match_type":"BROAD","description":"Zero conversions, $12.50 spend"}'
+    );
+
+    const req = makeReq({ body: { message: 'Negate all the junk search terms', sessionId: 'session-multi' } });
+    const res = makeRes();
+    await handler(req, res);
+
+    expect(res._statusCode).toBe(200);
+    expect((insertsByTable['actions'] || []).length).toBe(1); // only one action row this turn
+    const inserted = insertsByTable['actions'][0];
+    expect(inserted.status).toBe('pending');
+    expect(inserted.execution_data.keyword_text).toBe('free shed plans');
+  });
+
+  it('follow-up turn ("next"): model stages the second concrete term independently, keyword_text populated', async () => {
+    setResponse('actions.insert.single', { data: { id: 'action-negkw-2' }, error: null });
+    makeActionFetch(
+      'Staging the next term now.\n' +
+      'ACTION:{"action_type":"add_negative_keyword","channel":"google_ads","campaign_id":"g-camp-1","campaign_name":"Google Test","keyword_text":"diy barn kits","match_type":"BROAD","description":"Zero conversions"}'
+    );
+
+    const req = makeReq({ body: { message: 'next', sessionId: 'session-multi' } });
+    const res = makeRes();
+    await handler(req, res);
+
+    expect(res._statusCode).toBe(200);
+    expect((insertsByTable['actions'] || []).length).toBe(1);
+    const inserted = insertsByTable['actions'][0];
+    expect(inserted.status).toBe('pending');
+    expect(inserted.execution_data.keyword_text).toBe('diy barn kits');
   });
 
 });

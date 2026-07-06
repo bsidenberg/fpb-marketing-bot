@@ -233,24 +233,40 @@ function parseCreativeReady(text) {
 export function verifyAndEnrichAction(actionPayload, fetchedCampaigns) {
   const result = verifyAndEnrichActionByCampaign(actionPayload, fetchedCampaigns);
 
-  // S07b: additional gate for add_negative_keyword — an invalid match_type
-  // (present but not BROAD/PHRASE/EXACT) downgrades to 'unverified' regardless
-  // of the campaign id/name match above. Absent match_type is NOT downgraded —
-  // the executor already defaults it to 'BROAD'.
-  if (actionPayload && actionPayload.action_type === 'add_negative_keyword' && actionPayload.match_type != null) {
-    const normalized = String(actionPayload.match_type).toUpperCase();
-    if (!VALID_NEGATIVE_MATCH_TYPES.includes(normalized)) {
+  if (actionPayload && actionPayload.action_type === 'add_negative_keyword') {
+    // S07c: fail-early staging guard — an empty/missing keyword_text must
+    // never reach the executor (it throws there with a cryptic error).
+    // Catch it here, at staging, with a legible reason instead.
+    const keywordText = typeof actionPayload.keyword_text === 'string' ? actionPayload.keyword_text.trim() : '';
+    if (!keywordText) {
       return {
         payload: {
           ...result.payload,
-          description: `[UNVERIFIED - invalid match_type "${actionPayload.match_type}", expected BROAD/PHRASE/EXACT] ${result.payload?.description || ''}`.trim(),
+          description: `[UNVERIFIED - negative keyword action missing keyword_text] ${result.payload?.description || ''}`.trim(),
         },
         status: 'unverified',
       };
     }
-    // Store the canonical uppercase enum — Google's API rejects lowercase
-    // (e.g. "broad") even though it passes this validation case-insensitively.
-    return { ...result, payload: { ...result.payload, match_type: normalized } };
+
+    // S07b: additional gate for add_negative_keyword — an invalid match_type
+    // (present but not BROAD/PHRASE/EXACT) downgrades to 'unverified' regardless
+    // of the campaign id/name match above. Absent match_type is NOT downgraded —
+    // the executor already defaults it to 'BROAD'.
+    if (actionPayload.match_type != null) {
+      const normalized = String(actionPayload.match_type).toUpperCase();
+      if (!VALID_NEGATIVE_MATCH_TYPES.includes(normalized)) {
+        return {
+          payload: {
+            ...result.payload,
+            description: `[UNVERIFIED - invalid match_type "${actionPayload.match_type}", expected BROAD/PHRASE/EXACT] ${result.payload?.description || ''}`.trim(),
+          },
+          status: 'unverified',
+        };
+      }
+      // Store the canonical uppercase enum — Google's API rejects lowercase
+      // (e.g. "broad") even though it passes this validation case-insensitively.
+      return { ...result, payload: { ...result.payload, match_type: normalized } };
+    }
   }
 
   return result;
