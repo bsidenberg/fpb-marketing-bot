@@ -60,6 +60,15 @@ const CHAT_MODEL = 'claude-sonnet-4-6';
 // fetch (whole-account) so Prime can recommend evidenced negative keywords.
 const WASTE_QUESTION_RE = /waste|search term|junk|negative keyword|wasted spend/i;
 
+// S07f: action-phrased negative-keyword staging turns ("negate all", "negate
+// the carport terms", "exclude the junk terms") must auto-fetch the same way
+// waste-question turns do, or the model has no real data to stage from and
+// correctly refuses (S07c/e). Deterministic — used to skip the Haiku intent
+// call entirely for these phrasings rather than trusting classification,
+// since the classifier's own instructions correctly bucket these as
+// ACTION_REQUEST, which would otherwise skip data-fetching entirely.
+const NEGATE_STAGING_RE = /\bnegat(?:e|es|ed|ing)\b|\bexclud(?:e|es|ed|ing)\b|\badd(?:ing)?\s+(?:a\s+)?negative\b/i;
+
 // S07e: cap on terms accepted per add_negative_keyword_batch ACTION block.
 const MAX_BATCH_TERMS = 25;
 
@@ -351,7 +360,11 @@ function parseAdPreview(text) {
 // terminal negative-keyword guard → insert) for exactly one action. Used by
 // both the single-ACTION path and the batch-expansion loop so there is only
 // one insert path to keep safe, not two that can drift apart.
-async function stageGoogleAdsAction(actionPayload, account, fetchedCampaigns) {
+// forceRequiresReview (S07f): batch-expansion callers set this for a term
+// that survived the trusted-input filter only as "ambiguous" (see
+// filterTrustedTerms) — it must never auto-approve regardless of how
+// campaign verification and the terminal guard come out.
+async function stageGoogleAdsAction(actionPayload, account, fetchedCampaigns, forceRequiresReview = false) {
   const pillar = inferPillar(actionPayload.action_type);
   const [novel, conflict] = await Promise.all([
     detectNovelty(actionPayload.action_type, account.id),
@@ -403,10 +416,12 @@ async function stageGoogleAdsAction(actionPayload, account, fetchedCampaigns) {
   // Terminal guard — checked on the fully-assembled execution_data right
   // before the insert, regardless of how actionForInsert got here.
   const guard = guardNegativeKeywordExecutionData(actionForInsert.action_type, executionData);
-  const finalStatus = (!guard.ok || verificationStatus === 'unverified') ? 'requires_review' : 'pending';
-  const description = guard.ok
-    ? (actionForInsert.description || '')
-    : `[UNVERIFIED - ${guard.reason}] ${actionForInsert.description || ''}`.trim();
+  const finalStatus = (!guard.ok || verificationStatus === 'unverified' || forceRequiresReview) ? 'requires_review' : 'pending';
+  const description = !guard.ok
+    ? `[UNVERIFIED - ${guard.reason}] ${actionForInsert.description || ''}`.trim()
+    : (forceRequiresReview
+        ? `[UNVERIFIED - term not confirmed against fetched search-term data or an explicit multi-word phrase you typed] ${actionForInsert.description || ''}`.trim()
+        : (actionForInsert.description || ''));
 
   const { data: actionRow, error: actionErr } = await supabase
     .from('actions')
@@ -431,20 +446,108 @@ async function stageGoogleAdsAction(actionPayload, account, fetchedCampaigns) {
   return { savedActionId: actionRow?.id || null, status: finalStatus, blocked: false };
 }
 
+// ── Terms staged from this turn's fetched search-term data ──────────────────
+// S07f TRUSTED-INPUT BOUNDARY, v2 (tightened after safety review). A batch
+// term is sorted into exactly one of three buckets:
+//   1. TRUSTED  — exact match against this turn's fetchSearchTerms rows.
+//      Fetched data is the primary authority; if the model is just
+//      transcribing real waste rows it was given, this is how it lands.
+//   2. TRUSTED  — a MULTI-WORD phrase the user themselves typed verbatim
+//      this turn. A single bare word is NEVER trusted via this path, even
+//      if it's a literal substring of the message — "negate all the waste"
+//      trivially contains "all" and "the", and those are not search terms.
+//   3. AMBIGUOUS — a single word the user did type, that isn't a fetched
+//      row and isn't a recognized stopword/command word either. Genuinely
+//      unverifiable rather than fabricated — staged, but forced to
+//      requires_review, never auto-approvable.
+// Anything satisfying none of the above (not in fetched data, never typed
+// by the user at all) is rejected outright — not staged, not even as
+// requires_review, since that status implies a legitimate-but-unverified
+// candidate, which pure model invention is not.
+const STAGING_STOPWORDS = new Set([
+  'a', 'an', 'the', 'all', 'and', 'or', 'but', 'for', 'of', 'in', 'on', 'at', 'to', 'from',
+  'is', 'are', 'this', 'that', 'these', 'those', 'it', 'them', 'they', 'we', 'you', 'my',
+  'negate', 'negates', 'negated', 'negating', 'exclude', 'excludes', 'excluded', 'excluding',
+  'add', 'adding', 'negative', 'keyword', 'keywords', 'term', 'terms', 'search', 'please',
+  'now', 'spend', 'spends', 'spending', 'waste', 'wastes', 'wasted', 'wasting', 'junk', 'some', 'any',
+]);
+
+// Bare stopword/command word or too short to plausibly be a real query —
+// never eligible for the user-typed trust path regardless of word count.
+function isStagingStopword(normalizedTerm) {
+  return normalizedTerm.length < 3 || STAGING_STOPWORDS.has(normalizedTerm);
+}
+
+function isUserTypedTerm(term, rawUserMessage) {
+  if (!term || !rawUserMessage) return false;
+  if (isStagingStopword(term.trim().toLowerCase())) return false;
+  const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const re = new RegExp(`(?:^|\\W)${escaped}(?:$|\\W)`, 'i');
+  return re.test(rawUserMessage);
+}
+
+// A multi-word phrase's FULL string rarely matches a single-token entry in
+// STAGING_STOPWORDS, so isUserTypedTerm's own stopword gate is a no-op for
+// phrases — "wasted spend", "these terms", "the all" all pass it even
+// though every constituent word is a stopword/command word. Require at
+// least one token that ISN'T a stopword/too-short before trusting a phrase.
+function hasSubstantiveToken(rawTerm) {
+  return rawTerm.split(/\s+/).some(tok => !isStagingStopword(tok.toLowerCase()));
+}
+
+function filterTrustedTerms(rawTerms, fetchedSearchTerms, rawUserMessage) {
+  const validTerms = rawTerms.filter(t => t && typeof t.keyword_text === 'string' && t.keyword_text.trim());
+  const fetchedTermSet = new Set(
+    (fetchedSearchTerms || []).map(r => String(r.searchTerm || '').trim().toLowerCase())
+  );
+
+  const trusted = [];
+  const ambiguous = [];
+  let rejectedCount = 0;
+
+  for (const t of validTerms) {
+    const rawTerm = t.keyword_text.trim();
+    const norm = rawTerm.toLowerCase();
+    const isMultiWord = /\s/.test(rawTerm);
+
+    if (fetchedTermSet.has(norm)) { trusted.push(t); continue; }
+
+    const userTyped = isUserTypedTerm(rawTerm, rawUserMessage);
+    if (isMultiWord && userTyped && hasSubstantiveToken(rawTerm)) { trusted.push(t); continue; }
+    if (!userTyped) { rejectedCount++; continue; } // not fetched, never typed at all — fabricated
+    if (isMultiWord) { rejectedCount++; continue; } // typed, but every token is a stopword/command word — not a real term
+
+    // Single word, user typed it verbatim, not a stopword/too-short
+    // (isUserTypedTerm already screened those out), but not confirmed
+    // against real fetched search-term data.
+    ambiguous.push(t);
+  }
+
+  return { trusted, ambiguous, rejectedCount };
+}
+
 // ── Stage a batch of negative-keyword terms (add_negative_keyword_batch) ─────
 // Expands a single add_negative_keyword_batch ACTION block into N individual
 // add_negative_keyword rows, each run through the same stageGoogleAdsAction
 // safety pipeline (coordinator gate → verify/enrich → terminal guard → insert)
 // as a single-term ACTION. Replaces the old one-term-per-turn "say next"
 // prompt convention with server-side expansion.
-async function stageNegativeKeywordBatch(batchPayload, account, fetchedGoogleCampaigns) {
+async function stageNegativeKeywordBatch(batchPayload, account, fetchedGoogleCampaigns, fetchedSearchTerms, rawUserMessage) {
   const rawTerms = Array.isArray(batchPayload.terms) ? batchPayload.terms : [];
-  const validTerms = rawTerms.filter(t => t && typeof t.keyword_text === 'string' && t.keyword_text.trim());
-  const terms = validTerms.slice(0, MAX_BATCH_TERMS);
-  const droppedCount = validTerms.length - terms.length;
+  const { trusted, ambiguous, rejectedCount } = filterTrustedTerms(rawTerms, fetchedSearchTerms, rawUserMessage);
 
-  if (terms.length === 0) {
-    return { summaryText: 'No valid terms were provided to stage as negative keywords.', staged: 0, requiresReview: 0 };
+  const combined = [
+    ...trusted.map(term => ({ term, forceReview: false })),
+    ...ambiguous.map(term => ({ term, forceReview: true })),
+  ];
+  const capped = combined.slice(0, MAX_BATCH_TERMS);
+  const droppedCount = combined.length - capped.length;
+
+  if (capped.length === 0) {
+    const reason = rejectedCount > 0
+      ? 'None of the proposed terms could be verified against fetched search-term data or your message — nothing was staged.'
+      : 'No valid terms were provided to stage as negative keywords.';
+    return { summaryText: reason, staged: 0, requiresReview: 0 };
   }
 
   // Resolve live campaign data ONCE, server-side — reused unmodified S06 logic
@@ -464,7 +567,7 @@ async function stageNegativeKeywordBatch(batchPayload, account, fetchedGoogleCam
   let staged = 0;
   let requiresReview = 0;
 
-  for (const term of terms) {
+  for (const { term, forceReview } of capped) {
     const itemPayload = {
       action_type:   'add_negative_keyword',
       channel:       'google_ads', // server-authoritative — never trust the batch wrapper's channel
@@ -477,7 +580,7 @@ async function stageNegativeKeywordBatch(batchPayload, account, fetchedGoogleCam
     };
 
     try {
-      const { status } = await stageGoogleAdsAction(itemPayload, account, campaigns);
+      const { status } = await stageGoogleAdsAction(itemPayload, account, campaigns, forceReview);
       if (status === 'requires_review') requiresReview++;
       else if (status === 'pending') staged++;
       // status === null (blocked or insert error): counted in neither — matches
@@ -486,9 +589,10 @@ async function stageNegativeKeywordBatch(batchPayload, account, fetchedGoogleCam
   }
 
   const parts = [];
-  if (staged)           parts.push(`${staged} staged for approval`);
-  if (requiresReview)   parts.push(`${requiresReview} flagged for manual review (campaign or keyword could not be verified)`);
-  if (droppedCount > 0) parts.push(`${droppedCount} term(s) beyond the ${MAX_BATCH_TERMS}-term cap were not staged — resend the remainder in a new message`);
+  if (staged)             parts.push(`${staged} staged for approval`);
+  if (requiresReview)     parts.push(`${requiresReview} flagged for manual review (campaign or keyword could not be verified)`);
+  if (droppedCount > 0)   parts.push(`${droppedCount} term(s) beyond the ${MAX_BATCH_TERMS}-term cap were not staged — resend the remainder in a new message`);
+  if (rejectedCount > 0)  parts.push(`${rejectedCount} term(s) could not be verified against fetched search-term data or your message and were not staged`);
 
   return {
     summaryText: `Batch negative-keyword request processed: ${parts.join('; ')}. Review and approve in the Actions queue.`,
@@ -566,7 +670,11 @@ export default async function handler(req, res) {
 
   try {
     // ── Step 1: Intent detection (skip if client already knows to include ad data) ──
-    let intent = includeAdData ? 'DATA_QUESTION' : await detectIntent(message, conversationHistory, account.id);
+    // S07f: staging-phrased messages skip the Haiku classifier and go
+    // straight through the same "fetching" round-trip as a DATA_QUESTION.
+    let intent = includeAdData
+      ? 'DATA_QUESTION'
+      : (NEGATE_STAGING_RE.test(message) ? 'DATA_QUESTION' : await detectIntent(message, conversationHistory, account.id));
 
     // ── Step 2: If DATA_QUESTION and not yet fetching, signal the frontend ──
     if (intent === 'DATA_QUESTION' && !includeAdData) {
@@ -583,6 +691,7 @@ export default async function handler(req, res) {
     // ── Step 3: Optionally attach live ad data to user message ──
     let userContent = message;
     let fetchedGoogleCampaigns = null;
+    let fetchedSearchTerms = null; // S07f — threaded into batch staging for term-provenance validation
     if (includeAdData) {
       const [gConn, mConn] = await Promise.all([
         getConnectionForAccount(account.id, 'google_ads'),
@@ -595,10 +704,14 @@ export default async function handler(req, res) {
       if (google) dataParts.push(`GOOGLE ADS DATA:\n${JSON.stringify(google, null, 2)}`);
       if (meta)   dataParts.push(`META ADS DATA:\n${JSON.stringify(meta, null, 2)}`);
 
-      // S07b: additive waste-keyword trigger — whole-account search-term view.
-      if (WASTE_QUESTION_RE.test(message) && gConn) {
+      // S07b/S07f: waste-question OR negative-keyword-staging turns additionally
+      // fetch the whole-account search-term view, so Prime has real terms to
+      // recommend/expand from on THIS turn instead of inventing or reusing stale
+      // terms from a prior turn's reply text.
+      if ((WASTE_QUESTION_RE.test(message) || NEGATE_STAGING_RE.test(message)) && gConn) {
         const searchTermsResult = await fetchSearchTerms(account, gConn);
         if (searchTermsResult.success) {
+          fetchedSearchTerms = searchTermsResult.searchTerms || [];
           dataParts.push(`SEARCH TERMS (waste analysis):\n${JSON.stringify(searchTermsResult, null, 2)}`);
         }
       }
@@ -679,7 +792,7 @@ export default async function handler(req, res) {
     let batchSummary = null;
     if (actionPayload && actionPayload.action_type === 'add_negative_keyword_batch') {
       try {
-        batchSummary = await stageNegativeKeywordBatch(actionPayload, account, fetchedGoogleCampaigns);
+        batchSummary = await stageNegativeKeywordBatch(actionPayload, account, fetchedGoogleCampaigns, fetchedSearchTerms, message);
       } catch (e) {
         console.error('[chat] batch negative-keyword staging threw:', e.message);
         batchSummary = { summaryText: 'Batch negative-keyword staging failed — please retry or stage terms individually.', staged: 0, requiresReview: 0 };

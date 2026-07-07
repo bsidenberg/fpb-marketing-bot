@@ -1087,10 +1087,25 @@ describe('chat — add_negative_keyword_batch expands into N action rows (S07e)'
 
   it('inserts one action row per term, each with populated keyword_text and the real campaign_id resolved from fetched data', async () => {
     setResponse('actions.insert.single', { data: { id: 'action-batch-uuid' }, error: null });
+    mockFetchSearchTerms.mockResolvedValueOnce({
+      success: true,
+      searchTerms: [
+        { searchTerm: 'carport',         campaignId: 'g-camp-1', campaignName: 'Google Test', clicks: 3, cost: 19.84, conversions: 0 },
+        { searchTerm: 'shed plans',      campaignId: 'g-camp-1', campaignName: 'Google Test', clicks: 2, cost: 12.10, conversions: 0 },
+        { searchTerm: 'used pole barns', campaignId: 'g-camp-1', campaignName: 'Google Test', clicks: 1, cost: 8.00,  conversions: 0 },
+      ],
+      wasteSummary: { totalWastedSpend: '39.94', topWaste: [] },
+    });
     const batchAction = makeBatchAction();
-    makeActionFetch(`Here are the terms to negate.\nACTION:${JSON.stringify(batchAction)}`);
+    mockFetch.mockResolvedValueOnce({ // main Claude call only — includeAdData:true skips intent detection
+      ok: true,
+      json: async () => ({
+        content: [{ text: `Here are the terms to negate.\nACTION:${JSON.stringify(batchAction)}` }],
+        usage: { input_tokens: 500, output_tokens: 100 },
+      }),
+    });
 
-    const req = makeReq({ body: { message: 'Negate all the waste', sessionId: 'session-batch' } });
+    const req = makeReq({ body: { message: 'Negate all the waste', sessionId: 'session-batch', includeAdData: true } });
     const res = makeRes();
     await handler(req, res);
 
@@ -1100,8 +1115,6 @@ describe('chat — add_negative_keyword_batch expands into N action rows (S07e)'
     for (const row of inserted) {
       expect(row.action_type).toBe('add_negative_keyword');
       expect(row.execution_data.keyword_text).toBeTruthy();
-      // Resolved from fetched campaign data (g-camp-1), never a client-supplied id
-      // (the batch payload never included campaign_id at all).
       expect(row.execution_data.campaign_id).toBe('g-camp-1');
       expect(row.status).toBe('pending');
     }
@@ -1113,9 +1126,15 @@ describe('chat — add_negative_keyword_batch expands into N action rows (S07e)'
       { keyword_text: 'carport' },
       { keyword_text: 'shed plans' },
     ] });
-    makeActionFetch(`Here are the terms to negate.\nACTION:${JSON.stringify(batchAction)}`);
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        content: [{ text: `Here are the terms to negate.\nACTION:${JSON.stringify(batchAction)}` }],
+        usage: { input_tokens: 500, output_tokens: 100 },
+      }),
+    });
 
-    const req = makeReq({ body: { message: 'Negate all the waste', sessionId: 'session-batch-unverified' } });
+    const req = makeReq({ body: { message: 'Negate carport and shed plans from Nonexistent Campaign', sessionId: 'session-batch-unverified', includeAdData: true } });
     const res = makeRes();
     await handler(req, res);
 
@@ -1129,11 +1148,18 @@ describe('chat — add_negative_keyword_batch expands into N action rows (S07e)'
 
   it('caps a batch at 25 terms and mentions the dropped count in the reply', async () => {
     setResponse('actions.insert.single', { data: { id: 'action-batch-cap-uuid' }, error: null });
-    const terms = Array.from({ length: 30 }, (_, i) => ({ keyword_text: `junk term ${i}` }));
+    const terms = Array.from({ length: 30 }, (_, i) => ({ keyword_text: `junkterm${i}` }));
     const batchAction = makeBatchAction({ terms });
-    makeActionFetch(`Here are the terms to negate.\nACTION:${JSON.stringify(batchAction)}`);
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        content: [{ text: `Here are the terms to negate.\nACTION:${JSON.stringify(batchAction)}` }],
+        usage: { input_tokens: 500, output_tokens: 100 },
+      }),
+    });
 
-    const req = makeReq({ body: { message: 'Negate all the waste', sessionId: 'session-batch-cap' } });
+    const message = `Negate these: ${terms.map(t => t.keyword_text).join(', ')}`;
+    const req = makeReq({ body: { message, sessionId: 'session-batch-cap', includeAdData: true } });
     const res = makeRes();
     await handler(req, res);
 
@@ -1149,9 +1175,15 @@ describe('chat — add_negative_keyword_batch expands into N action rows (S07e)'
       { keyword_text: 'carport' },
       { keyword_text: 'shed plans' },
     ] });
-    makeActionFetch(`Here are the terms to negate.\nACTION:${JSON.stringify(batchAction)}`);
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        content: [{ text: `Here are the terms to negate.\nACTION:${JSON.stringify(batchAction)}` }],
+        usage: { input_tokens: 500, output_tokens: 100 },
+      }),
+    });
 
-    const req = makeReq({ body: { message: 'Negate all the waste', sessionId: 'session-batch-summary' } });
+    const req = makeReq({ body: { message: 'Negate carport and shed plans', sessionId: 'session-batch-summary', includeAdData: true } });
     const res = makeRes();
     await handler(req, res);
 
@@ -1173,13 +1205,19 @@ describe('chat — multi-term negation stages one concrete term per turn (S07c)'
 
   it('first turn: model lists several junk terms in prose but stages only the first as the ACTION, keyword_text populated', async () => {
     setResponse('actions.insert.single', { data: { id: 'action-negkw-1' }, error: null });
-    makeActionFetch(
-      'These search terms are wasting spend: "free shed plans", "diy barn kits", "used pole barns". ' +
-      'I\'ll stage the first one now — say "next" and I will stage the next term.\n' +
-      'ACTION:{"action_type":"add_negative_keyword","channel":"google_ads","campaign_id":"g-camp-1","campaign_name":"Google Test","keyword_text":"free shed plans","match_type":"BROAD","description":"Zero conversions, $12.50 spend"}'
-    );
+    mockFetch.mockResolvedValueOnce({ // main Claude call only — includeAdData:true skips intent detection
+      ok: true,
+      json: async () => ({
+        content: [{ text:
+          'These search terms are wasting spend: "free shed plans", "diy barn kits", "used pole barns". ' +
+          'I\'ll stage the first one now — say "next" and I will stage the next term.\n' +
+          'ACTION:{"action_type":"add_negative_keyword","channel":"google_ads","campaign_id":"g-camp-1","campaign_name":"Google Test","keyword_text":"free shed plans","match_type":"BROAD","description":"Zero conversions, $12.50 spend"}'
+        }],
+        usage: { input_tokens: 400, output_tokens: 90 },
+      }),
+    });
 
-    const req = makeReq({ body: { message: 'Negate all the junk search terms', sessionId: 'session-multi' } });
+    const req = makeReq({ body: { message: 'Negate all the junk search terms', sessionId: 'session-multi', includeAdData: true } });
     const res = makeRes();
     await handler(req, res);
 
@@ -1258,6 +1296,215 @@ describe('chat — waste-question trigger fetches search terms (S07b)', () => {
 
     expect(res._statusCode).toBe(200);
     expect(mockFetchSearchTerms).not.toHaveBeenCalled();
+  });
+
+});
+
+// ============================================================================
+// Session-07f: staging-turn auto-fetch + server-side trusted-input boundary
+// ============================================================================
+
+describe('chat — staging-turn auto-fetch and trusted-input boundary (S07f)', () => {
+
+  it('a staging-intent message ("negate all") short-circuits straight to the fetching round-trip without calling the Haiku intent classifier', async () => {
+    const req = makeReq({ body: { message: 'negate all', sessionId: 'session-stage-fetch' } });
+    const res = makeRes();
+    await handler(req, res);
+
+    expect(res._statusCode).toBe(200);
+    expect(res._body.type).toBe('fetching');
+    expect(anthropicCalls().length).toBe(0); // no Haiku intent-detection call — deterministic regex short-circuit
+  });
+
+  it('does NOT short-circuit the intent classifier for action requests unrelated to negatives (regression guard)', async () => {
+    mockFetch
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ content: [{ text: 'ACTION_REQUEST' }] }) }) // intent detection call still happens
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          content: [{ text: 'Pausing the campaign now.\nACTION:{"action_type":"pause_campaign","channel":"google_ads","campaign_id":"g-camp-1","campaign_name":"Google Test","description":"test"}' }],
+          usage: { input_tokens: 200, output_tokens: 50 },
+        }),
+      });
+
+    const req = makeReq({ body: { message: 'Pause the Google campaign', sessionId: 'session-regression' } });
+    const res = makeRes();
+    setResponse('actions.insert.single', { data: { id: 'action-regression' }, error: null });
+    await handler(req, res);
+
+    expect(res._statusCode).toBe(200);
+    expect(res._body.type).not.toBe('fetching');
+    expect((insertsByTable['actions'] || []).length).toBe(1);
+  });
+
+  it('two-turn flow: an analysis turn followed by "negate all" stages N clean actions without re-asking for data', async () => {
+    // Turn 1 — analysis (simulates the client's second call after the 'fetching' signal).
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ content: [{ text: 'You are wasting $12.50 on "free shed plans".' }], usage: { input_tokens: 300, output_tokens: 60 } }),
+    });
+    await handler(makeReq({ body: { message: 'What search terms are wasting my spend?', sessionId: 'session-two-turn', includeAdData: true } }), makeRes());
+
+    // Turn 2, first call — staging turn, includeAdData omitted, must short-circuit to fetching.
+    const turn2First = makeRes();
+    await handler(makeReq({ body: { message: 'negate all', sessionId: 'session-two-turn' } }), turn2First);
+    expect(turn2First._body.type).toBe('fetching');
+
+    // Turn 2, second call — client re-calls with includeAdData: true, as the frontend does on a 'fetching' signal.
+    setResponse('actions.insert.single', { data: { id: 'action-two-turn' }, error: null });
+    const batchAction = {
+      action_type: 'add_negative_keyword_batch', channel: 'google_ads', campaign_name: 'Google Test', match_type: 'BROAD',
+      terms: [{ keyword_text: 'free shed plans', evidence: { search_term: 'free shed plans', spend: '12.50', conversions: 0 } }],
+    };
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ content: [{ text: `Negating the waste term now.\nACTION:${JSON.stringify(batchAction)}` }], usage: { input_tokens: 400, output_tokens: 90 } }),
+    });
+    const turn2Second = makeRes();
+    await handler(makeReq({ body: { message: 'negate all', sessionId: 'session-two-turn', includeAdData: true } }), turn2Second);
+
+    expect(turn2Second._statusCode).toBe(200);
+    const inserted = insertsByTable['actions'] || [];
+    expect(inserted.length).toBe(1);
+    expect(inserted[0].execution_data.keyword_text).toBe('free shed plans');
+    expect(inserted[0].status).toBe('pending');
+    expect(turn2Second._body.reply).toMatch(/1 staged for approval/);
+  });
+
+  it('user-explicit-list single turn: "negate <list> from <campaign>" stages clean without a prior analysis turn', async () => {
+    const first = makeRes();
+    await handler(makeReq({ body: { message: 'Negate carport and shed plans from Google Test', sessionId: 'session-explicit' } }), first);
+    expect(first._body.type).toBe('fetching');
+
+    setResponse('actions.insert.single', { data: { id: 'action-explicit' }, error: null });
+    // The auto-fetch this turn returns real rows matching what the user named
+    // (the realistic case — the user is naming terms they saw). "carport" is
+    // a bare single word, so it can only land 'pending' via the fetched-data
+    // path (the user-typed path is multi-word-only, per the tightened
+    // trusted-input boundary); "shed plans" additionally qualifies as a
+    // multi-word phrase the user typed verbatim.
+    mockFetchSearchTerms.mockResolvedValueOnce({
+      success: true,
+      searchTerms: [
+        { searchTerm: 'carport',    campaignId: 'g-camp-1', campaignName: 'Google Test', clicks: 4, cost: 15.00, conversions: 0 },
+        { searchTerm: 'shed plans', campaignId: 'g-camp-1', campaignName: 'Google Test', clicks: 2, cost: 9.50,  conversions: 0 },
+      ],
+      wasteSummary: { totalWastedSpend: '24.50', topWaste: [] },
+    });
+    const batchAction = {
+      action_type: 'add_negative_keyword_batch', channel: 'google_ads', campaign_name: 'Google Test', match_type: 'BROAD',
+      terms: [{ keyword_text: 'carport' }, { keyword_text: 'shed plans' }],
+    };
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ content: [{ text: `Staging now.\nACTION:${JSON.stringify(batchAction)}` }], usage: { input_tokens: 300, output_tokens: 70 } }),
+    });
+    const second = makeRes();
+    await handler(makeReq({ body: { message: 'Negate carport and shed plans from Google Test', sessionId: 'session-explicit', includeAdData: true } }), second);
+
+    expect(second._statusCode).toBe(200);
+    const inserted = insertsByTable['actions'] || [];
+    expect(inserted.length).toBe(2);
+    for (const row of inserted) {
+      expect(row.status).toBe('pending');
+      expect(row.execution_data.campaign_id).toBe('g-camp-1');
+    }
+  });
+
+  it('a single-word term the user typed, not present in fetched search-term data, stages as requires_review — never auto-approved', async () => {
+    // "carport" is typed verbatim by the user this turn, but the fetched
+    // search-term data (mocked with only "free shed plans" via the default
+    // beforeEach setup) doesn't contain it. It's not a stopword and it was
+    // genuinely typed, so it's not fabricated — but it's also not confirmed
+    // against anything real, so it must never reach 'pending'.
+    setResponse('actions.insert.single', { data: { id: 'action-ambiguous' }, error: null });
+    const batchAction = {
+      action_type: 'add_negative_keyword_batch', channel: 'google_ads', campaign_name: 'Google Test', match_type: 'BROAD',
+      terms: [{ keyword_text: 'carport' }],
+    };
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ content: [{ text: `Staging now.\nACTION:${JSON.stringify(batchAction)}` }], usage: { input_tokens: 300, output_tokens: 70 } }),
+    });
+
+    const req = makeReq({ body: { message: 'negate carport', sessionId: 'session-ambiguous', includeAdData: true } });
+    const res = makeRes();
+    await handler(req, res);
+
+    expect(res._statusCode).toBe(200);
+    const inserted = insertsByTable['actions'] || [];
+    expect(inserted.length).toBe(1);
+    expect(inserted[0].status).toBe('requires_review');
+    expect(inserted[0].execution_data.keyword_text).toBe('carport');
+  });
+
+  it('a bare stopword typed as part of the staging instruction ("all", "the") is never staged, even though it is a literal substring of the message', async () => {
+    setResponse('actions.insert.single', { data: { id: 'action-stopword' }, error: null });
+    const batchAction = {
+      action_type: 'add_negative_keyword_batch', channel: 'google_ads', campaign_name: 'Google Test', match_type: 'BROAD',
+      terms: [{ keyword_text: 'all' }, { keyword_text: 'the' }],
+    };
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ content: [{ text: `Staging now.\nACTION:${JSON.stringify(batchAction)}` }], usage: { input_tokens: 300, output_tokens: 70 } }),
+    });
+
+    const req = makeReq({ body: { message: 'negate all the waste', sessionId: 'session-stopword', includeAdData: true } });
+    const res = makeRes();
+    await handler(req, res);
+
+    expect(res._statusCode).toBe(200);
+    expect((insertsByTable['actions'] || []).length).toBe(0);
+    expect(res._body.reply).toMatch(/None of the proposed terms could be verified against fetched search-term data or your message/);
+  });
+
+  it('a multi-word phrase where every token is a stopword ("the all") is never staged, even though the user typed it verbatim', async () => {
+    setResponse('actions.insert.single', { data: { id: 'action-stopword-phrase' }, error: null });
+    const batchAction = {
+      action_type: 'add_negative_keyword_batch', channel: 'google_ads', campaign_name: 'Google Test', match_type: 'BROAD',
+      terms: [{ keyword_text: 'the all' }],
+    };
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ content: [{ text: `Staging now.\nACTION:${JSON.stringify(batchAction)}` }], usage: { input_tokens: 300, output_tokens: 70 } }),
+    });
+
+    const req = makeReq({ body: { message: 'negate the all of it', sessionId: 'session-stopword-phrase', includeAdData: true } });
+    const res = makeRes();
+    await handler(req, res);
+
+    expect(res._statusCode).toBe(200);
+    expect((insertsByTable['actions'] || []).length).toBe(0);
+  });
+
+  it('a model-invented term (not in fetched search-term data, not typed by the user) is silently not staged', async () => {
+    mockFetchSearchTerms.mockResolvedValueOnce({
+      success: true,
+      searchTerms: [{ searchTerm: 'free shed plans', campaignId: 'g-camp-1', campaignName: 'Google Test', clicks: 5, cost: 12.5, conversions: 0 }],
+      wasteSummary: { totalWastedSpend: '12.50', topWaste: [] },
+    });
+    const batchAction = {
+      action_type: 'add_negative_keyword_batch', channel: 'google_ads', campaign_name: 'Google Test', match_type: 'BROAD',
+      terms: [
+        { keyword_text: 'free shed plans' },        // trusted — from fetched data
+        { keyword_text: 'competitor brand name' },  // untrusted — model invented, not fetched, not user-typed
+      ],
+    };
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ content: [{ text: `Negating waste now.\nACTION:${JSON.stringify(batchAction)}` }], usage: { input_tokens: 300, output_tokens: 70 } }),
+    });
+
+    setResponse('actions.insert.single', { data: { id: 'action-invented' }, error: null });
+    const req = makeReq({ body: { message: 'negate all the waste', sessionId: 'session-invented', includeAdData: true } });
+    const res = makeRes();
+    await handler(req, res);
+
+    expect(res._statusCode).toBe(200);
+    const inserted = insertsByTable['actions'] || [];
+    expect(inserted.length).toBe(1); // only the trusted term staged
+    expect(inserted[0].execution_data.keyword_text).toBe('free shed plans');
+    expect(res._body.reply).toMatch(/1 term\(s\) could not be verified against fetched search-term data or your message and were not staged/);
   });
 
 });
