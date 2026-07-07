@@ -2351,6 +2351,9 @@ function ActionCard({ payload, actionId: preCreatedActionId, accountSlug = 'fpb'
               campaign_name:     payload.campaign_name     || null,
               current_value:     payload.current_value     || null,
               recommended_value: payload.recommended_value || null,
+              keyword_text:      payload.keyword_text       || null,
+              match_type:        payload.match_type         || null,
+              evidence:          payload.evidence           || null,
             },
           }),
         }, accountSlug);

@@ -52,6 +52,7 @@ import { detectNovelty, detectConflict, detectExternalFlag, detectAnomaly } from
 import { requireAdmin } from './lib/require-admin.js';
 import { fetchGoogleAdsData, fetchSearchTerms } from './google-ads.js';
 import { fetchMetaAdsData } from './facebook-ads.js';
+import { guardNegativeKeywordExecutionData, VALID_NEGATIVE_MATCH_TYPES } from './lib/negative-keyword-guard.js';
 
 const CHAT_MODEL = 'claude-sonnet-4-6';
 
@@ -59,8 +60,8 @@ const CHAT_MODEL = 'claude-sonnet-4-6';
 // fetch (whole-account) so Prime can recommend evidenced negative keywords.
 const WASTE_QUESTION_RE = /waste|search term|junk|negative keyword|wasted spend/i;
 
-// S07b: valid Google Ads negative-keyword match types (add_negative_keyword gate).
-const VALID_NEGATIVE_MATCH_TYPES = ['BROAD', 'PHRASE', 'EXACT'];
+// S07e: cap on terms accepted per add_negative_keyword_batch ACTION block.
+const MAX_BATCH_TERMS = 25;
 
 // ── chat_messages table existence preflight ──────────────────────────────────
 // Returns true if the table exists (or appears to), false if it is missing.
@@ -345,6 +346,157 @@ function parseAdPreview(text) {
   return { displayText, adPreview };
 }
 
+// ── Stage a single google_ads/ACTION-block action ─────────────────────────────
+// Runs the full per-action safety pipeline (coordinator gate → verify/enrich →
+// terminal negative-keyword guard → insert) for exactly one action. Used by
+// both the single-ACTION path and the batch-expansion loop so there is only
+// one insert path to keep safe, not two that can drift apart.
+async function stageGoogleAdsAction(actionPayload, account, fetchedCampaigns) {
+  const pillar = inferPillar(actionPayload.action_type);
+  const [novel, conflict] = await Promise.all([
+    detectNovelty(actionPayload.action_type, account.id),
+    detectConflict(account.id),
+  ]);
+  const context = {
+    novel, conflict, anomaly: detectAnomaly(), external_flag: detectExternalFlag(actionPayload),
+    execution_data: {
+      campaign_id:       actionPayload.campaign_id       || null,
+      current_value:     actionPayload.current_value     || null,
+      recommended_value: actionPayload.recommended_value || null,
+    },
+  };
+  const { verdict } = await checkPostureForAction(account.id, pillar, actionPayload.action_type, context);
+  if (verdict === 'block') return { savedActionId: null, status: null, blocked: true };
+
+  // Verify google_ads campaign IDs against live data before saving. An
+  // add_negative_keyword ACTION is ALWAYS verified/guarded here too, even if
+  // the model supplied a missing/wrong channel — this closes the S07e
+  // channel-gate bypass that let malformed negative-keyword rows through.
+  // If this turn didn't already fetch ad data, fetch server-side solely for verification.
+  let actionForInsert = actionPayload;
+  let verificationStatus = 'passthrough';
+  if (actionPayload.channel === 'google_ads' || actionPayload.action_type === 'add_negative_keyword') {
+    let campaigns = fetchedCampaigns;
+    if (!campaigns) {
+      try {
+        const gConnForVerify = await getConnectionForAccount(account.id, 'google_ads');
+        if (gConnForVerify) {
+          const googleData = await fetchGoogleAdsData(account, gConnForVerify);
+          campaigns = googleData?.success ? googleData.campaigns : null;
+        }
+      } catch (_verifyErr) { /* non-fatal — proceed as unverified */ }
+    }
+    ({ payload: actionForInsert, status: verificationStatus } = verifyAndEnrichAction(actionPayload, campaigns));
+  }
+
+  const executionData = {
+    campaign_id:       actionForInsert.campaign_id       || null,
+    campaign_name:     actionForInsert.campaign_name     || null,
+    budget_id:         actionForInsert.budget_id         || null,
+    current_value:     actionForInsert.current_value     || null,
+    recommended_value: actionForInsert.recommended_value || null,
+    keyword_text:      actionForInsert.keyword_text       || null,
+    match_type:        actionForInsert.match_type         || null,
+    evidence:          actionForInsert.evidence           || null,
+  };
+
+  // Terminal guard — checked on the fully-assembled execution_data right
+  // before the insert, regardless of how actionForInsert got here.
+  const guard = guardNegativeKeywordExecutionData(actionForInsert.action_type, executionData);
+  const finalStatus = (!guard.ok || verificationStatus === 'unverified') ? 'requires_review' : 'pending';
+  const description = guard.ok
+    ? (actionForInsert.description || '')
+    : `[UNVERIFIED - ${guard.reason}] ${actionForInsert.description || ''}`.trim();
+
+  const { data: actionRow, error: actionErr } = await supabase
+    .from('actions')
+    .insert({
+      account_id:     account.id,
+      channel:        normalizeChannel(actionForInsert.channel || 'other'),
+      action_type:    actionForInsert.action_type,
+      title:          (actionForInsert.action_type || '').replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
+      description,
+      priority:       actionForInsert.priority || 'medium',
+      auto_execute:   false,
+      execution_data: executionData,
+      status:         finalStatus,
+    })
+    .select('id')
+    .single();
+
+  if (actionErr) {
+    console.error('[chat] action row creation failed:', actionErr.message);
+    return { savedActionId: null, status: null, blocked: false };
+  }
+  return { savedActionId: actionRow?.id || null, status: finalStatus, blocked: false };
+}
+
+// ── Stage a batch of negative-keyword terms (add_negative_keyword_batch) ─────
+// Expands a single add_negative_keyword_batch ACTION block into N individual
+// add_negative_keyword rows, each run through the same stageGoogleAdsAction
+// safety pipeline (coordinator gate → verify/enrich → terminal guard → insert)
+// as a single-term ACTION. Replaces the old one-term-per-turn "say next"
+// prompt convention with server-side expansion.
+async function stageNegativeKeywordBatch(batchPayload, account, fetchedGoogleCampaigns) {
+  const rawTerms = Array.isArray(batchPayload.terms) ? batchPayload.terms : [];
+  const validTerms = rawTerms.filter(t => t && typeof t.keyword_text === 'string' && t.keyword_text.trim());
+  const terms = validTerms.slice(0, MAX_BATCH_TERMS);
+  const droppedCount = validTerms.length - terms.length;
+
+  if (terms.length === 0) {
+    return { summaryText: 'No valid terms were provided to stage as negative keywords.', staged: 0, requiresReview: 0 };
+  }
+
+  // Resolve live campaign data ONCE, server-side — reused unmodified S06 logic
+  // inside stageGoogleAdsAction/verifyAndEnrichAction per item. Never trust the
+  // model's campaign_name/campaign_id directly.
+  let campaigns = fetchedGoogleCampaigns;
+  if (!campaigns) {
+    try {
+      const gConn = await getConnectionForAccount(account.id, 'google_ads');
+      if (gConn) {
+        const googleData = await fetchGoogleAdsData(account, gConn);
+        campaigns = googleData?.success ? googleData.campaigns : null;
+      }
+    } catch (_e) { /* non-fatal — items resolve as unverified below */ }
+  }
+
+  let staged = 0;
+  let requiresReview = 0;
+
+  for (const term of terms) {
+    const itemPayload = {
+      action_type:   'add_negative_keyword',
+      channel:       'google_ads', // server-authoritative — never trust the batch wrapper's channel
+      campaign_id:   batchPayload.campaign_id   || null,
+      campaign_name: batchPayload.campaign_name || null,
+      keyword_text:  term.keyword_text.trim(),
+      match_type:    term.match_type || batchPayload.match_type || 'BROAD',
+      description:   term.description || `Negate '${term.keyword_text.trim()}' — batch negative keyword request.`,
+      evidence:      term.evidence || null,
+    };
+
+    try {
+      const { status } = await stageGoogleAdsAction(itemPayload, account, campaigns);
+      if (status === 'requires_review') requiresReview++;
+      else if (status === 'pending') staged++;
+      // status === null (blocked or insert error): counted in neither — matches
+      // existing single-action behavior where a blocked/failed item just doesn't land.
+    } catch (_e) { /* one bad term must never abort the rest of the batch */ }
+  }
+
+  const parts = [];
+  if (staged)           parts.push(`${staged} staged for approval`);
+  if (requiresReview)   parts.push(`${requiresReview} flagged for manual review (campaign or keyword could not be verified)`);
+  if (droppedCount > 0) parts.push(`${droppedCount} term(s) beyond the ${MAX_BATCH_TERMS}-term cap were not staged — resend the remainder in a new message`);
+
+  return {
+    summaryText: `Batch negative-keyword request processed: ${parts.join('; ')}. Review and approve in the Actions queue.`,
+    staged,
+    requiresReview,
+  };
+}
+
 // ── Main handler ─────────────────────────────────────────────────────────────
 export default async function handler(req, res) {
   setCorsHeaders(req, res, { methods: 'GET, POST, OPTIONS', headers: 'Content-Type, x-account-slug' });
@@ -512,93 +664,45 @@ export default async function handler(req, res) {
     const rawText = claudeRes.content?.[0]?.text || '';
 
     // ── Step 6: Parse ACTION block → CREATIVE_READY → AD_PREVIEW ──
-    const { displayText: afterAction,   actionPayload } = parseActionBlock(rawText);
+    const { displayText: afterAction,   actionPayload: parsedActionPayload } = parseActionBlock(rawText);
+    let actionPayload = parsedActionPayload;
     const { displayText: afterCreative, creativeReady } = parseCreativeReady(afterAction);
-    const { displayText,                adPreview     } = parseAdPreview(afterCreative);
-    const messageType = actionPayload ? 'action_request' : 'text';
+    const { displayText: initialDisplayText, adPreview } = parseAdPreview(afterCreative);
+    let finalDisplayText = initialDisplayText;
 
-    // ── Step 6.5: Persist pre-created action row when Claude emits an ACTION block ──
+    // ── Step 6.5: Persist pre-created action row(s) when Claude emits an ACTION block ──
     // process_image is UI-only (triggers image panel); skip it so only campaign-
     // management actions hit the DB. Coordinator gate is always called first.
+    // add_negative_keyword_batch expands into N single-term actions server-side
+    // (S07e) — never a single action_request card for a batch turn.
     let savedActionId = null;
-    if (actionPayload && actionPayload.action_type && actionPayload.action_type !== 'process_image') {
+    let batchSummary = null;
+    if (actionPayload && actionPayload.action_type === 'add_negative_keyword_batch') {
       try {
-        const pillar = inferPillar(actionPayload.action_type);
-        const [novel, conflict] = await Promise.all([
-          detectNovelty(actionPayload.action_type, account.id),
-          detectConflict(account.id),
-        ]);
-        const context = {
-          novel,
-          conflict,
-          anomaly:       detectAnomaly(),
-          external_flag: detectExternalFlag(actionPayload),
-          // SESSION-05: budget-guard staging consult (magnitude/protection)
-          execution_data: {
-            campaign_id:       actionPayload.campaign_id       || null,
-            current_value:     actionPayload.current_value     || null,
-            recommended_value: actionPayload.recommended_value || null,
-          },
-        };
-        const { verdict } = await checkPostureForAction(account.id, pillar, actionPayload.action_type, context);
-        if (verdict !== 'block') {
-          // Verify google_ads campaign IDs against live data before saving.
-          // If this turn didn't fetch ad data, fetch server-side solely for verification.
-          let actionForInsert = actionPayload;
-          let verificationStatus = 'passthrough';
-          if (actionPayload.channel === 'google_ads') {
-            let campaigns = fetchedGoogleCampaigns;
-            if (!campaigns) {
-              try {
-                const gConnForVerify = await getConnectionForAccount(account.id, 'google_ads');
-                if (gConnForVerify) {
-                  const googleData = await fetchGoogleAdsData(account, gConnForVerify);
-                  campaigns = googleData?.success ? googleData.campaigns : null;
-                }
-              } catch (_verifyErr) { /* non-fatal — proceed as unverified */ }
-            }
-            ({ payload: actionForInsert, status: verificationStatus } =
-              verifyAndEnrichAction(actionPayload, campaigns));
-          }
-
-          const { data: actionRow, error: actionErr } = await supabase
-            .from('actions')
-            .insert({
-              account_id:     account.id,
-              channel:        normalizeChannel(actionForInsert.channel || 'other'),
-              action_type:    actionForInsert.action_type,
-              title:          (actionForInsert.action_type || '').replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
-              description:    actionForInsert.description || '',
-              priority:       actionForInsert.priority || 'medium',
-              auto_execute:   false,
-              execution_data: {
-                campaign_id:       actionForInsert.campaign_id       || null,
-                campaign_name:     actionForInsert.campaign_name     || null,
-                budget_id:         actionForInsert.budget_id         || null,
-                current_value:     actionForInsert.current_value     || null,
-                recommended_value: actionForInsert.recommended_value || null,
-                keyword_text:      actionForInsert.keyword_text       || null,
-                match_type:        actionForInsert.match_type         || null,
-                evidence:          actionForInsert.evidence           || null,
-              },
-              status: verificationStatus === 'unverified' ? 'requires_review' : 'pending',
-            })
-            .select('id')
-            .single();
-          if (!actionErr && actionRow?.id) {
-            savedActionId = actionRow.id;
-          } else if (actionErr) {
-            console.error('[chat] action row creation failed:', actionErr.message);
-          }
-        }
+        batchSummary = await stageNegativeKeywordBatch(actionPayload, account, fetchedGoogleCampaigns);
+      } catch (e) {
+        console.error('[chat] batch negative-keyword staging threw:', e.message);
+        batchSummary = { summaryText: 'Batch negative-keyword staging failed — please retry or stage terms individually.', staged: 0, requiresReview: 0 };
+      }
+      actionPayload = null; // no single action_request card for a batch turn
+    } else if (actionPayload && actionPayload.action_type && actionPayload.action_type !== 'process_image') {
+      try {
+        const { savedActionId: id } = await stageGoogleAdsAction(actionPayload, account, fetchedGoogleCampaigns);
+        savedActionId = id;
       } catch (e) {
         console.error('[chat] action row creation threw:', e.message);
       }
     }
 
+    if (batchSummary) {
+      finalDisplayText = `${finalDisplayText}\n\n${batchSummary.summaryText}`.trim();
+    }
+
+    const messageType = actionPayload ? 'action_request' : 'text';
+
     await updateChatRunStatus(runId, {
       status:      'succeeded',
-      output_json: { reply: displayText, messageType, hasActionPayload: !!actionPayload },
+      output_json: { reply: finalDisplayText, messageType, hasActionPayload: !!actionPayload },
       latency_ms,
     });
 
@@ -618,7 +722,7 @@ export default async function handler(req, res) {
       {
         account_id:     account.id,
         role:           'assistant',
-        content:        displayText,
+        content:        finalDisplayText,
         message_type:   messageType,
         action_payload: actionPayload,
         session_id:     sessionId,
@@ -629,7 +733,7 @@ export default async function handler(req, res) {
     // ── Step 8: Return ──
     return res.status(200).json({
       success:       true,
-      reply:         displayText,
+      reply:         finalDisplayText,
       messageType,
       actionPayload: actionPayload || null,
       actionId:      savedActionId || null,

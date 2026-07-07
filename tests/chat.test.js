@@ -1022,6 +1022,149 @@ describe('chat — missing keyword_text downgrades action to requires_review at 
 });
 
 // ============================================================================
+// Session-07e: channel-gate bypass closed — add_negative_keyword is ALWAYS
+// verified/guarded, even with a missing or wrong channel value.
+// ============================================================================
+
+describe('chat — add_negative_keyword channel-gate bypass closed (S07e)', () => {
+
+  it('add_negative_keyword with channel missing entirely AND missing keyword_text still lands requires_review', async () => {
+    setResponse('actions.insert.single', { data: { id: 'action-no-channel-uuid' }, error: null });
+    makeActionFetch(
+      'I recommend negating this term.\nACTION:{"action_type":"add_negative_keyword","campaign_id":"g-camp-1","campaign_name":"Google Test","match_type":"BROAD","description":"Zero conversions"}'
+    );
+
+    const req = makeReq();
+    const res = makeRes();
+    await handler(req, res);
+
+    expect(res._statusCode).toBe(200);
+    const inserted = (insertsByTable['actions'] || [])[0];
+    expect(inserted).toBeDefined();
+    expect(inserted.status).toBe('requires_review');
+    expect(inserted.execution_data.keyword_text).toBeNull();
+  });
+
+  it('add_negative_keyword with channel "other" AND missing keyword_text still lands requires_review', async () => {
+    setResponse('actions.insert.single', { data: { id: 'action-other-channel-uuid' }, error: null });
+    makeActionFetch(
+      'I recommend negating this term.\nACTION:{"action_type":"add_negative_keyword","channel":"other","campaign_id":"g-camp-1","campaign_name":"Google Test","match_type":"BROAD","description":"Zero conversions"}'
+    );
+
+    const req = makeReq();
+    const res = makeRes();
+    await handler(req, res);
+
+    expect(res._statusCode).toBe(200);
+    const inserted = (insertsByTable['actions'] || [])[0];
+    expect(inserted).toBeDefined();
+    expect(inserted.status).toBe('requires_review');
+    expect(inserted.execution_data.keyword_text).toBeNull();
+  });
+
+});
+
+// ============================================================================
+// Session-07e: add_negative_keyword_batch — server-side batch expansion
+// ============================================================================
+
+describe('chat — add_negative_keyword_batch expands into N action rows (S07e)', () => {
+
+  function makeBatchAction(overrides = {}) {
+    return {
+      action_type:   'add_negative_keyword_batch',
+      channel:       'google_ads',
+      campaign_name: 'Google Test',
+      match_type:    'BROAD',
+      terms: [
+        { keyword_text: 'carport',          evidence: { search_term: 'carport',          spend: '19.84', conversions: 0 } },
+        { keyword_text: 'shed plans',        evidence: { search_term: 'free shed plans',  spend: '12.10', conversions: 0 } },
+        { keyword_text: 'used pole barns',   evidence: { search_term: 'used pole barns',   spend: '8.00',  conversions: 0 } },
+      ],
+      ...overrides,
+    };
+  }
+
+  it('inserts one action row per term, each with populated keyword_text and the real campaign_id resolved from fetched data', async () => {
+    setResponse('actions.insert.single', { data: { id: 'action-batch-uuid' }, error: null });
+    const batchAction = makeBatchAction();
+    makeActionFetch(`Here are the terms to negate.\nACTION:${JSON.stringify(batchAction)}`);
+
+    const req = makeReq({ body: { message: 'Negate all the waste', sessionId: 'session-batch' } });
+    const res = makeRes();
+    await handler(req, res);
+
+    expect(res._statusCode).toBe(200);
+    const inserted = insertsByTable['actions'] || [];
+    expect(inserted.length).toBe(3);
+    for (const row of inserted) {
+      expect(row.action_type).toBe('add_negative_keyword');
+      expect(row.execution_data.keyword_text).toBeTruthy();
+      // Resolved from fetched campaign data (g-camp-1), never a client-supplied id
+      // (the batch payload never included campaign_id at all).
+      expect(row.execution_data.campaign_id).toBe('g-camp-1');
+      expect(row.status).toBe('pending');
+    }
+  });
+
+  it('lands every expanded item as requires_review when campaign_name matches no fetched campaign', async () => {
+    setResponse('actions.insert.single', { data: { id: 'action-batch-unverified-uuid' }, error: null });
+    const batchAction = makeBatchAction({ campaign_name: 'Nonexistent Campaign', terms: [
+      { keyword_text: 'carport' },
+      { keyword_text: 'shed plans' },
+    ] });
+    makeActionFetch(`Here are the terms to negate.\nACTION:${JSON.stringify(batchAction)}`);
+
+    const req = makeReq({ body: { message: 'Negate all the waste', sessionId: 'session-batch-unverified' } });
+    const res = makeRes();
+    await handler(req, res);
+
+    expect(res._statusCode).toBe(200);
+    const inserted = insertsByTable['actions'] || [];
+    expect(inserted.length).toBe(2);
+    for (const row of inserted) {
+      expect(row.status).toBe('requires_review');
+    }
+  });
+
+  it('caps a batch at 25 terms and mentions the dropped count in the reply', async () => {
+    setResponse('actions.insert.single', { data: { id: 'action-batch-cap-uuid' }, error: null });
+    const terms = Array.from({ length: 30 }, (_, i) => ({ keyword_text: `junk term ${i}` }));
+    const batchAction = makeBatchAction({ terms });
+    makeActionFetch(`Here are the terms to negate.\nACTION:${JSON.stringify(batchAction)}`);
+
+    const req = makeReq({ body: { message: 'Negate all the waste', sessionId: 'session-batch-cap' } });
+    const res = makeRes();
+    await handler(req, res);
+
+    expect(res._statusCode).toBe(200);
+    const inserted = insertsByTable['actions'] || [];
+    expect(inserted.length).toBe(25);
+    expect(res._body.reply).toMatch(/5 term\(s\) beyond the 25-term cap were not staged/);
+  });
+
+  it('returns actionPayload: null and actionId: null for a batch turn, with a summary sentence in the reply', async () => {
+    setResponse('actions.insert.single', { data: { id: 'action-batch-summary-uuid' }, error: null });
+    const batchAction = makeBatchAction({ terms: [
+      { keyword_text: 'carport' },
+      { keyword_text: 'shed plans' },
+    ] });
+    makeActionFetch(`Here are the terms to negate.\nACTION:${JSON.stringify(batchAction)}`);
+
+    const req = makeReq({ body: { message: 'Negate all the waste', sessionId: 'session-batch-summary' } });
+    const res = makeRes();
+    await handler(req, res);
+
+    expect(res._statusCode).toBe(200);
+    expect(res._body.actionPayload).toBeNull();
+    expect(res._body.actionId).toBeNull();
+    expect(res._body.messageType).toBe('text');
+    expect(res._body.reply).toMatch(/Batch negative-keyword request processed/);
+  });
+
+});
+
+// ============================================================================
 // Session-07c: multi-term negation stages one concrete term per turn, not
 // batched into a single keyword_text or multiple ACTION blocks (fpb.js S07c)
 // ============================================================================

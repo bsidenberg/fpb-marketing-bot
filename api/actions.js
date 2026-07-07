@@ -1,11 +1,14 @@
 import supabase from './lib/supabase.js';
 import { validateStatusPatch, inferPillar } from './lib/action-states.js';
-import { resolveForRead, resolveForWrite } from './lib/accounts.js';
+import { resolveForRead, resolveForWrite, getConnectionForAccount } from './lib/accounts.js';
 import { setCorsHeaders } from './lib/cors.js';
 import { checkPostureForAction } from './lib/autonomy-coordinator.js';
 import { detectNovelty, detectConflict, detectExternalFlag, detectAnomaly } from './lib/autonomy-escalation.js';
 import { normalizeChannel } from './lib/normalize-channel.js';
 import { requireAdmin } from './lib/require-admin.js';
+import { guardNegativeKeywordExecutionData } from './lib/negative-keyword-guard.js';
+import { verifyAndEnrichAction } from './chat.js';
+import { fetchGoogleAdsData } from './google-ads.js';
 
 export default async function handler(req, res) {
   setCorsHeaders(req, res, { methods: 'GET, POST, PATCH, OPTIONS', headers: 'Content-Type, x-account-slug' });
@@ -99,6 +102,44 @@ export default async function handler(req, res) {
       execution_data = {},
     } = req.body;
 
+    // ── S07e fix: server-side campaign verification for add_negative_keyword ──
+    // Mirrors the same verification api/chat.js runs before staging a negative
+    // keyword action — a client-supplied campaign_id/campaign_name must never
+    // reach a 'pending' row unverified against live Google Ads data.
+    let verifiedExecutionData = execution_data;
+    let campaignVerificationStatus = null;
+    let campaignVerificationReason = null;
+    if (action_type === 'add_negative_keyword') {
+      let campaigns = null;
+      try {
+        const gConn = await getConnectionForAccount(account.id, 'google_ads');
+        if (gConn) {
+          const googleData = await fetchGoogleAdsData(account, gConn);
+          campaigns = googleData?.success ? googleData.campaigns : null;
+        }
+      } catch (_e) { /* non-fatal — falls through to unverified below */ }
+
+      const verifyInput = {
+        action_type,
+        channel:       'google_ads',
+        campaign_id:   execution_data.campaign_id   || null,
+        campaign_name: execution_data.campaign_name || null,
+        keyword_text:  execution_data.keyword_text  || null,
+        match_type:    execution_data.match_type    || null,
+        current_value: execution_data.current_value || null,
+        description,
+      };
+      const { payload: verifiedPayload, status } = verifyAndEnrichAction(verifyInput, campaigns);
+      campaignVerificationStatus = status;
+      campaignVerificationReason = verifiedPayload?.description || null;
+
+      verifiedExecutionData = {
+        ...execution_data,
+        campaign_id: verifiedPayload.campaign_id || null,   // server-verified, never the client-supplied raw value if it was corrected/rejected
+        budget_id:   null,                                   // negative keywords never need budget_id — never trust a client-supplied one
+      };
+    }
+
     // ── Autonomy coordinator gate ─────────────────────────────────────────────
     const pillar = inferPillar(action_type);
 
@@ -130,6 +171,17 @@ export default async function handler(req, res) {
     const effectiveAutoExecute = verdict === 'allow_auto' ? (auto_execute === true) : false;
     const coordinatorMeta = { autonomy_verdict: verdict, ...(reason ? { autonomy_reason: reason } : {}) };
 
+    // Terminal, bypass-proof guard — checked on the fully-assembled
+    // execution_data right before the insert, regardless of which client
+    // path (chat ACTION card fallback, direct API call, etc.) built it.
+    const finalExecutionData = { ...verifiedExecutionData, ...coordinatorMeta };
+    const guard = guardNegativeKeywordExecutionData(action_type, finalExecutionData);
+    const campaignUnverified = campaignVerificationStatus === 'unverified';
+    const finalStatus = (guard.ok && !campaignUnverified) ? 'pending' : 'requires_review';
+    const finalDescription = finalStatus === 'pending'
+      ? description
+      : (!guard.ok ? `[UNVERIFIED - ${guard.reason}] ${description || ''}`.trim() : campaignVerificationReason);
+
     const { data, error } = await supabase
       .from('actions')
       .insert({
@@ -137,11 +189,11 @@ export default async function handler(req, res) {
         channel:        normalizeChannel(channel),
         action_type,
         title,
-        description,
+        description:    finalDescription,
         priority,
         auto_execute:   effectiveAutoExecute,
-        execution_data: { ...execution_data, ...coordinatorMeta },
-        status:         'pending',
+        execution_data: finalExecutionData,
+        status:         finalStatus,
       })
       .select()
       .single();
