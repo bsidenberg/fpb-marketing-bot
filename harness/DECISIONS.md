@@ -1188,3 +1188,41 @@ attempted tonight — the stopping rule applies.
 | L-003 | Phase A is validated FPB-only. Weld Workx / FSC enablement is later config work (blocked on their `ad_platform_connections`), not a rewrite. | All Phase A | `HARNESS-PHASE-A.md` §2.2 |
 | L-004 | Meta remains on deprecated Graph v19 (Bug 19). The watch loop may *detect* Meta offline but must not *act* on Meta. | `facebook-ads.js` | `HARNESS-PHASE-A.md` §2.2 |
 | L-005 | The chat surface has **no tool-use today** — every action travels as `ACTION:{...}` text inside the markdown stream (`api/chat.js` calls Anthropic with `{ model, system, messages, max_tokens }` and no `tools` array). S-07g is therefore a genuine architecture change, not a refactor. | `api/chat.js` | Disclosed 2026-07-28 |
+## D-11 (re-affirmed 2026-07-31, after cold review REVIEW-D11-2026-07-31.md)
+
+DECISION: The W coherence cap is RETAINED. "Delete, don't harden" remains
+withdrawn (I-006 -> I-007) and is not to be re-proposed.
+
+The S-08A.1a implementation does NOT satisfy D-11. objective.js:1045
+hard-codes spendVerified: true for every rows-derived cohort, and the only
+path that could set it false is now refused outright. The cap's code and its
+~10 passing tests are intact and structurally unreachable from the sanctioned
+entry point. This is the original A14 defect repeated: the first cap shipped
+an attacker-settable opt-out; this one ships an unconditional one.
+
+ROOT CAUSE: the code conflates "every row's value is real" (true, and now
+well enforced) with "the set of rows summed is correct" (never checked,
+host side especially). SDR-7 - a true defense against the wrong threat.
+
+REQUIREMENT for S-08A.1a.2a:
+1. The cap's bypass is gated on cohort-MEMBERSHIP provenance, not row-VALUE
+   provenance.
+2. Until membership completeness is independently verifiable, spendVerified
+   DEFAULTS TO FALSE and the W bound applies to every rows-derived claim,
+   exactly as it applied to the old scalar shape.
+3. FORM change only. W's level is not touched here (DI-3).
+4. objective.js is pure and zero-I/O and cannot verify membership itself.
+   Full closure requires the persisted, unspoofable fetchId at the caller
+   boundary - S-07f.1. That dependency is now BINDING and is added to the
+   sequencing, where it did not previously exist.
+
+ACCEPTANCE: feed the module an honest full cohort and a caller-narrowed
+subset that drops converting host rows, with identical removed-side inputs.
+Assert the subset candidate scores <= W x the honest one, or is refused.
+This test FAILS today.
+
+ACCEPTED COST: legitimate large waste-removal actions are under-credited
+until real provenance lands. Under-crediting is safe; over-crediting is the
+attack.
+
+Owner: Brian. Re-review after S-08A.1a.2a's cold review.
