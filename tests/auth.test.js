@@ -89,7 +89,6 @@ describe('POST /api/auth — logout', () => {
 
 describe('POST /api/auth — rate limiting', () => {
   it('returns 429 after 30 failed attempts from same IP', async () => {
-    const now = Date.now();
     // Fill 30 slots
     for (let i = 0; i < 30; i++) {
       const req = makeReq({ password: 'bad' }, 'POST', { 'x-forwarded-for': '10.0.0.1' });

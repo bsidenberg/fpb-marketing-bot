@@ -144,7 +144,6 @@ vi.mock('../api/lib/execute-action-logic.js', async () => {
 // ── Supabase mock ────────────────────────────────────────────────────────────
 const singleQueue    = [];
 let lastUpdatePatch  = null;
-let lastInsertRow    = null;
 const eqCallsByTable = {};
 const insertsByTable = {};
 
@@ -161,7 +160,6 @@ function makeChain(table) {
     limit:  () => chain,
     update: (patch) => { lastUpdatePatch = patch; return chain; },
     insert: (row)   => {
-      lastInsertRow = row;
       (insertsByTable[table] = insertsByTable[table] || []).push(row);
       return chain;
     },
@@ -226,7 +224,6 @@ beforeEach(() => {
   vi.clearAllMocks();
   singleQueue.length = 0;
   lastUpdatePatch    = null;
-  lastInsertRow      = null;
   for (const k of Object.keys(eqCallsByTable)) delete eqCallsByTable[k];
   for (const k of Object.keys(insertsByTable)) delete insertsByTable[k];
   mockAccount        = FPB;

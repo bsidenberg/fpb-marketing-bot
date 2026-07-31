@@ -1,0 +1,79 @@
+S-CI-1 — Did CI ever actually run?
+Date: 2026-07-30
+Method: gh CLI + GitHub REST API against the live repo (bsidenberg/fpb-marketing-bot).
+Read-only throughout.
+
+Commands run and raw output:
+
+$ gh auth status
+  Logged in to github.com account bsidenberg, token scopes: gist, read:org, repo
+
+$ gh run list --repo bsidenberg/fpb-marketing-bot --limit 30 --json databaseId,status,conclusion,createdAt,headBranch,name
+  []
+  (exit 0 — the call succeeded; the array is genuinely empty, not an auth failure)
+
+$ gh workflow list --repo bsidenberg/fpb-marketing-bot --all
+  (empty — no workflows registered, active or disabled)
+
+$ gh api repos/bsidenberg/fpb-marketing-bot/actions/workflows --jq '.total_count'
+  0
+
+$ gh api repos/bsidenberg/fpb-marketing-bot --jq '{full_name, created_at, pushed_at, default_branch}'
+  {"full_name":"bsidenberg/fpb-marketing-bot","created_at":"2026-03-24T23:05:22Z",
+   "pushed_at":"2026-07-07T20:19:46Z","default_branch":"main"}
+
+$ git log --all --oneline -- .github/
+  (empty — .github/ has never been committed to ANY local branch, ever)
+
+$ git ls-remote --heads origin
+  92567dd5450b77e3a0b21dafee52233817df4b7e  refs/heads/fix/production-triage
+  8df0789b6fee523b5f1a4cfdf392eabbedffa3f4  refs/heads/main
+  4e8bb1cd75c3eda6a71a4c210d0448b5f0a0255c  refs/heads/v0/bsidenberg-114604b1
+
+=== Finding ===
+
+**GitHub Actions CI has NEVER run in this repository, not once, on any
+branch, in its entire history.** Zero registered workflows (API
+total_count: 0), zero runs (gh run list: empty array, not an error), and
+`.github/workflows/verify.yml` has never been committed to git at all
+locally (git log --all shows nothing for that path) — so it was never in
+a position to be pushed and picked up by GitHub Actions in the first
+place. The repo's last push to GitHub was 2026-07-07, and the workflow
+file's own timestamp (2026-07-12 04:01, per the prime-audit.zip listing
+inspected under S-CLEAN-1) postdates that push — it was authored locally
+after the last time anything reached GitHub.
+
+=== This corrects the framing in HARNESS.md §4.1, SDR-1 instance 1 ===
+
+The table there reads: "`.github/workflows/verify.yml` ran `npm run lint
+--if-present` with no `lint` script defined... CI green. Evidence logs
+attested 'ALL CHECKS PASSED (2/2)'... Months, until 2026-07-28."
+
+That conflates two DIFFERENT gates:
+  (a) the LOCAL `scripts/verify.ps1` gate, run by agents/CI-equivalent
+      sessions and producing the evidence logs cited (e.g.
+      S-08A-verify-2026-07-13_1727.log) — this DID run, repeatedly, and DID
+      silently skip lint via the same `--if-present`-shaped guard
+      (`if ($scripts.ContainsKey("lint"))`). That half of the claim is true
+      and already evidenced.
+  (b) GitHub Actions CI (`.github/workflows/verify.yml`) — this is the
+      "CI" the sentence's grammatical subject names, and per this
+      session's investigation, it has NEVER run. Not "ran green while
+      skipping lint" — never invoked at all, because it was never
+      committed, so GitHub never had it to run.
+
+**"CI green" is not a true historical claim.** There was no CI to be green
+or red. The "months" duration and the fixed defect (silent lint-skip) are
+both real for the LOCAL gate; attributing them to GitHub Actions CI
+specifically is incorrect and is corrected here per SDR-2 (a claim in the
+harness's own document is a hypothesis until the repo confirms it,
+including when the harness itself asserts it).
+
+**Consequence:** now that `.github/workflows/verify.yml` is committed
+(this session's earlier housekeeping commit under S-LINT-1 staged it,
+though nothing has actually been committed tonight — see the git-commit-
+blocked finding), the FIRST time GitHub Actions will ever run for this
+repo is whenever Brian pushes. There is no prior CI history to compare
+against; the "3/3" vs "2/2" gate distinction documented in HARNESS.md
+describes the LOCAL verify.ps1 gate's evolution, not GitHub Actions',
+which starts from zero runs regardless.

@@ -77,7 +77,6 @@ vi.mock('../api/lib/supabase.js', () => ({
 import {
   checkPostureForAction,
   recordActionOutcome,
-  getActiveCount,
 } from '../api/lib/autonomy-coordinator.js';
 
 import {

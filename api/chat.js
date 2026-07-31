@@ -446,6 +446,75 @@ async function stageGoogleAdsAction(actionPayload, account, fetchedCampaigns, fo
   return { savedActionId: actionRow?.id || null, status: finalStatus, blocked: false };
 }
 
+// ── Prompt-safe projection (S-07f.0, 2026-07-30) ─────────────────────────────
+// fetchSearchTerms rows carry rowId (= search_term_view.resource_name) and
+// adGroupId. The PRIMARY reason these are stripped before the prompt is
+// SECURITY, not cost (corrected after cold review — the original comment
+// led with token cost, which is the kind of rationale that gets reversed by
+// the next person who decides tokens are cheap): resource_name embeds the
+// literal Google Ads customer ID
+// (`customers/{customer_id}/searchTermViews/{campaign}~{adGroup}~{term}`),
+// and this repo's standing rule (CLAUDE.md) is that account IDs are never
+// exposed outside ad_platform_connections resolution — shipping one into the
+// model's context window is exactly that exposure. It also teaches the model
+// the exact identity-string FORMAT it would need to fabricate a convincing
+// (but fake) row identity later. Token cost is real too — ~200 rows'-worth of
+// resource_name strings would meaningfully inflate every waste-analysis turn
+// — but is secondary here.
+//
+// ALLOWLIST, not denylist (cold review finding): a denylist of
+// {rowId, adGroupId} silently stops covering the moment a new field is added
+// upstream — S-07f.1 is expected to add a scalar fetchId to the RESULT (see
+// PROMPT_SAFE_RESULT_FIELDS below, also allowlisted after a second cold-
+// review pass found the row-level allowlist alone was fail-open one level
+// up). PROMPT_SAFE_SEARCH_TERM_FIELDS is the complete list of row fields the
+// model may see; anything else is dropped by default (fail closed).
+// LIMITATION, disclosed rather than overclaimed (second cold review,
+// 2026-07-30): tests/chat.test.js's coverage-guard test checks a HAND-
+// MAINTAINED list of known row fields, not a live import of the real
+// fetchSearchTerms mapper (this file mocks that module wholesale) — so a
+// field added directly to google-ads.js's mapper without updating the test's
+// list will NOT fail this test. The allowlist itself still strips it at
+// runtime either way (fail-closed behavior does not depend on the test), but
+// the test is a maintained-list check, not a live-drift detector.
+//
+// `fetchedSearchTerms` (the variable threaded into stageNegativeKeywordBatch
+// for future term-provenance cross-checks, S-07f.1) keeps the FULL row,
+// rowId/adGroupId included — only the copy embedded in the prompt is
+// projected.
+const PROMPT_SAFE_SEARCH_TERM_FIELDS = ['searchTerm', 'campaignId', 'campaignName', 'clicks', 'cost', 'conversions'];
+
+// Re-review finding (2026-07-30): the row-level allowlist above is fail-closed,
+// but the RESULT object itself was a passthrough (`...searchTermsResult`) — a
+// future top-level field (S-07f.1 is expected to add a scalar `fetchId` to the
+// RESULT, not to each row, per harness/SESSIONS.md) would have bypassed the
+// row allowlist entirely with no test failing: fail-closed one level down,
+// fail-open one level up. This is now an allowlist too.
+const PROMPT_SAFE_RESULT_FIELDS = ['success', 'searchTerms', 'wasteSummary'];
+
+function toPromptSafeRow(row) {
+  if (!row || typeof row !== 'object') return row;
+  const safe = {};
+  for (const key of PROMPT_SAFE_SEARCH_TERM_FIELDS) {
+    if (key in row) safe[key] = row[key];
+  }
+  return safe;
+}
+
+export function projectSearchTermsForPrompt(searchTermsResult) {
+  const safeResult = {};
+  for (const key of PROMPT_SAFE_RESULT_FIELDS) {
+    if (key in searchTermsResult) safeResult[key] = searchTermsResult[key];
+  }
+  return {
+    ...safeResult,
+    searchTerms: (searchTermsResult.searchTerms || []).map(toPromptSafeRow),
+    wasteSummary: searchTermsResult.wasteSummary
+      ? { ...searchTermsResult.wasteSummary, topWaste: (searchTermsResult.wasteSummary.topWaste || []).map(toPromptSafeRow) }
+      : searchTermsResult.wasteSummary,
+  };
+}
+
 // ── Terms staged from this turn's fetched search-term data ──────────────────
 // S07f TRUSTED-INPUT BOUNDARY, v2 (tightened after safety review). A batch
 // term is sorted into exactly one of three buckets:
@@ -711,8 +780,29 @@ export default async function handler(req, res) {
       if ((WASTE_QUESTION_RE.test(message) || NEGATE_STAGING_RE.test(message)) && gConn) {
         const searchTermsResult = await fetchSearchTerms(account, gConn);
         if (searchTermsResult.success) {
+          // Full rows (with rowId/adGroupId intact) go to fetchedSearchTerms.
+          // Today, stageNegativeKeywordBatch's filterTrustedTerms only reads
+          // .searchTerm off these rows (text matching) — rowId is not yet
+          // consumed anywhere. It becomes load-bearing for term-provenance
+          // cross-checking in S-07f.1. Only the stripped projection below
+          // reaches the model.
           fetchedSearchTerms = searchTermsResult.searchTerms || [];
-          dataParts.push(`SEARCH TERMS (waste analysis):\n${JSON.stringify(searchTermsResult, null, 2)}`);
+          dataParts.push(`SEARCH TERMS (waste analysis):\n${JSON.stringify(projectSearchTermsForPrompt(searchTermsResult), null, 2)}`);
+        } else {
+          // SESSION-07d's contract named this fix explicitly ("push an honest-
+          // failure note into dataParts") but only the contract markdown was
+          // ever committed, not the code (verified: `git log -S` on the note
+          // text returns nothing). Fixed here, discovered by S-07f.0's cold
+          // review — without this, a rejected fetch is silent: no error, no
+          // log, and per fpb.js:191 ("use data provided earlier without
+          // re-requesting it") the model is instructed to proceed as if it
+          // had data it does not have, which is the exact fabrication risk
+          // the chat-surface amendment exists to close.
+          console.error('[chat] fetchSearchTerms failed:', searchTermsResult.error, searchTermsResult.detail);
+          dataParts.push(
+            `SEARCH TERMS: fetch failed (${searchTermsResult.error || 'unknown error'}) — ` +
+            `do not fabricate search terms, campaign names, or IDs; tell the user the search-term report could not be loaded right now.`
+          );
         }
       }
 

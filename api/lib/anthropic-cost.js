@@ -11,6 +11,14 @@
 //     so they are grep-findable in Vercel logs.
 //   - callers should await this (the function is fast and non-blocking
 //     from the user-facing flow's perspective since errors are swallowed).
+//
+//   SDR-1 (S-COST-2, 2026-07-30): a NULL cost_usd used to write silently —
+//   indistinguishable from a genuinely free call. A model string that fails
+//   to resolve to a rate now logs [COST-LEDGER-UNKNOWN-MODEL] loudly before
+//   the row is written, so the gap is grep-findable instead of inheriting
+//   the "empty table reads as zero spend" failure this project has already
+//   been burned by (HARNESS.md §4.1, SDR-1 instance 4). Full alerting (not
+//   just a log line) is S-09A's cost-telemetry scope, not this session's.
 // ============================================================
 
 import supabase from './supabase.js';
@@ -25,6 +33,14 @@ export async function recordAnthropicCost(claudeResponse, accountId, eventType, 
     const inputTokens  = usage.input_tokens  ?? 0;
     const outputTokens = usage.output_tokens ?? 0;
     const costUsd      = model ? computeAnthropicCost(model, inputTokens, outputTokens) : null;
+
+    if (model && costUsd === null) {
+      console.error(
+        `[COST-LEDGER-UNKNOWN-MODEL] eventType=${eventType} model="${model}" — ` +
+        `no rate in ANTHROPIC_RATES (api/lib/cost-rates.js); cost_usd will be written NULL. ` +
+        `Add this model (or its un-dated alias) to the rate table.`
+      );
+    }
 
     const { error } = await supabase.from('cost_api_events').insert({
       vendor:        'anthropic',

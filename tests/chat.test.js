@@ -170,7 +170,7 @@ const mockFetch = vi.fn();
 vi.stubGlobal('fetch', mockFetch);
 
 // Import AFTER all mocks
-import handler, { verifyAndEnrichAction } from '../api/chat.js';
+import handler, { verifyAndEnrichAction, projectSearchTermsForPrompt } from '../api/chat.js';
 import { getFpbChatSystemPrompt } from '../api/lib/prompts/fpb.js';
 import { checkPostureForAction } from '../api/lib/autonomy-coordinator.js';
 // rate-limit.js is intentionally NOT mocked — the chat handler exercises
@@ -1279,6 +1279,38 @@ describe('chat — waste-question trigger fetches search terms (S07b)', () => {
     expect(mockFetchMetaAds).toHaveBeenCalled();
   });
 
+  it('S-07f.0: the outgoing Claude prompt never contains rowId/resource_name, even though fetchSearchTerms returned them', async () => {
+    mockFetchSearchTerms.mockResolvedValueOnce({
+      success: true,
+      searchTerms: [
+        { searchTerm: 'free shed plans', rowId: 'customers/123/searchTermViews/1~2~abcXYZ', campaignId: 'g-camp-1', campaignName: 'Google Test', adGroupId: '2', clicks: 5, cost: 12.5, conversions: 0 },
+      ],
+      wasteSummary: { totalWastedSpend: '12.50', topWaste: [{ searchTerm: 'free shed plans', rowId: 'customers/123/searchTermViews/1~2~abcXYZ', adGroupId: '2', cost: 12.5 }] },
+    });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        content: [{ text: 'Here is your wasted spend breakdown.' }],
+        usage: { input_tokens: 300, output_tokens: 80 },
+      }),
+    });
+
+    const req = makeReq({
+      body: { message: 'What search terms are wasting spend?', sessionId: 'sess-waste-projection', includeAdData: true },
+    });
+    const res = makeRes();
+    await handler(req, res);
+
+    expect(res._statusCode).toBe(200);
+    const call = anthropicCalls()[0];
+    const sentBody = JSON.parse(call[1].body);
+    const sentText = JSON.stringify(sentBody.messages);
+
+    expect(sentText).not.toContain('rowId');
+    expect(sentText).not.toContain('searchTermViews'); // no resource_name string leaked either
+    expect(sentText).toContain('free shed plans'); // the actual term the model needs is still there
+  });
+
   it('does NOT call fetchSearchTerms when the message does not match WASTE_QUESTION_RE', async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
@@ -1298,6 +1330,97 @@ describe('chat — waste-question trigger fetches search terms (S07b)', () => {
     expect(mockFetchSearchTerms).not.toHaveBeenCalled();
   });
 
+});
+
+// ============================================================================
+// S-07f.0 (2026-07-30): prompt-safe projection strips row-identity fields
+// ============================================================================
+
+describe('projectSearchTermsForPrompt — strips identity fields (S-07f.0)', () => {
+
+  it('removes rowId and adGroupId from both searchTerms and wasteSummary.topWaste', () => {
+    const input = {
+      success: true,
+      searchTerms: [
+        { searchTerm: 'free shed plans', rowId: 'customers/123/searchTermViews/1~2~abc', campaignId: '1', campaignName: 'Loc', adGroupId: '2', clicks: 5, cost: 12.5, conversions: 0 },
+      ],
+      wasteSummary: {
+        totalWastedSpend: '12.50',
+        topWaste: [
+          { searchTerm: 'free shed plans', rowId: 'customers/123/searchTermViews/1~2~abc', adGroupId: '2', cost: 12.5 },
+        ],
+      },
+    };
+    const projected = projectSearchTermsForPrompt(input);
+
+    expect(projected.searchTerms[0]).not.toHaveProperty('rowId');
+    expect(projected.searchTerms[0]).not.toHaveProperty('adGroupId');
+    expect(projected.wasteSummary.topWaste[0]).not.toHaveProperty('rowId');
+    expect(projected.wasteSummary.topWaste[0]).not.toHaveProperty('adGroupId');
+
+    // Everything else survives untouched — the model still needs it.
+    expect(projected.searchTerms[0]).toMatchObject({
+      searchTerm: 'free shed plans', campaignId: '1', campaignName: 'Loc', clicks: 5, cost: 12.5, conversions: 0,
+    });
+    expect(projected.wasteSummary.totalWastedSpend).toBe('12.50');
+  });
+
+  it('is a no-op shape-wise when identity fields are absent (defensive)', () => {
+    const input = { success: true, searchTerms: [{ searchTerm: 'x', cost: 1 }], wasteSummary: { totalWastedSpend: '1.00', topWaste: [] } };
+    expect(projectSearchTermsForPrompt(input)).toEqual(input);
+  });
+
+  // Cold-review finding (2026-07-30): a DENYLIST silently stops covering the
+  // moment a new field is added upstream. This pins the CURRENT complete
+  // field list a fetchSearchTerms row can carry (api/google-ads.js's
+  // `searchTerms.map()` mapper, ~line 416) and asserts every one of them is
+  // explicitly classified as either prompt-safe or identity-stripped, with
+  // nothing left over. LIMITATION, disclosed rather than hidden: this list
+  // is maintained by hand, not derived from a live import of google-ads.js
+  // (chat.test.js mocks that module file-wide) — if the mapper gains a field
+  // and this list is not updated to match, the guard cannot see the drift.
+  // Whoever edits the mapper's field list should update KNOWN_ROW_FIELDS here.
+  it('every field the real fetchSearchTerms row shape can carry is explicitly classified (coverage guard)', () => {
+    const KNOWN_ROW_FIELDS = ['searchTerm', 'rowId', 'campaignId', 'campaignName', 'adGroupId', 'clicks', 'cost', 'conversions'];
+    const KNOWN_STRIPPED_IDENTITY_FIELDS = ['rowId', 'adGroupId'];
+
+    const fullRow = {};
+    for (const key of KNOWN_ROW_FIELDS) fullRow[key] = `sentinel_${key}`;
+
+    const projected = projectSearchTermsForPrompt({ success: true, searchTerms: [fullRow] });
+    const survivedKeys = Object.keys(projected.searchTerms[0]);
+
+    for (const key of survivedKeys) {
+      expect(KNOWN_ROW_FIELDS).toContain(key); // nothing appears that wasn't a known input field
+    }
+    // The stripped set must be EXACTLY the known-identity fields — no more, no less.
+    const strippedKeys = KNOWN_ROW_FIELDS.filter((k) => !survivedKeys.includes(k));
+    expect(new Set(strippedKeys)).toEqual(new Set(KNOWN_STRIPPED_IDENTITY_FIELDS));
+  });
+
+  it('token-size bound: projecting 200 rows removes the resource_name payload weight (approximate floor, not a validated exact figure)', () => {
+    const rows = Array.from({ length: 200 }, (_, i) => ({
+      searchTerm:  `search term number ${i}`,
+      rowId:       `customers/1234567890/searchTermViews/${100 + (i % 5)}~${200 + (i % 20)}~${'a'.repeat(40)}${i}`,
+      campaignId:  String(100 + (i % 5)),
+      campaignName: 'Location Campaign',
+      adGroupId:   String(200 + (i % 20)),
+      clicks:      i,
+      cost:        Number((i * 0.37).toFixed(2)),
+      conversions: 0,
+    }));
+    const raw = { success: true, searchTerms: rows, wasteSummary: { totalWastedSpend: '999.00', topWaste: rows.slice(0, 20) } };
+    const projected = projectSearchTermsForPrompt(raw);
+
+    const rawSize       = JSON.stringify(raw).length;
+    const projectedSize = JSON.stringify(projected).length;
+    // ~4 chars/token is the standard rough estimate for English/JSON-ish text.
+    const savedTokensApprox = (rawSize - projectedSize) / 4;
+
+    expect(projectedSize).toBeLessThan(rawSize);
+    expect(savedTokensApprox).toBeGreaterThan(1000); // identity fields alone account for well over 1000 tokens at 200 rows
+    expect(JSON.stringify(projected)).not.toMatch(/searchTermViews/); // no resource_name leakage at all
+  });
 });
 
 // ============================================================================

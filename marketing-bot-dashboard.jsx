@@ -1673,7 +1673,7 @@ function AdPreviewCard({ adPreview, processedImage, onApprove, autoApproveEnable
       else setCountdown(n);
     }, 1000);
     return () => clearInterval(iv);
-  }, [autoApproveEnabled]); // eslint-disable-line
+  }, [autoApproveEnabled]);
 
   const doPublish = async () => {
     setPublishing(true);
@@ -2708,7 +2708,7 @@ function LoginScreen({ onSuccess }) {
 export default function MarketingBotDashboard() {
   const [state, dispatch] = useReducer(reducer, initialState);
   const [now, setNow] = useState(new Date());
-  const [botPulse, setBotPulse] = useState(true);
+  const [_botPulse, setBotPulse] = useState(true);
 
   // ── Live data state ──
   const [googleData, setGoogleData] = useState(null);
@@ -2885,13 +2885,6 @@ export default function MarketingBotDashboard() {
   useEffect(() => {
     if (state.activeTab === "actions") fetchActions(actionsFilter);
   }, [state.activeTab, actionsFilter, fetchActions, selectedAccountSlug]);
-
-  const normalizePlatform = (p) => {
-    if (!p) return null;
-    if (["google", "google_ads", "Google Ads"].includes(p)) return "google";
-    if (["meta", "meta_ads", "Meta Ads", "Facebook Ads"].includes(p)) return "meta";
-    return p;
-  };
 
   const showToast = (msg) => {
     setToast(msg);
@@ -3080,7 +3073,7 @@ export default function MarketingBotDashboard() {
       fetchSubscriptions();
       fetchHoursLog();
     }
-  }, [state.activeTab, costsMonth, selectedAccountSlug]); // eslint-disable-line
+  }, [state.activeTab, costsMonth, selectedAccountSlug]);
 
   // Autonomy tab fetch callbacks
   const fetchPostureRows = useCallback(async () => {
@@ -3110,7 +3103,7 @@ export default function MarketingBotDashboard() {
       fetchPostureRows();
       fetchHoldoutClasses();
     }
-  }, [state.activeTab, selectedAccountSlug]); // eslint-disable-line
+  }, [state.activeTab, selectedAccountSlug]);
 
   // ── Chat: load history on mount ──
   // Welcome message reads from the selected account at render time so it
@@ -3136,7 +3129,7 @@ export default function MarketingBotDashboard() {
         setChatMessages([WELCOME_MSG]);
       }
     })();
-  }, [chatSessionId, selectedAccountSlug]); // eslint-disable-line
+  }, [chatSessionId, selectedAccountSlug]);
 
   // ── Chat: auto-scroll ──
   useEffect(() => {

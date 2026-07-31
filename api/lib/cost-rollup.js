@@ -15,6 +15,19 @@
 // Cross-tenant hours ('prime-platform', 'cross-tenant') are not attributed
 // to any single account in this rollup — they remain unallocated until
 // a cross-tenant rollup view is added in a later phase.
+//
+// data_completeness disclosure (S-OBS-1, 2026-07-30):
+//   cost_subscriptions and cost_hours are MANUAL-ENTRY tables — nothing
+//   auto-logs into them. HARNESS.md §4.1's zero-row sweep ruled both
+//   "expected-empty ONLY while Brian logs no hours/subscriptions — but then
+//   the cost ledger is knowingly incomplete and the pricing floor
+//   (PRIME-STRATEGY.md §6) is unbacked." That incomplete state must be
+//   disclosed at every read, not silently assumed away by an empty-looking
+//   $0 line item that reads the same as "genuinely nothing to allocate."
+//   Checked against table-wide row counts (not just this account/month) —
+//   a table that has never been written to at all is a materially
+//   different situation than one this account simply had nothing in this
+//   month, and the disclosure is about the former.
 // ============================================================
 
 import supabase from './supabase.js';
@@ -116,6 +129,17 @@ export async function computeMonthlyRollup(accountId, yearMonth) {
 
   const operatingTotal = anthropicTotalUsd + subscriptionShareUsd;
 
+  // ── Data-completeness disclosure (S-OBS-1) — table-wide, not month-scoped ──
+  const { count: subscriptionsEverLogged, error: subsCountErr } = await supabase
+    .from('cost_subscriptions')
+    .select('id', { count: 'exact', head: true });
+  if (subsCountErr) throw new Error(`cost_subscriptions (count) query failed: ${subsCountErr.message}`);
+
+  const { count: hoursEverLogged, error: hoursCountErr } = await supabase
+    .from('cost_hours')
+    .select('id', { count: 'exact', head: true });
+  if (hoursCountErr) throw new Error(`cost_hours (count) query failed: ${hoursCountErr.message}`);
+
   // TODO (Phase 4 pricing): build_total_usd is deferred until Brian sets an
   // hourly rate. Hours are captured in hours_total but not converted to USD.
   // When an hourly rate is defined, compute: build_hours * rate_per_hour.
@@ -140,5 +164,19 @@ export async function computeMonthlyRollup(accountId, yearMonth) {
 
   if (upsertErr) throw new Error(`cost_rollups_monthly upsert failed: ${upsertErr.message}`);
 
-  return rollup;
+  // data_completeness is disclosure metadata, returned to the caller but NOT
+  // persisted onto the cost_rollups_monthly row — the row's numeric columns
+  // are the stored aggregate; completeness is a live fact about the source
+  // tables, re-evaluated on every read rather than frozen at compute time.
+  return {
+    ...rollup,
+    data_completeness: {
+      subscriptions_logged: (subscriptionsEverLogged ?? 0) > 0,
+      hours_logged:         (hoursEverLogged ?? 0) > 0,
+      note: 'cost_subscriptions and cost_hours are manual-entry tables. ' +
+        'While either is unlogged (zero rows system-wide), operating_total_usd ' +
+        'and/or hours_total are known undercounts, not confirmed zeros — see ' +
+        'harness/DECISIONS.md S-OBS-1.',
+    },
+  };
 }

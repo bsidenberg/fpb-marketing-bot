@@ -74,9 +74,14 @@ function toDate(d) {
  * Stage B1 Sub-Task 9: filter is now `.eq('account_id', accountId)`.
  * The previous `.eq('client_key', 'fpb')` filter is gone — it would have
  * mixed accounts together once multiple slugs existed in `client_key`.
+ *
+ * S-04B (2026-07-30): also counts TERMINAL outcomes (booked/lost) within the
+ * window, same convention as api/lib/objective.js soldRate() — 'new',
+ * 'qualified', 'unqualified', 'unknown' are in-flight/non-terminal and
+ * excluded from both. This feeds gradeOutcome's new sold-rate rung (R-014).
  */
 async function countLeads(campaignId, accountId, platform, startDate, endDate) {
-  if (!campaignId) return { total: null, qualified: null };
+  if (!campaignId) return { total: null, qualified: null, booked: null, lost: null };
 
   const platformKey = platform === 'google_ads' ? 'google' : 'meta';
 
@@ -89,11 +94,13 @@ async function countLeads(campaignId, accountId, platform, startDate, endDate) {
     .gte('created_at', new Date(startDate).toISOString())
     .lt('created_at', new Date(endDate).toISOString());
 
-  if (error || !data) return { total: null, qualified: null };
+  if (error || !data) return { total: null, qualified: null, booked: null, lost: null };
 
   return {
     total:     data.length,
     qualified: data.filter(l => ['qualified', 'booked'].includes(l.qualification_status)).length,
+    booked:    data.filter(l => l.qualification_status === 'booked').length,
+    lost:      data.filter(l => l.qualification_status === 'lost').length,
   };
 }
 
@@ -161,13 +168,13 @@ async function evaluateAction(action, account, dryRun) {
   // Gather before metrics
   const [spendBeforeResult, leadsBefore] = await Promise.all([
     isManual ? Promise.resolve({ spend: null, source: 'none' }) : getSpendWithSource(campaignId, accountId, platform, toDate(before.start), toDate(before.end)),
-    isManual ? Promise.resolve({ total: null, qualified: null }) : countLeads(campaignId, accountId, platform, toDate(before.start), toDate(before.end)),
+    isManual ? Promise.resolve({ total: null, qualified: null, booked: null, lost: null }) : countLeads(campaignId, accountId, platform, toDate(before.start), toDate(before.end)),
   ]);
 
   // Gather after metrics
   const [spendAfterResult, leadsAfter] = await Promise.all([
     isManual ? Promise.resolve({ spend: null, source: 'none' }) : getSpendWithSource(campaignId, accountId, platform, toDate(after.start), toDate(after.end)),
-    isManual ? Promise.resolve({ total: null, qualified: null }) : countLeads(campaignId, accountId, platform, toDate(after.start), toDate(after.end)),
+    isManual ? Promise.resolve({ total: null, qualified: null, booked: null, lost: null }) : countLeads(campaignId, accountId, platform, toDate(after.start), toDate(after.end)),
   ]);
 
   const spendBefore = spendBeforeResult.spend;
@@ -209,6 +216,10 @@ async function evaluateAction(action, account, dryRun) {
     leads_after:                       leadsAfter.total,
     qualified_leads_before:            leadsBefore.qualified,
     qualified_leads_after:             leadsAfter.qualified,
+    booked_leads_before:               leadsBefore.booked,
+    lost_leads_before:                 leadsBefore.lost,
+    booked_leads_after:                leadsAfter.booked,
+    lost_leads_after:                  leadsAfter.lost,
     cpl_before:                        cplBefore,
     cpl_after:                         cplAfter,
     cost_per_qualified_lead_before:    cpqlBefore,

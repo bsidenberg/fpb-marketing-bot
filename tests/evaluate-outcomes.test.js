@@ -258,6 +258,36 @@ describe('evaluate-outcomes — action_outcomes upsert', () => {
     expect(upserted.action_id).toBe('action-fpb-1');
   });
 
+  it('S-04B: upsert row includes booked/lost terminal counts, derived from qualification_status', async () => {
+    mockActionsList = [makeAction(FPB)];
+    mockGetCampaignSpend.mockResolvedValue(50);
+    mockLeadsList = [
+      { id: 'l1', qualification_status: 'booked' },
+      { id: 'l2', qualification_status: 'booked' },
+      { id: 'l3', qualification_status: 'lost' },
+      { id: 'l4', qualification_status: 'qualified' },  // in-flight — not terminal
+      { id: 'l5', qualification_status: 'new' },         // in-flight — not terminal
+    ];
+
+    const req = makeReq();
+    const res = makeRes();
+    await handler(req, res);
+
+    const upserted = upsertsByTable['action_outcomes'][0].row;
+    // The mock's `leads` chain does not differentiate before/after by date
+    // range, so both windows see the same fixture — this test proves the
+    // COUNTING logic (booked=2, lost=1, in-flight excluded from both), not
+    // window differentiation.
+    expect(upserted.booked_leads_before).toBe(2);
+    expect(upserted.lost_leads_before).toBe(1);
+    expect(upserted.booked_leads_after).toBe(2);
+    expect(upserted.lost_leads_after).toBe(1);
+    // qualified_leads counts 'qualified' + 'booked' (existing behavior,
+    // unchanged) — 3 here (l1, l2, l4), not 5 — the terminal booked/lost
+    // split is additive, not a replacement.
+    expect(upserted.qualified_leads_before).toBe(3);
+  });
+
   it('does NOT upsert when dry_run=true', async () => {
     mockActionsList = [makeAction(FPB)];
     mockGetCampaignSpend.mockResolvedValue(50);

@@ -1,0 +1,54 @@
+# CI mirror of scripts/verify.ps1 — same gates, runs on every push/PR.
+# For FPB repos that auto-deploy on push, this is the last line of defense:
+# a red X here means the deploy shipped something unverified — treat as incident.
+name: verify
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        if: ${{ hashFiles('package.json') != '' }}
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install
+        if: ${{ hashFiles('package.json') != '' }}
+        run: npm ci
+
+      - name: Lint
+        if: ${{ hashFiles('package.json') != '' }}
+        run: npm run lint
+
+      - name: Typecheck
+        if: ${{ hashFiles('tsconfig.json') != '' }}
+        run: npm run typecheck --if-present || npx tsc --noEmit
+
+      # `--if-present` silently SKIPS a missing script and still exits 0. That is
+      # how lint went unrun for months while this workflow reported green (see
+      # DECISIONS.md I-003). Tests and the floor are non-negotiable, so they are
+      # invoked directly — if the script is gone, this job fails, loudly.
+      - name: Tests
+        if: ${{ hashFiles('package.json') != '' }}
+        run: npm test -- --run 2>&1 | tee test-output.log; exit ${PIPESTATUS[0]}
+
+      # The test floor as a machine check — same script, same parsed summary line
+      # as scripts/verify.ps1, so local and CI cannot disagree.
+      - name: Test floor
+        if: ${{ hashFiles('package.json') != '' }}
+        run: node scripts/check-test-floor.mjs test-output.log
+
+      - name: Build
+        if: ${{ hashFiles('package.json') != '' }}
+        run: npm run build --if-present
+        env:
+          # Builds must not need real secrets; use placeholder-safe envs only.
+          CI: true

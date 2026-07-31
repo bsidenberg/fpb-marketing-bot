@@ -42,8 +42,6 @@ import {
   getAccountSlugFromRequest,
   resolveAccountFromRequest,
   getAccountBySlug,
-  getAccountById,
-  listActiveAccounts,
   getConnectionForAccount,
   clearAccountCache,
 } from '../api/lib/accounts.js';

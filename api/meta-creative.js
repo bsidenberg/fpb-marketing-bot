@@ -41,7 +41,7 @@ export default async function handler(req, res) {
 
   const {
     imageBase64,
-    mediaType    = 'image/jpeg',
+    mediaType: _mediaType = 'image/jpeg',
     format       = 'feed',
     adName       = 'FPB Ad Creative',
     headline     = 'Get Your Free Quote Today',

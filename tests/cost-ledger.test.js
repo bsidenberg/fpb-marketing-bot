@@ -136,6 +136,48 @@ describe('computeAnthropicCost', () => {
   it('handles zero tokens → $0', () => {
     expect(fn('claude-sonnet-4-20250514', 0, 0)).toBe(0);
   });
+
+  // ── S-COST-2 (2026-07-30): alias → dated-snapshot resolution ──────────────
+  // Anthropic can resolve a requested alias (e.g. CHAT_MODEL,
+  // 'claude-sonnet-4-6') to a dated snapshot id server-side and echo the
+  // resolved id back in the response. Before this fix, only the bare alias
+  // was keyed, so a dated response silently priced as null (D-6 FLAG 3).
+  it('Sonnet alias resolves through an unseen dated-snapshot suffix', () => {
+    expect(fn('claude-sonnet-4-6-20260115', 10_000, 5_000)).toBeCloseTo(0.105, 6);
+  });
+
+  it('Opus alias resolves through an unseen dated-snapshot suffix', () => {
+    // 1000 * $5/M + 1000 * $25/M = $0.005 + $0.025 = $0.030
+    expect(fn('claude-opus-4-7-20260301', 1_000, 1_000)).toBeCloseTo(0.030, 6);
+  });
+
+  it('does not strip a non-date suffix — still null for a genuinely unknown model', () => {
+    expect(fn('claude-sonnet-4-6-preview', 1000, 1000)).toBeNull();
+  });
+});
+
+describe('resolveRateKey', () => {
+  let resolveRateKey;
+  beforeEach(async () => {
+    ({ resolveRateKey } = await import('../api/lib/cost-rates.js'));
+  });
+
+  it('returns the exact key when present verbatim', () => {
+    expect(resolveRateKey('claude-sonnet-4-6')).toBe('claude-sonnet-4-6');
+  });
+
+  it('strips a trailing 8-digit date suffix to find the alias', () => {
+    expect(resolveRateKey('claude-sonnet-4-6-20260115')).toBe('claude-sonnet-4-6');
+  });
+
+  it('returns null for null/undefined input', () => {
+    expect(resolveRateKey(null)).toBeNull();
+    expect(resolveRateKey(undefined)).toBeNull();
+  });
+
+  it('returns null when nothing matches even after stripping', () => {
+    expect(resolveRateKey('totally-unknown-model-20260115')).toBeNull();
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -176,6 +218,41 @@ describe('recordAnthropicCost', () => {
     overrides['cost_api_events.insert'] = { data: null, error: { message: 'DB down' } };
     const res = { model: 'claude-sonnet-4-20250514', usage: { input_tokens: 100, output_tokens: 50 } };
     await expect(recordAnthropicCost(res, FPB_ID, 'chat')).resolves.toBeUndefined();
+  });
+
+  // ── S-COST-2 (2026-07-30): a null price must raise, not write silently ────
+  it('resolves CHAT_MODEL through an unseen dated-snapshot suffix — no silent NULL', async () => {
+    const response = {
+      model: 'claude-sonnet-4-6-20260201', // as the API might echo the resolved alias
+      usage: { input_tokens: 1_000, output_tokens: 500 },
+    };
+    await recordAnthropicCost(response, FPB_ID, 'chat', 'run-uuid-2');
+    const rows = insertsByTable['cost_api_events'];
+    expect(rows[0].cost_usd).not.toBeNull();
+    expect(rows[0].cost_usd).toBeCloseTo(0.0105, 6); // 1000*$3/M + 500*$15/M
+  });
+
+  it('logs [COST-LEDGER-UNKNOWN-MODEL] and still writes the row when a model truly cannot be priced', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const response = {
+      model: 'claude-nonexistent-model-9',
+      usage: { input_tokens: 100, output_tokens: 50 },
+    };
+    await recordAnthropicCost(response, FPB_ID, 'chat', 'run-uuid-3');
+    expect(errSpy).toHaveBeenCalledWith(
+      expect.stringContaining('[COST-LEDGER-UNKNOWN-MODEL]'),
+    );
+    const rows = insertsByTable['cost_api_events'];
+    expect(rows[0].cost_usd).toBeNull();
+    errSpy.mockRestore();
+  });
+
+  it('does NOT log UNKNOWN-MODEL when there is no model at all (nothing to resolve)', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await recordAnthropicCost({ model: null, usage: { input_tokens: 1, output_tokens: 1 } }, FPB_ID, 'chat');
+    const unknownModelCalls = errSpy.mock.calls.filter(c => String(c[0]).includes('UNKNOWN-MODEL'));
+    expect(unknownModelCalls).toHaveLength(0);
+    errSpy.mockRestore();
   });
 });
 
@@ -224,7 +301,9 @@ describe('recordApiCall', () => {
 //   4. cost_subscriptions (select — account-specific subs)
 //   5. accounts:single  (select+single — account slug)
 //   6. cost_hours       (select — hours for this account)
-//   7. cost_rollups_monthly (upsert — write result)
+//   7. cost_subscriptions (select, head+count — data_completeness, S-OBS-1)
+//   8. cost_hours       (select, head+count — data_completeness, S-OBS-1)
+//   9. cost_rollups_monthly (upsert — write result)
 
 describe('computeMonthlyRollup', () => {
   let computeMonthlyRollup;
@@ -232,13 +311,15 @@ describe('computeMonthlyRollup', () => {
     ({ computeMonthlyRollup } = await import('../api/lib/cost-rollup.js'));
   });
 
-  function baseSetup(eventsRows = [], activeAccounts = [{ id: FPB_ID }], sharedSubs = [], acctSubs = [], hoursRows = [], accountSlug = 'fpb') {
+  function baseSetup(eventsRows = [], activeAccounts = [{ id: FPB_ID }], sharedSubs = [], acctSubs = [], hoursRows = [], accountSlug = 'fpb', subsEverLogged = 0, hoursEverLogged = 0) {
     enqueue('cost_api_events', { data: eventsRows, error: null });
     enqueue('accounts',        { data: activeAccounts, error: null });
     enqueue('cost_subscriptions', { data: sharedSubs, error: null });
     enqueue('cost_subscriptions', { data: acctSubs,   error: null });
     enqueue('accounts:single', { data: { slug: accountSlug }, error: null });
     enqueue('cost_hours',      { data: hoursRows, error: null });
+    enqueue('cost_subscriptions', { data: null, error: null, count: subsEverLogged });
+    enqueue('cost_hours',      { data: null, error: null, count: hoursEverLogged });
   }
 
   it('aggregates Anthropic tokens and costs', async () => {
@@ -305,6 +386,42 @@ describe('computeMonthlyRollup', () => {
     enqueue('cost_api_events', { data: null, error: { message: 'DB error' } });
     await expect(computeMonthlyRollup(FPB_ID, '2026-05')).rejects.toThrow('cost_api_events');
   });
+
+  // ── S-OBS-1 (2026-07-30): data_completeness disclosure ────────────────────
+  describe('data_completeness disclosure', () => {
+    it('flags both as not-logged when cost_subscriptions and cost_hours are globally empty', async () => {
+      baseSetup([], [{ id: FPB_ID }], [], [], [], 'fpb', 0, 0);
+      const rollup = await computeMonthlyRollup(FPB_ID, '2026-05');
+      expect(rollup.data_completeness.subscriptions_logged).toBe(false);
+      expect(rollup.data_completeness.hours_logged).toBe(false);
+      expect(rollup.data_completeness.note).toMatch(/manual-entry/);
+    });
+
+    it('flags both as logged once rows exist system-wide', async () => {
+      baseSetup([], [{ id: FPB_ID }], [], [], [], 'fpb', 3, 12);
+      const rollup = await computeMonthlyRollup(FPB_ID, '2026-05');
+      expect(rollup.data_completeness.subscriptions_logged).toBe(true);
+      expect(rollup.data_completeness.hours_logged).toBe(true);
+    });
+
+    it('is NOT persisted onto the cost_rollups_monthly upsert row', async () => {
+      baseSetup([], [{ id: FPB_ID }], [], [], [], 'fpb', 0, 0);
+      await computeMonthlyRollup(FPB_ID, '2026-05');
+      const upserted = upsertsByTable['cost_rollups_monthly'][0].row;
+      expect(upserted.data_completeness).toBeUndefined();
+    });
+
+    it('throws when the subscriptions count query errors', async () => {
+      enqueue('cost_api_events', { data: [], error: null });
+      enqueue('accounts',        { data: [{ id: FPB_ID }], error: null });
+      enqueue('cost_subscriptions', { data: [], error: null });
+      enqueue('cost_subscriptions', { data: [], error: null });
+      enqueue('accounts:single', { data: { slug: 'fpb' }, error: null });
+      enqueue('cost_hours',      { data: [], error: null });
+      enqueue('cost_subscriptions', { data: null, error: { message: 'count failed' } });
+      await expect(computeMonthlyRollup(FPB_ID, '2026-05')).rejects.toThrow('cost_subscriptions (count)');
+    });
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -325,6 +442,8 @@ describe('GET /api/cost-rollup', () => {
     enqueue('cost_subscriptions', { data: [], error: null });
     enqueue('accounts:single', { data: { slug: 'fpb' }, error: null });
     enqueue('cost_hours',      { data: [], error: null });
+    enqueue('cost_subscriptions', { data: null, error: null, count: 0 });
+    enqueue('cost_hours',      { data: null, error: null, count: 0 });
   }
 
   it('returns success with a rollup for valid month', async () => {

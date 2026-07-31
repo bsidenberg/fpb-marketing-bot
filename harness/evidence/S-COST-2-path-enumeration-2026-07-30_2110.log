@@ -1,0 +1,80 @@
+S-COST-2 — Anthropic/LLM cost-path enumeration
+Date: 2026-07-30
+Method: static grep of api/ for every Anthropic API call site and every
+recordAnthropicCost / recordApiCall call site. Read-only; no live query run
+(no execute_sql tool available to this agent — same limitation recorded in
+DECISIONS.md's D-6 resolution).
+
+Scope note: "spends money" is scoped to Prime's OWN operating cost
+(Anthropic/LLM inference), matching the D-6 scope correction already on
+record — NOT client ad spend, which PRIME-STRATEGY.md §6 explicitly holds
+apart ("Not tracked as Prime cost: Client ad spend. That's the client's
+money."). Ad-platform API calls are enumerated separately below for
+completeness but are correctly untracked in dollars by design (FLAG 2,
+DECISIONS.md D-6 resolution: ad platforms charge per spend, not per call).
+
+=== Anthropic API call sites (the only vendor with a real per-token $ cost) ===
+
+grep 'callClaude(' api/*.js:
+  api/chat.js:187        -> detectIntent(), model 'claude-haiku-4-5'
+  api/chat.js:760        -> main chat handler, model CHAT_MODEL = 'claude-sonnet-4-6'
+  api/analyze-ads.js:200 -> runAnalysisForAccount(), model 'claude-sonnet-4-20250514' (fully dated, no alias)
+
+grep 'recordAnthropicCost(' api/*.js:
+  api/chat.js:194        -> event_type 'intent_detection'   [PAIRED with chat.js:187]
+  api/chat.js:823        -> event_type 'chat'                [PAIRED with chat.js:760]
+  api/analyze-ads.js:236 -> event_type 'analyze_ads'         [PAIRED with analyze-ads.js:200]
+
+RESULT: 3 of 3 Anthropic call sites already call recordAnthropicCost. No
+unledgered path found. The defect was not a missing call — it was that
+chat.js:760's model (CHAT_MODEL, an alias) could resolve to a dated
+snapshot id in the API response that the rate table did not recognize,
+producing a silent NULL cost_usd on every priced row despite the ledger
+event itself being written (D-6 FLAG 3). Fixed this session:
+  - api/lib/cost-rates.js: resolveRateKey() strips a trailing -YYYYMMDD
+    suffix before giving up, so any dated resolution of a known alias
+    still prices.
+  - api/lib/anthropic-cost.js: a model string that still fails to resolve
+    now logs "[COST-LEDGER-UNKNOWN-MODEL] eventType=... model=..." before
+    the row is written, so a genuinely new/renamed model announces itself
+    instead of writing an indistinguishable-from-free NULL.
+
+No other Anthropic/OpenAI/other-LLM vendor call site exists in api/ as of
+this commit (grepped for api.openai.com, OPENAI_API_KEY, nanobanana,
+dataforseo, perplexity.ai — zero matches). PRIME-STRATEGY.md §6 lists
+OpenAI/Perplexity/Nano Banana as APPROVED tools, not yet WIRED — nothing to
+enumerate there because nothing calls them yet.
+
+=== Ad-platform API call sites (units-only, no $ cost by design — for completeness) ===
+
+grep 'recordApiCall(' api/*.js api/lib/*.js:
+  api/facebook-ads.js:122            campaigns_read
+  api/google-ads.js:280              campaigns_search
+  api/google-ads.js:281              campaigns_roster
+  api/google-ads.js:428              search_terms
+  api/meta-creative.js:176           creative_upload
+  api/lib/budget-guards.js:405       guard_state_read
+  api/lib/daily-stats.js:141         daily_stats_search
+  api/lib/execute-action-logic.js:147  snapshot_read (google)
+  api/lib/execute-action-logic.js:186  campaign_mutate (google)
+  api/lib/execute-action-logic.js:302  snapshot_read (google)
+  api/lib/execute-action-logic.js:364  budget_mutate (google)
+  api/lib/execute-action-logic.js:446  negative_keyword_add (google)
+  api/lib/execute-action-logic.js:498  snapshot_read (meta)
+  api/lib/execute-action-logic.js:526  campaign_mutate (meta)
+  api/lib/execute-action-logic.js:624  creative_upload (meta)
+  api/lib/execute-action-logic.js:717  campaign_create (meta)
+
+Not verified line-by-line against every fetch() call to
+googleads.googleapis.com / graph.facebook.com in this session (out of
+S-COST-2's scope — that scope is Prime's own LLM inference cost, per the
+D-6 scope correction). Flagged as a discovery, not fixed here: a full
+audit of ad-platform call-count completeness (vs. $-cost completeness,
+which is what this session covers) would be a new session if Brian wants
+call-volume telemetry hardened too.
+
+=== Verification ===
+tests/cost-ledger.test.js: 40/40 passing, including 8 new tests added this
+session (resolveRateKey suite, dated-suffix resolution for sonnet/opus,
+UNKNOWN-MODEL logging present/absent). Full evidence in the S-COST-2
+verify.ps1 log alongside this file.

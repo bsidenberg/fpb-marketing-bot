@@ -1,0 +1,7 @@
+Verification run: adhoc (2026-07-28_1521)
+Log: C:\Python\FPB Marketing Bot\harness\evidence\adhoc-verify-2026-07-28_1521.log
+[lint] running: npm run lint ... passed
+[tests] running: npm test -- --run ... passed
+[test-floor] running: node scripts/check-test-floor.mjs "C:\Python\FPB Marketing Bot\harness\evidence\adhoc-verify-2026-07-28_1521.log" ... passed
+[build] running: npm run build ... passed
+RESULT: ALL CHECKS PASSED (4/4). Evidence: C:\Python\FPB Marketing Bot\harness\evidence\adhoc-verify-2026-07-28_1521.log

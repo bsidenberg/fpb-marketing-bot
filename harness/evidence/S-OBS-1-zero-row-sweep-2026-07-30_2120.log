@@ -1,0 +1,116 @@
+S-OBS-1 — Zero-row sweep, live check against production
+Date: 2026-07-30
+Source project_id: olpyqfuphiwdongzmazi (via Supabase MCP list_tables, live query)
+Method: mcp__claude_ai_Supabase__list_tables(project_id, schemas=['public'], verbose=true),
+then each table's live row count run through api/lib/table-expectations.js's
+evaluateTableExpectation().
+
+Live row counts at time of check (2026-07-30, this session):
+  action_outcomes        0
+  cost_rollups_monthly   0
+  cost_hours             0
+  cost_subscriptions     0
+  automation_log         0
+  performance_snapshots  0
+  (for context, non-zero tables also observed: actions=71, agent_config=9,
+  leads=384, campaign_daily_stats=111, accounts=4, ad_platform_connections=2,
+  ai_analysis_runs=126, cost_api_events=464, autonomy_posture=2,
+  autonomy_holdout_classes=7, chat_messages=203)
+
+evaluateTableExpectation() output:
+  action_outcomes        (rows=0): status=ok    expectation=expected_empty
+  cost_rollups_monthly   (rows=0): status=ok    expectation=expected_empty
+  cost_hours             (rows=0): status=ok    expectation=expected_empty_disclosed
+  cost_subscriptions     (rows=0): status=ok    expectation=expected_empty_disclosed
+  automation_log         (rows=0): status=alert expectation=broken
+  performance_snapshots  (rows=0): status=alert expectation=broken
+
+=== The two ALERT results are this session's main finding ===
+
+Both automation_log and performance_snapshots were listed in HARNESS.md §4.1
+as "NO STATED EXPECTATION — new finding." Investigation (this session) found
+BOTH are not merely unassigned — both have a live, universal write-path
+defect that has made every insert attempt fail silently since inception:
+
+--- automation_log ---
+Live schema CHECK constraint on event_type:
+  ARRAY['data_pull','analysis','recommendation','action_executed',
+        'action_failed','alert','report','system']
+Every writer in the codebase passes a DIFFERENT value:
+  api/lib/execute-action-logic.js writeLog()  -> current.action_type / actionType
+                                                  (e.g. 'pause_campaign', 'adjust_budget',
+                                                  'add_negative_keyword', ...)
+  api/cron-analyze.js       -> 'cron_analysis'
+  api/cron-daily-stats.js   -> 'cron_daily_stats'
+  api/cron-crm-sync.js      -> 'crm_sync'
+  api/analyze-ads.js        -> 'analysis_run'
+  api/meta-creative.js      -> 'creative_uploaded'
+None of these six values are in the allowed list. None of the six call
+sites destructure/check the `error` field Supabase returns on a CHECK
+violation — all six are bare `await supabase.from('automation_log').insert(...)`
+(execute-action-logic.js's writeLog wraps it in try/catch, but a CHECK
+violation resolves with {error} set, it does not throw, so the catch never
+fires either). Every write has always failed, silently, at every call site,
+since the feature was built.
+
+Consequence: any claim that automation_log evidences "Google Ads v23 read +
+budget-change execution (validated live)" (PRIME-AGENCY-ROADMAP.md) cannot
+be resting on this table — no row proving that has ever existed. Whatever
+validation happened, it rested on other evidence (actions.status/result,
+manual verification in the Google Ads UI, or similar), not this log.
+
+--- performance_snapshots ---
+Live schema: id, created_at, snapshot_date (NOT NULL), channel (NOT NULL,
+CHECK IN google_ads/meta_ads/organic/combined), metrics (jsonb, default {}),
+campaigns (jsonb, default []), account_id.
+
+Write path (api/analyze-ads.js:302) inserts:
+  { account_id, snapshot_at, google_data, meta_data, actions_created }
+None of snapshot_at / google_data / meta_data / actions_created are columns
+on the live table. snapshot_date and channel are NOT NULL and never
+supplied. This insert cannot succeed against the real schema, and the call
+site does not check the returned error (bare `await ...insert(...)`).
+
+Read path (api/performance-snapshots.js) and the evaluate-outcomes.js
+fallback (getSpendWithSource) both expect the SAME wrong shape
+(data.google_data, data.meta_data, data.snapshot_at) — reader and writer
+agree with each other, just not with the live table. Nobody has round-
+tripped this table against its real schema.
+
+Masking: evaluate-outcomes.js prefers campaign_daily_stats (111 rows live)
+and only falls back to performance_snapshots when daily-stats data is
+missing for a campaign/window — which has apparently not yet happened in
+practice, so the broken fallback has never been exercised as the sole
+source and its failure mode (returns spend:null, source:'none' — a safe,
+non-crashing degradation) has gone unnoticed.
+
+Test coverage: no test file exists for api/performance-snapshots.js.
+tests/analyze-ads.test.js mocks Supabase entirely and asserts only that an
+insert with account_id was attempted — never against the real column set —
+which is why mocked tests have always passed while the live write has
+always failed. This is the same class of gap as the memory note "verify
+schema live, not from code" — mocks cannot catch live schema drift.
+
+=== Not fixed tonight ===
+Both are real bugs but out of S-OBS-1's investigate-and-record scope:
+  - automation_log's fix touches api/lib/execute-action-logic.js, a
+    PROTECTED money-path file (HARNESS.md §3) — requires an AMENDMENT and
+    safety-reviewer sign-off. Not authorized under tonight's Tier 1
+    ("no money path").
+  - performance_snapshots' fix touches api/analyze-ads.js and
+    api/performance-snapshots.js (not protected files) but is a genuine
+    behavior fix beyond an "assertions" session's scope, and deserves its
+    own test-against-real-schema session rather than a rushed fix.
+Both recorded as new session candidates in DECISIONS.md rather than folded
+into S-OBS-1, per the scope-freeze rule (queue §3).
+
+=== Disclosure mechanism built and verified this session ===
+api/lib/cost-rollup.js now returns a data_completeness field
+(subscriptions_logged, hours_logged, note) computed from a live table-wide
+row count on every call — tests/cost-ledger.test.js, 4 new tests, all
+passing (see S-OBS-1 verify.ps1 log).
+
+=== Verification ===
+tests/table-expectations.test.js: 9/9 passing (new file, this session).
+tests/cost-ledger.test.js: 44/44 passing (4 new tests for data_completeness).
+Full evidence in the S-OBS-1 verify.ps1 log alongside this file.

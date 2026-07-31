@@ -350,11 +350,25 @@ export async function fetchSearchTerms(account, connection, { campaignId, days =
     };
   }
 
+  // S-07f.0 (2026-07-30): search_term_view is keyed campaign~ad_group~term, NOT
+  // campaign~term — one term running in multiple ad groups returns multiple
+  // rows with identical (searchTerm, campaignId) and different resource_names.
+  // resource_name + ad_group.id are pulled here so a stable rowId can be
+  // derived (see mapper below). Adding SELECT fields (no WHERE/GROUP BY
+  // change) should not alter row count or totalWastedSpend by construction,
+  // but this has NOT been measured against the live API tonight — no
+  // harness/evidence/S-07f.0-cardinality-*.log exists yet (see DECISIONS.md:
+  // this environment has no live Google Ads credential access). Reasoning
+  // alone is exactly what DECISIONS.md's S-07f.0 section says not to accept
+  // in place of measurement — treat cardinality as UNVERIFIED until that log
+  // is produced by a session with live API access.
   const query = `
     SELECT
       search_term_view.search_term,
+      search_term_view.resource_name,
       campaign.id,
       campaign.name,
+      ad_group.id,
       metrics.clicks,
       metrics.cost_micros,
       metrics.conversions
@@ -407,12 +421,37 @@ export async function fetchSearchTerms(account, connection, { campaignId, days =
 
   const searchTerms = results.map((result) => ({
     searchTerm:  result.searchTermView?.searchTerm,
+    // rowId (S-07f.0): resource_name is the API's own globally-unique key for
+    // this campaign~ad_group~term triple — stable across re-fetches, unlike
+    // a positional index (rows re-sort by cost on every call). Derive, never
+    // reconstruct: this is exactly what (searchTerm, campaignId) cannot be,
+    // once a term serves more than one ad group.
+    rowId:        result.searchTermView?.resourceName,
     campaignId:  result.campaign?.id,
     campaignName: result.campaign?.name,
+    adGroupId:    result.adGroup?.id,
     clicks:      parseInt(result.metrics?.clicks || 0),
     cost:        parseFloat((((result.metrics?.costMicros || 0) / 1_000_000)).toFixed(2)),
     conversions: parseFloat(result.metrics?.conversions || 0),
   }));
+
+  // SDR-1 (cold-review finding, 2026-07-30): a row missing resource_name
+  // used to fail open silently — rowId became `undefined`, JSON.stringify
+  // drops the key entirely, and the function still returned success:true
+  // with no signal anywhere. A downstream uniqueness/membership check over
+  // undefined ids would then either reject every legitimate cohort or (if it
+  // treats falsy specially) admit every one — and nothing would notice
+  // either way. Logged loudly here so it is at least grep-findable; a full
+  // fix (fail the fetch, or count-and-assert in a cardinality check) needs a
+  // live measurement this environment could not produce tonight (no Google
+  // Ads credential access — see harness/DECISIONS.md S-07f.0).
+  const missingRowId = searchTerms.filter((row) => !row.rowId).length;
+  if (missingRowId > 0) {
+    console.error(
+      `[fetchSearchTerms] ${missingRowId}/${searchTerms.length} rows missing search_term_view.resource_name — ` +
+      `rowId will be undefined for these rows. Any consumer deriving identity from rowId must not treat this as safe.`
+    );
+  }
 
   const wasteRows = searchTerms
     .filter((row) => row.conversions === 0 && row.cost > 0)

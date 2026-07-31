@@ -265,7 +265,6 @@ describe('runAnalysisForAccount — happy path', () => {
     });
 
     // Wrap insertsByTable to detect when ai_analysis_runs insert lands
-    const originalAnthropic = mockFetch.getMockImplementation();
     mockFetch.mockImplementation(async (url) => {
       if (typeof url === 'string' && url.includes('api.anthropic.com')) {
         // by the time Anthropic is called, the pending row must already exist

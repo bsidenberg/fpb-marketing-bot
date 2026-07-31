@@ -215,10 +215,16 @@ describe('fetchGoogleAdsData — roster merge (SESSION-07a)', () => {
 // fetchSearchTerms — SESSION-07b
 // ============================================================================
 
-function searchTermRow(searchTerm, campaignId, campaignName, clicks, costMicros, conversions) {
+function searchTermRow(searchTerm, campaignId, campaignName, clicks, costMicros, conversions, adGroupId = '1', resourceName = null) {
   return {
-    searchTermView: { searchTerm },
+    searchTermView: {
+      searchTerm,
+      // S-07f.0: default derives a plausible-looking resource_name so existing
+      // call sites (which don't pass one) still exercise the new field.
+      resourceName: resourceName || `customers/123/searchTermViews/${campaignId}~${adGroupId}~${Buffer.from(searchTerm).toString('hex').slice(0, 16)}`,
+    },
     campaign: { id: campaignId, name: campaignName },
+    adGroup:  { id: adGroupId },
     metrics: {
       clicks:      String(clicks),
       costMicros:  String(costMicros),
@@ -291,5 +297,65 @@ describe('fetchSearchTerms (SESSION-07b)', () => {
     const result = await fetchSearchTerms(ACCOUNT, CONNECTION);
     expect(result.success).toBe(false);
     expect(result.searchTerms).toEqual([]);
+  });
+
+  // ── S-07f.0 (2026-07-30): row identity ─────────────────────────────────────
+  it('ST6: query text pins — SELECTs resource_name and ad_group.id', async () => {
+    queueSearchTermsHappyPath([
+      searchTermRow('shed builder', '111', 'Location', 5, 10_000_000, 0),
+    ]);
+    await fetchSearchTerms(ACCOUNT, CONNECTION);
+
+    const body = mockFetch.mock.calls[1][1].body;
+    expect(body).toContain('search_term_view.resource_name');
+    expect(body).toContain('ad_group.id');
+  });
+
+  it('ST7: each row carries a rowId derived from resource_name, and an adGroupId', async () => {
+    queueSearchTermsHappyPath([
+      searchTermRow('shed builder', '111', 'Location', 5, 10_000_000, 0, '55', 'customers/123/searchTermViews/111~55~abc123'),
+    ]);
+    const result = await fetchSearchTerms(ACCOUNT, CONNECTION);
+
+    expect(result.searchTerms[0].rowId).toBe('customers/123/searchTermViews/111~55~abc123');
+    expect(result.searchTerms[0].adGroupId).toBe('55');
+  });
+
+  it('ST8: multi-ad-group collision — one term in two ad groups yields two rows with the SAME (searchTerm, campaignId) but DISTINCT rowIds', async () => {
+    // This is the exact collision the row-identity fix exists to make visible:
+    // search_term_view is keyed campaign~ad_group~term, so the same term
+    // running in two ad groups produces two rows that (searchTerm, campaignId)
+    // alone cannot tell apart.
+    queueSearchTermsHappyPath([
+      searchTermRow('metal building', '111', 'Location', 10, 20_000_000, 0, '55', 'customers/123/searchTermViews/111~55~term1'),
+      searchTermRow('metal building', '111', 'Location', 4,  8_000_000,  0, '56', 'customers/123/searchTermViews/111~56~term1'),
+    ]);
+    const result = await fetchSearchTerms(ACCOUNT, CONNECTION);
+
+    expect(result.searchTerms).toHaveLength(2);
+    const pairs = result.searchTerms.map(r => `${r.searchTerm}|${r.campaignId}`);
+    expect(new Set(pairs).size).toBe(1); // identical (searchTerm, campaignId) — the collision
+    const rowIds = result.searchTerms.map(r => r.rowId);
+    expect(new Set(rowIds).size).toBe(2); // rowId disambiguates what the pair cannot
+
+    // totalWastedSpend must still sum both rows correctly — the fix must not
+    // change existing arithmetic, only add identity fields.
+    expect(result.wasteSummary.totalWastedSpend).toBe('28.00'); // 20 + 8
+  });
+
+  it('ST9: a row missing resource_name now fails open LOUDLY (logged) instead of silently — rowId is still undefined, but it is no longer unannounced (cold-review finding)', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    queueSearchTermsHappyPath([
+      // No searchTermView.resourceName at all — the shape Google would return
+      // if this field were ever absent from a response.
+      { searchTermView: { searchTerm: 'no resource name' }, campaign: { id: '111', name: 'Location' }, adGroup: { id: '55' }, metrics: { clicks: '1', costMicros: '1000000', conversions: 0 } },
+    ]);
+    const result = await fetchSearchTerms(ACCOUNT, CONNECTION);
+
+    expect(result.searchTerms[0].rowId).toBeUndefined();
+    expect(errSpy).toHaveBeenCalledWith(
+      expect.stringContaining('[fetchSearchTerms]'),
+    );
+    errSpy.mockRestore();
   });
 });

@@ -79,7 +79,7 @@ export default async function handler(req, res) {
       code:    'PAYLOAD_TOO_LARGE',
     });
   }
-  if (!FORMAT_SPECS.hasOwnProperty(format)) {
+  if (!Object.prototype.hasOwnProperty.call(FORMAT_SPECS, format)) {
     return res.status(400).json({ success: false, error: `Unknown format: ${format}` });
   }
 

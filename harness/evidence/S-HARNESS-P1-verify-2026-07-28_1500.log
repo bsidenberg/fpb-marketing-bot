@@ -1,0 +1,946 @@
+VERIFICATION RUN -- session S-HARNESS-P1 -- 2026-07-28_1500
+Repo: C:\Python\FPB Marketing Bot
+
+=== CHECK: lint ===
+>> npm run lint
+
+> fpb-marketing-bot@1.0.0 lint
+> eslint .
+
+(node:49732) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///C:/Python/FPB%20Marketing%20Bot/eslint.config.js?mtime=1785249820897 is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to \\?\C:\Python\FPB Marketing Bot\package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+
+C:\Python\FPB Marketing Bot\api\image-process.js
+  82:21  warning  Do not access Object.prototype method 'hasOwnProperty' from target object  no-prototype-builtins
+
+C:\Python\FPB Marketing Bot\api\meta-creative.js
+  44:5  warning  'mediaType' is assigned a value but never used. Allowed unused vars must match /^_/u  no-unused-vars
+
+C:\Python\FPB Marketing Bot\marketing-bot-dashboard.jsx
+  1676:29  warning  Unused eslint-disable directive (no problems were reported)
+  2711:10  warning  'botPulse' is assigned a value but never used. Allowed unused vars must match /^_|^React$/u           no-unused-vars
+  2889:9   warning  'normalizePlatform' is assigned a value but never used. Allowed unused vars must match /^_|^React$/u  no-unused-vars
+  3083:59  warning  Unused eslint-disable directive (no problems were reported)
+  3113:47  warning  Unused eslint-disable directive (no problems were reported)
+  3139:45  warning  Unused eslint-disable directive (no problems were reported)
+
+C:\Python\FPB Marketing Bot\tests\account-isolation.test.js
+  147:5  warning  'lastInsertRow' is assigned a value but never used. Allowed unused vars must match /^_/u  no-unused-vars
+
+C:\Python\FPB Marketing Bot\tests\accounts-helper.test.js
+  45:3  warning  'getAccountById' is defined but never used. Allowed unused vars must match /^_/u      no-unused-vars
+  46:3  warning  'listActiveAccounts' is defined but never used. Allowed unused vars must match /^_/u  no-unused-vars
+
+C:\Python\FPB Marketing Bot\tests\analyze-ads.test.js
+  268:11  warning  'originalAnthropic' is assigned a value but never used. Allowed unused vars must match /^_/u  no-unused-vars
+
+C:\Python\FPB Marketing Bot\tests\attribution.test.js
+  10:3  warning  'calcCostPerQualifiedLead' is defined but never used. Allowed unused vars must match /^_/u  no-unused-vars
+
+C:\Python\FPB Marketing Bot\tests\auth.test.js
+  92:11  warning  'now' is assigned a value but never used. Allowed unused vars must match /^_/u  no-unused-vars
+
+C:\Python\FPB Marketing Bot\tests\autonomy.test.js
+  80:3  warning  'getActiveCount' is defined but never used. Allowed unused vars must match /^_/u  no-unused-vars
+
+✖ 15 problems (0 errors, 15 warnings)
+  0 errors and 4 warnings potentially fixable with the `--fix` option.
+
+--- passed: lint ---
+
+=== CHECK: tests ===
+>> npm test -- --run
+
+> fpb-marketing-bot@1.0.0 test
+> vitest run --run
+
+[33mThe CJS build of Vite's Node API is deprecated. See https://vite.dev/guide/troubleshooting.html#vite-cjs-node-api-deprecated for more details.[39m
+
+ RUN  v2.1.9 C:/Python/FPB Marketing Bot
+
+ ✓ tests/lead-ingest.test.js (42 tests) 20ms
+ ✓ tests/recommendation-score.test.js (62 tests) 47ms
+stderr | tests/cost-ledger.test.js > recordAnthropicCost > swallows DB error without throwing
+[COST-LEDGER-FAILURE] recordAnthropicCost insert (chat): DB down
+
+stderr | tests/cost-ledger.test.js > recordApiCall > swallows DB error without throwing
+[COST-LEDGER-FAILURE] recordApiCall insert (meta_ads/campaigns_read): timeout
+
+stdout | tests/daily-stats.test.js > cron-daily-stats — auth > returns 200 with x-vercel-cron: 1
+[cron-daily-stats] single-account mode: FPB only
+
+stderr | tests/crm-bridge.test.js > cron-crm-sync handler > returns 500 and fails closed when CRM env vars are missing
+[cron-crm-sync] failed: CRM_SUPABASE_URL and CRM_SUPABASE_SERVICE_KEY must be set
+
+stderr | tests/budget-guards.test.js > runBudgetGuardsForStaging > falls back to defaults and still evaluates when the config fetch errors
+[BUDGET-GUARDS] config fetch error: DB timeout
+
+stdout | tests/daily-stats.test.js > cron-daily-stats — auth > returns 200 with Authorization: Bearer matching CRON_SECRET
+[cron-daily-stats] single-account mode: FPB only
+
+ ✓ tests/crm-bridge.test.js (55 tests) 82ms
+stdout | tests/budget-guards.test.js > runBudgetGuardsForExecution > uses LIVE Google budget for magnitude, ignoring a stale execution_data.current_value
+[BUDGET-GUARDS] cap projection state: {"campaign_id":"11111111","target_found":true,"enabled":["11111111:$100","22222222:$50"]}
+
+stdout | tests/daily-stats.test.js > cron-daily-stats — behavior > skips an account missing a google_ads connection but still returns 200
+[cron-daily-stats] single-account mode: FPB only
+
+stdout | tests/budget-guards.test.js > runBudgetGuardsForExecution > BLOCKS when the live projection exceeds accounts.daily_spend_cap
+[BUDGET-GUARDS] cap projection state: {"campaign_id":"11111111","target_found":true,"enabled":["11111111:$100","22222222:$50"]}
+
+stdout | tests/daily-stats.test.js > cron-daily-stats — behavior > successful run upserts mapped rows and includes written count in the result
+[cron-daily-stats] single-account mode: FPB only
+
+stdout | tests/budget-guards.test.js > runBudgetGuardsForExecution > BLOCKS pausing the last enabled lead-gen campaign using live state
+[BUDGET-GUARDS] cap projection state: {"campaign_id":"11111111","target_found":true,"enabled":["11111111:$100"]}
+
+stdout | tests/daily-stats.test.js > cron-daily-stats — behavior > isolates per-account failures: first account fails, second still succeeds
+[cron-daily-stats] multi-account mode: 2 active accounts
+
+stderr | tests/budget-guards.test.js > runBudgetGuardsForExecution > fails closed when the live Google fetch fails and a cap is configured
+[BUDGET-GUARDS] live campaign fetch failed: 500 INTERNAL
+
+stderr | tests/daily-stats.test.js > cron-daily-stats — behavior > isolates per-account failures: first account fails, second still succeeds
+[cron-daily-stats] account=fpb failed: Failed to get access token from Google OAuth: {"error":"invalid_grant"}
+
+stdout | tests/budget-guards.test.js > runBudgetGuardsForExecution > recognizes every dispatcher Google channel variant — block rules stay live (safety finding #1)
+[BUDGET-GUARDS] cap projection state: {"campaign_id":"11111111","target_found":true,"enabled":["11111111:$100"]}
+
+stdout | tests/daily-stats.test.js > cron-daily-stats — behavior > logs an aggregate automation_log row with the run results
+[cron-daily-stats] single-account mode: FPB only
+
+stdout | tests/budget-guards.test.js > SESSION-07a — cap-sum status filtering and target-not-found fail-close > T1: 7/6 regression — paused ($12) and removed ($9) budgets excluded from cap sum (allow)
+[BUDGET-GUARDS] cap projection state: {"campaign_id":"222","target_found":true,"enabled":["111:$30","222:$22","333:$6","21613067518:$15"]}
+
+ ✓ tests/daily-stats.test.js (22 tests) 46ms
+stdout | tests/budget-guards.test.js > SESSION-07a — cap-sum status filtering and target-not-found fail-close > T2: paused excluded from cap sum, boundary-precise (othersSum exactly $51)
+[BUDGET-GUARDS] cap projection state: {"campaign_id":"222","target_found":true,"enabled":["111:$30","222:$22","333:$6","21613067518:$15"]}
+[BUDGET-GUARDS] cap projection state: {"campaign_id":"222","target_found":true,"enabled":["111:$30","222:$22","333:$6","21613067518:$15"]}
+
+ ✓ tests/objective.test.js (69 tests) 38ms
+stdout | tests/budget-guards.test.js > SESSION-07a — cap-sum status filtering and target-not-found fail-close > T3: removed campaign excluded from cap sum even with a large budget
+[BUDGET-GUARDS] cap projection state: {"campaign_id":"222","target_found":true,"enabled":["111:$30","222:$22","333:$6","21613067518:$15"]}
+
+stdout | tests/budget-guards.test.js > SESSION-07a — cap-sum status filtering and target-not-found fail-close > T4: genuine over-cap with a valid target still blocks (even though major_change also fires)
+[BUDGET-GUARDS] cap projection state: {"campaign_id":"222","target_found":true,"enabled":["111:$30","222:$22","333:$6","21613067518:$15"]}
+
+stdout | tests/budget-guards.test.js > SESSION-07a — cap-sum status filtering and target-not-found fail-close > T5: target-not-found fails closed to unknown_current_budget — current_value is NOT used as fallback
+[BUDGET-GUARDS] cap projection state: {"campaign_id":"999","target_found":false,"enabled":["111:$30","222:$22","333:$6","21613067518:$15"]}
+
+stderr | tests/budget-guards.test.js > SESSION-07a — cap-sum status filtering and target-not-found fail-close > T6: live fetch failure keeps the execution_data fallback (cap_unverifiable, not unknown_current_budget)
+[BUDGET-GUARDS] live campaign fetch failed: 500 INTERNAL
+
+stdout | tests/autonomy.test.js > checkPostureForAction — holdout list > returns require_approval when action class is on holdout list
+[AUTONOMY] verdict=require_approval account=aaaaaaaa-0000-0000-0000-000000000001 pillar=seo_blog action=publish_blog_post reason="holdout list"
+
+stderr | tests/leads-webhook.test.js > POST /api/leads — webhook secret > allows POST when secret is not set (warns in logs)
+[SECURITY] LEADS_INGEST_SECRET not set — /api/leads is unprotected (non-production warn-and-allow)
+
+stderr | tests/analyze-ads.test.js > runAnalysisForAccount — connection skips > returns { success: false } when both connections are unusable
+[analyze-ads] account=fpb google_ads skipped: no connection row
+[analyze-ads] account=fpb meta_ads skipped: no connection row
+
+stderr | tests/execute-action.test.js > acquireLockAndExecute > executes adjust_budget and updates budget via Google Ads API
+[AUTONOMY-COORDINATOR-FAILURE] recordActionOutcome unexpected error: __vite_ssr_import_0__.default.rpc is not a function
+
+ ✓ tests/budget-guards.test.js (84 tests) 69ms
+stdout | tests/autonomy.test.js > checkPostureForAction — holdout list > returns require_approval when row-level holdout flag is true (even at full tier)
+[AUTONOMY] verdict=require_approval account=aaaaaaaa-0000-0000-0000-000000000001 pillar=paid_ads action=pause_campaign reason="row holdout flag"
+
+stderr | tests/leads-webhook.test.js > POST /api/leads — deduplication > returns duplicate response when lead exists with same email today
+[SECURITY] LEADS_INGEST_SECRET not set — /api/leads is unprotected (non-production warn-and-allow)
+
+stderr | tests/analyze-ads.test.js > analyze-ads HTTP handler — account scoping > returns 403 ACCOUNT_ARCHIVED when caller account is archived
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/execute-action.test.js > acquireLockAndExecute > rejects adjust_budget when budget exceeds $10,000 safety limit
+[AUTONOMY-COORDINATOR-FAILURE] recordActionOutcome unexpected error: __vite_ssr_import_0__.default.rpc is not a function
+
+ ✓ tests/execution-hardening.test.js (23 tests) 652ms
+   ✓ execute-action endpoint — transient dry_run rejection > returns 400 when dry_run=true is combined with the transient path 591ms
+stdout | tests/autonomy.test.js > checkPostureForAction — tier > returns require_approval when posture is recommend tier
+[AUTONOMY] verdict=require_approval account=aaaaaaaa-0000-0000-0000-000000000001 pillar=paid_ads action=pause_campaign reason="recommend tier"
+
+stderr | tests/leads-webhook.test.js > POST /api/leads — deduplication > creates lead when no duplicate exists
+[SECURITY] LEADS_INGEST_SECRET not set — /api/leads is unprotected (non-production warn-and-allow)
+
+stderr | tests/analyze-ads.test.js > analyze-ads HTTP handler — account scoping > returns 403 ACCOUNT_INACTIVE when caller account is inactive
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/execute-action.test.js > acquireLockAndExecute > rejects adjust_budget when campaign_id looks like a placeholder
+[AUTONOMY-COORDINATOR-FAILURE] recordActionOutcome unexpected error: __vite_ssr_import_0__.default.rpc is not a function
+
+stdout | tests/autonomy.test.js > checkPostureForAction — tier > defaults to require_approval when no posture row exists (no cap)
+[AUTONOMY] verdict=require_approval account=aaaaaaaa-0000-0000-0000-000000000001 pillar=paid_ads action=pause_campaign reason="recommend tier"
+
+stderr | tests/leads-webhook.test.js > POST /api/leads — deduplication > skips dedup check when no dedup key is possible
+[SECURITY] LEADS_INGEST_SECRET not set — /api/leads is unprotected (non-production warn-and-allow)
+
+stderr | tests/analyze-ads.test.js > analyze-ads HTTP handler — account scoping > happy path returns 200 with analyzed platforms and actions_created
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/execute-action.test.js > acquireLockAndExecute > executes adjust_budget when recommended_value is a string ("31")
+[AUTONOMY-COORDINATOR-FAILURE] recordActionOutcome unexpected error: __vite_ssr_import_0__.default.rpc is not a function
+
+stdout | tests/autonomy.test.js > checkPostureForAction — tier > returns allow_auto when posture is full tier with no escalation triggers
+[AUTONOMY] verdict=allow_auto account=aaaaaaaa-0000-0000-0000-000000000001 pillar=paid_ads action=pause_campaign reason="full tier, no escalations"
+
+stderr | tests/leads-webhook.test.js > POST /api/leads — normalization > detects CallRail payload and sets lead_type=call
+[SECURITY] LEADS_INGEST_SECRET not set — /api/leads is unprotected (non-production warn-and-allow)
+
+ ✓ tests/analyze-ads.test.js (13 tests) 37ms
+stderr | tests/execute-action.test.js > acquireLockAndExecute > executes adjust_budget when campaign_id is stored as a numeric value
+[AUTONOMY-COORDINATOR-FAILURE] recordActionOutcome unexpected error: __vite_ssr_import_0__.default.rpc is not a function
+
+stdout | tests/autonomy.test.js > checkPostureForAction — cap > returns block when cap_per_window is exceeded
+[AUTONOMY] verdict=block account=aaaaaaaa-0000-0000-0000-000000000001 pillar=paid_ads action=pause_campaign reason="cap exceeded (1/1 in 7d)"
+
+stderr | tests/leads-webhook.test.js > POST /api/leads — normalization > detects Gravity Forms payload and sets lead_type=form
+[SECURITY] LEADS_INGEST_SECRET not set — /api/leads is unprotected (non-production warn-and-allow)
+
+stderr | tests/execute-action.test.js > acquireLockAndExecute > rejects adjust_budget when recommended_value is null
+[AUTONOMY-COORDINATOR-FAILURE] recordActionOutcome unexpected error: __vite_ssr_import_0__.default.rpc is not a function
+
+stdout | tests/autonomy.test.js > checkPostureForAction — cap > returns allow_auto when count is below cap
+[AUTONOMY] verdict=allow_auto account=aaaaaaaa-0000-0000-0000-000000000001 pillar=paid_ads action=pause_campaign reason="full tier, no escalations"
+
+stderr | tests/leads-webhook.test.js > PATCH /api/leads — qualification update > returns 400 when id is missing
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/execute-action.test.js > acquireLockAndExecute > rejects adjust_budget when recommended_value is a non-numeric string ("abc")
+[AUTONOMY-COORDINATOR-FAILURE] recordActionOutcome unexpected error: __vite_ssr_import_0__.default.rpc is not a function
+
+stdout | tests/autonomy.test.js > checkPostureForAction — escalation triggers (full tier) > returns require_approval on low confidence
+[AUTONOMY] verdict=require_approval account=aaaaaaaa-0000-0000-0000-000000000001 pillar=paid_ads action=pause_campaign reason="low confidence (0.5)"
+
+stderr | tests/leads-webhook.test.js > PATCH /api/leads — qualification update > returns 400 for invalid qualification_status
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/execute-action.test.js > acquireLockAndExecute > executes adjust_budget when recommended_value is "$31/day"
+[AUTONOMY-COORDINATOR-FAILURE] recordActionOutcome unexpected error: __vite_ssr_import_0__.default.rpc is not a function
+
+stdout | tests/autonomy.test.js > checkPostureForAction — escalation triggers (full tier) > returns require_approval on novel flag
+[AUTONOMY] verdict=require_approval account=aaaaaaaa-0000-0000-0000-000000000001 pillar=paid_ads action=pause_campaign reason="novel action type"
+
+stderr | tests/leads-webhook.test.js > PATCH /api/leads — qualification update > returns 400 when no updatable fields are provided
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/execute-action.test.js > acquireLockAndExecute > executes adjust_budget when recommended_value is "$1,500"
+[AUTONOMY-COORDINATOR-FAILURE] recordActionOutcome unexpected error: __vite_ssr_import_0__.default.rpc is not a function
+
+stdout | tests/autonomy.test.js > checkPostureForAction — escalation triggers (full tier) > returns require_approval on conflict flag
+[AUTONOMY] verdict=require_approval account=aaaaaaaa-0000-0000-0000-000000000001 pillar=paid_ads action=pause_campaign reason="conflict with pending action"
+
+stderr | tests/leads-webhook.test.js > PATCH /api/leads — qualification update > PATCH new -> qualified sets qualification_status and qualified_at
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/execute-action.test.js > acquireLockAndExecute > executes adjust_budget when recommended_value is "$31 USD"
+[AUTONOMY-COORDINATOR-FAILURE] recordActionOutcome unexpected error: __vite_ssr_import_0__.default.rpc is not a function
+
+stdout | tests/autonomy.test.js > checkPostureForAction — escalation triggers (full tier) > returns require_approval on anomaly flag
+[AUTONOMY] verdict=require_approval account=aaaaaaaa-0000-0000-0000-000000000001 pillar=paid_ads action=pause_campaign reason="anomaly detected"
+
+stderr | tests/leads-webhook.test.js > PATCH /api/leads — qualification update > PATCH -> booked sets booked_at, booked_revenue, gross_profit
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/execute-action.test.js > acquireLockAndExecute > rejects adjust_budget when recommended_value is "$$invalid" (strips to empty → NaN)
+[AUTONOMY-COORDINATOR-FAILURE] recordActionOutcome unexpected error: __vite_ssr_import_0__.default.rpc is not a function
+
+stdout | tests/autonomy.test.js > checkPostureForAction — escalation triggers (full tier) > returns require_approval on external_flag
+[AUTONOMY] verdict=require_approval account=aaaaaaaa-0000-0000-0000-000000000001 pillar=paid_ads action=pause_campaign reason="external escalation flag"
+
+stderr | tests/leads-webhook.test.js > PATCH /api/leads — qualification update > PATCH -> lost sets lost_at
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/execute-action.test.js > acquireLockAndExecute > adjust_budget uses budget_id directly when supplied — skips GET-campaign, adds one snapshot read (S06B)
+[AUTONOMY-COORDINATOR-FAILURE] recordActionOutcome unexpected error: __vite_ssr_import_0__.default.rpc is not a function
+
+stdout | tests/autonomy.test.js > checkPostureForAction — escalation triggers (full tier) > passes confidence at exactly 0.7 (boundary)
+[AUTONOMY] verdict=allow_auto account=aaaaaaaa-0000-0000-0000-000000000001 pillar=paid_ads action=pause_campaign reason="full tier, no escalations"
+
+stderr | tests/leads-webhook.test.js > PATCH /api/leads — qualification update > PATCH notes-only persists notes
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/execute-action.test.js > acquireLockAndExecute > adjust_budget throws when GET-campaign lookup returns non-ok response
+[AUTONOMY-COORDINATOR-FAILURE] recordActionOutcome unexpected error: __vite_ssr_import_0__.default.rpc is not a function
+
+stdout | tests/autonomy.test.js > checkPostureForAction — escalation triggers (full tier) > fails safe to require_approval when coordinator encounters DB error
+[AUTONOMY] verdict=require_approval account=aaaaaaaa-0000-0000-0000-000000000001 pillar=paid_ads action=pause_campaign reason="holdout list"
+
+stderr | tests/leads-webhook.test.js > PATCH /api/leads — qualification update > returns updated row in response
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/execute-action.test.js > acquireLockAndExecute > adjust_budget throws when GET-campaign returns no campaignBudget resource
+[AUTONOMY-COORDINATOR-FAILURE] recordActionOutcome unexpected error: __vite_ssr_import_0__.default.rpc is not a function
+
+stderr | tests/autonomy.test.js > checkPostureForAction — escalation triggers (full tier) > fails safe to require_approval when coordinator encounters DB error
+[AUTONOMY-COORDINATOR-FAILURE] holdout list fetch error: DB timeout
+
+stderr | tests/leads-webhook.test.js > POST /api/leads — account scoping > POST without account header defaults to FPB
+[SECURITY] LEADS_INGEST_SECRET not set — /api/leads is unprotected (non-production warn-and-allow)
+
+stderr | tests/execute-action.test.js > acquireLockAndExecute > adds a negative keyword to a Google Ads campaign
+[AUTONOMY-COORDINATOR-FAILURE] recordActionOutcome unexpected error: __vite_ssr_import_0__.default.rpc is not a function
+
+stderr | tests/cost-ledger.test.js > GET /api/cost-rollup > returns success with a rollup for valid month
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stdout | tests/autonomy.test.js > checkPostureForAction — budget guards (staging consult) > requires approval for an over-limit budget increase, with the guard reason
+[AUTONOMY] verdict=require_approval account=aaaaaaaa-0000-0000-0000-000000000001 pillar=paid_ads action=adjust_budget reason="budget guard: budget increase of 18% ($100/day -> $118/day) exceeds max_budget_increase_pct_per_day 15% | CPL $50 is in the target band (target $50 / warn $75 / emergency $100)"
+
+stderr | tests/leads-webhook.test.js > POST /api/leads — account scoping > POST with x-account-slug: weld inserts row with weld account_id and weld-prefixed dedup_key
+[SECURITY] LEADS_INGEST_SECRET not set — /api/leads is unprotected (non-production warn-and-allow)
+
+stderr | tests/execute-action.test.js > acquireLockAndExecute > enables (resumes) a Google Ads campaign for resume_campaign
+[AUTONOMY-COORDINATOR-FAILURE] recordActionOutcome unexpected error: __vite_ssr_import_0__.default.rpc is not a function
+
+stderr | tests/chat.test.js > chat — chat_messages table preflight > returns 503 FEATURE_NOT_CONFIGURED when chat_messages select fails with PGRST205
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/cost-ledger.test.js > GET /api/cost-rollup > defaults month to current YYYY-MM when not provided
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stdout | tests/autonomy.test.js > checkPostureForAction — budget guards (staging consult) > flags a >= 25% change as always requiring approval regardless of tier
+[AUTONOMY] verdict=require_approval account=aaaaaaaa-0000-0000-0000-000000000001 pillar=paid_ads action=adjust_budget reason="budget guard: budget increase of 25% ($100/day -> $125/day) is >= major_change_pct 25% — always requires approval regardless of autonomy tier | CPL $50 is in the target band (target $50 / warn $75 / emergency $100)"
+
+stderr | tests/leads-webhook.test.js > POST /api/leads — account scoping > POST with unknown slug returns 400 INVALID_ACCOUNT
+[SECURITY] LEADS_INGEST_SECRET not set — /api/leads is unprotected (non-production warn-and-allow)
+
+stderr | tests/execute-action.test.js > acquireLockAndExecute > calls Meta API and returns success for pause_campaign on meta platform
+[AUTONOMY-COORDINATOR-FAILURE] recordActionOutcome unexpected error: __vite_ssr_import_0__.default.rpc is not a function
+
+stderr | tests/chat.test.js > chat — chat_messages table preflight > returns 503 FEATURE_NOT_CONFIGURED when chat_messages select fails with relation-does-not-exist
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/cost-ledger.test.js > GET /api/cost-rollup > returns 400 for invalid month format
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stdout | tests/autonomy.test.js > checkPostureForAction — budget guards (staging consult) > lets a within-limit change with healthy data continue to allow_auto
+[AUTONOMY] verdict=allow_auto account=aaaaaaaa-0000-0000-0000-000000000001 pillar=paid_ads action=adjust_budget reason="full tier, no escalations"
+
+stderr | tests/leads-webhook.test.js > POST /api/leads — account scoping > POST when account is archived returns 403 ACCOUNT_ARCHIVED
+[SECURITY] LEADS_INGEST_SECRET not set — /api/leads is unprotected (non-production warn-and-allow)
+
+stderr | tests/execute-action.test.js > acquireLockAndExecute > calls Google Ads API and returns success for pause_campaign on google platform
+[AUTONOMY-COORDINATOR-FAILURE] recordActionOutcome unexpected error: __vite_ssr_import_0__.default.rpc is not a function
+
+stderr | tests/chat.test.js > chat — chat_messages table preflight > does NOT call Anthropic when chat_messages table is missing
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/cost-ledger.test.js > GET /api/cost-rollup > returns 405 for POST
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stdout | tests/autonomy.test.js > checkPostureForAction — budget guards (staging consult) > requires approval to decrease a protected campaign
+[AUTONOMY] verdict=require_approval account=aaaaaaaa-0000-0000-0000-000000000001 pillar=paid_ads action=adjust_budget reason="budget guard: campaign 21613067518 is on the protected list — budget decreases always require approval | CPL $50 is in the target band (target $50 / warn $75 / emergency $100)"
+
+stderr | tests/leads-webhook.test.js > POST /api/leads — account scoping > POST when account is inactive returns 403 ACCOUNT_INACTIVE
+[SECURITY] LEADS_INGEST_SECRET not set — /api/leads is unprotected (non-production warn-and-allow)
+
+stderr | tests/execute-action.test.js > acquireLockAndExecute > calls Meta image upload + creative create for publish_creative action
+[AUTONOMY-COORDINATOR-FAILURE] recordActionOutcome unexpected error: __vite_ssr_import_0__.default.rpc is not a function
+
+stderr | tests/chat.test.js > chat — chat_messages table preflight > logs a failed ai_analysis_runs row with account_id and FEATURE_NOT_CONFIGURED error
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stdout | tests/autonomy.test.js > checkPostureForAction — budget guards (staging consult) > fails closed on pause at staging — enabled-campaign list is execution-time data
+[AUTONOMY] verdict=require_approval account=aaaaaaaa-0000-0000-0000-000000000001 pillar=paid_ads action=pause_campaign reason="budget guard: cannot verify this is not the last enabled lead-gen campaign — enabled-campaign list unavailable | CPL $50 is in the target band (target $50 / warn $75 / emergency $100)"
+
+stderr | tests/leads-webhook.test.js > GET /api/leads — account scoping > GET filters results by account_id
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/execute-action.test.js > acquireLockAndExecute > creates Meta campaign + ad set for create_meta_campaign action
+[AUTONOMY-COORDINATOR-FAILURE] recordActionOutcome unexpected error: __vite_ssr_import_0__.default.rpc is not a function
+
+stderr | tests/chat.test.js > chat — account scoping > returns 403 ACCOUNT_ARCHIVED when caller account is archived (no Anthropic, no chat_messages)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/actions-channel.test.js > POST /api/actions — channel normalization > stores "google_ads" unchanged when channel is already valid
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stdout | tests/autonomy.test.js > checkPostureForAction — budget guards (staging consult) > honors agent_config overrides — thresholds are config, not constants
+[AUTONOMY] verdict=allow_auto account=aaaaaaaa-0000-0000-0000-000000000001 pillar=paid_ads action=adjust_budget reason="full tier, no escalations"
+
+stderr | tests/leads-webhook.test.js > PATCH /api/leads — account scoping > returns 403 ACCOUNT_MISMATCH when lead belongs to a different account
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/execute-action.test.js > acquireLockAndExecute — budget guard gate > finalizes the action with the guard reason and makes NO platform call on block verdict
+[AUTONOMY-COORDINATOR-FAILURE] recordActionOutcome unexpected error: __vite_ssr_import_0__.default.rpc is not a function
+
+stderr | tests/chat.test.js > chat — account scoping > returns 403 ACCOUNT_INACTIVE when caller account is inactive (no Anthropic, no chat_messages)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/actions-channel.test.js > POST /api/actions — channel normalization > stores "meta_ads" unchanged when channel is already valid
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stdout | tests/autonomy.test.js > checkPostureForAction — budget guards (staging consult) > guard reason wins over the generic recommend-tier reason
+[AUTONOMY] verdict=require_approval account=aaaaaaaa-0000-0000-0000-000000000001 pillar=paid_ads action=adjust_budget reason="budget guard: budget increase of 30% ($100/day -> $130/day) is >= major_change_pct 25% — always requires approval regardless of autonomy tier | CPL $50 is in the target band (target $50 / warn $75 / emergency $100)"
+
+stderr | tests/leads-webhook.test.js > POST /api/leads — fail-closed ingest secret > returns 503 SECRET_NOT_CONFIGURED when LEADS_INGEST_SECRET is unset in production
+[SECURITY] LEADS_INGEST_SECRET is not set in production — /api/leads is refusing requests (fail-closed)
+
+stderr | tests/execute-action.test.js > acquireLockAndExecute — budget guard gate > block is terminal even on the human-approve path (status approved, auto_execute false)
+[AUTONOMY-COORDINATOR-FAILURE] recordActionOutcome unexpected error: __vite_ssr_import_0__.default.rpc is not a function
+
+stderr | tests/chat.test.js > chat — rate limiting > allows a request that is under the per-account limit
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/actions-channel.test.js > POST /api/actions — channel normalization > normalizes "**LP Search - Kits" to "seo" — strips markdown, maps "search" keyword
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stdout | tests/autonomy.test.js > checkPostureForAction — budget guards (staging consult) > skips the guard consult entirely when context has no execution_data (back-compat)
+[AUTONOMY] verdict=allow_auto account=aaaaaaaa-0000-0000-0000-000000000001 pillar=paid_ads action=adjust_budget reason="full tier, no escalations"
+
+stderr | tests/leads-webhook.test.js > POST /api/leads — fail-closed ingest secret > still warns and accepts the POST when the secret is unset in non-production
+[SECURITY] LEADS_INGEST_SECRET not set — /api/leads is unprotected (non-production warn-and-allow)
+
+stderr | tests/execute-action.test.js > acquireLockAndExecute — budget guard gate > executes a require_approval action when it was human-initiated (auto_execute false)
+[AUTONOMY-COORDINATOR-FAILURE] recordActionOutcome unexpected error: __vite_ssr_import_0__.default.rpc is not a function
+
+stderr | tests/chat.test.js > chat — rate limiting > returns 429 with a Retry-After header once an account exceeds 30 requests/min
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[RATE-LIMIT-EXCEEDED] /api/chat account=fpb count=30 limit=30
+
+stderr | tests/actions-channel.test.js > POST /api/actions — channel normalization > normalizes "**LP Search - Kits**" (fully wrapped bold) to "seo"
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/autonomy.test.js > recordActionOutcome > swallows RPC errors without throwing
+[AUTONOMY-COORDINATOR-FAILURE] recordActionOutcome RPC error: RPC error
+
+ ✓ tests/leads-webhook.test.js (26 tests) 34ms
+stderr | tests/execute-action.test.js > acquireLockAndExecute — budget guard gate > consults the guard with the locked action row
+[AUTONOMY-COORDINATOR-FAILURE] recordActionOutcome unexpected error: __vite_ssr_import_0__.default.rpc is not a function
+
+stderr | tests/chat.test.js > chat — rate limiting > does not call Anthropic once the rate limit is exceeded
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[RATE-LIMIT-EXCEEDED] /api/chat account=fpb count=30 limit=30
+
+stderr | tests/actions-channel.test.js > POST /api/actions — channel normalization > defaults missing channel to "content"
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+ ✓ tests/execute-action.test.js (42 tests) 79ms
+stderr | tests/chat.test.js > chat — rate limiting > keeps rate-limit counters independent per account
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[RATE-LIMIT-EXCEEDED] /api/chat account=fpb count=30 limit=30
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/actions-channel.test.js > POST /api/actions — channel normalization > fuzzy-maps "meta" to "meta_ads"
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/cost-ledger.test.js > /api/cost-subscriptions > GET returns subscription list
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/chat.test.js > chat — ACTION block emission creates pending action row > inserts a pending action row and returns actionId when Claude emits an ACTION block
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/actions-channel.test.js > POST /api/actions — channel normalization > fuzzy-maps "**google_ads**" (markdown-wrapped valid) to "google_ads"
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/cost-ledger.test.js > /api/cost-subscriptions > POST creates a subscription row
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/chat.test.js > chat — ACTION block emission creates pending action row > passes ACTION-block magnitude fields to the coordinator as context.execution_data (SESSION-05)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/actions-channel.test.js > POST /api/actions — channel normalization > stores account_id from resolved account on every insert
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/cost-ledger.test.js > /api/cost-subscriptions > POST returns 400 when vendor is missing
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/chat.test.js > chat — ACTION block emission creates pending action row > returns actionId: null when coordinator returns block verdict — chat response still 200
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/actions-channel.test.js > POST /api/actions — coordinator receives execution_data for budget guards > passes the request execution_data into the coordinator context
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/cost-ledger.test.js > /api/cost-subscriptions > POST returns 400 for negative monthly_amount_usd
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/chat.test.js > chat — ACTION block emission creates pending action row > returns actionId: null when action row insert fails — chat response still 200
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[chat] action row creation failed: constraint violation
+
+stderr | tests/actions-channel.test.js > POST /api/actions — coordinator receives execution_data for budget guards > passes an empty object when the request has no execution_data (body default)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/chat.test.js > chat — ACTION block emission creates pending action row > skips DB creation for process_image action type and returns actionId: null
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/actions-channel.test.js > POST /api/actions — negative-keyword terminal guard (S07e regression) > reproduces the 7/6 malformed row: add_negative_keyword with no keyword_text lands requires_review, not pending/approved
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/chat.test.js > chat — DATA_QUESTION ad data via direct import (seam test) > calls fetchGoogleAdsData and fetchMetaAdsData directly when includeAdData is true
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/actions-channel.test.js > POST /api/actions — negative-keyword terminal guard (S07e regression) > a well-formed add_negative_keyword POST (keyword_text present) is unaffected — still lands pending
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/chat.test.js > chat — affirmative follow-up triggers data fetch > returns fetching signal when intent resolves DATA_QUESTION for short affirmative with prior data history
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/actions-channel.test.js > POST /api/actions — live-campaign verification for add_negative_keyword (S07e defect-1) > a campaign_name matching NO live campaign lands requires_review, not pending
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/chat.test.js > chat — verifyAndEnrichAction wired into action save (Session-06) > saves budget_id in execution_data when action is verified against turn-fetched campaigns
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/actions-channel.test.js > POST /api/actions — live-campaign verification for add_negative_keyword (S07e defect-1) > a campaign_id/campaign_name that DOES match live data still lands pending, with the server-verified campaign_id
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/chat.test.js > chat — verifyAndEnrichAction wired into action save (Session-06) > fetches google-ads server-side for verification when no ad data was included in the turn
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/actions-channel.test.js > POST /api/actions — live-campaign verification for add_negative_keyword (S07e defect-1) > a client-supplied execution_data.budget_id is never trusted — inserted row always has budget_id: null
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/chat.test.js > chat — verifyAndEnrichAction wired into action save (Session-06) > saves requires_review status when google_ads campaign cannot be verified against live data
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+ ✓ tests/actions-channel.test.js (15 tests) 16ms
+stderr | tests/chat.test.js > chat — add_negative_keyword execution_data whitelist fix (S07b) > preserves keyword_text, match_type, and evidence in execution_data on insert
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/chat.test.js > chat — missing keyword_text downgrades action to requires_review at staging (S07c) > add_negative_keyword ACTION block with no keyword_text is inserted as requires_review, never pending
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/autonomy.test.js > POST /api/autonomy-posture > returns 400 when pillar is missing
+[SECURITY] EXECUTE_SECRET not set — /api/autonomy-posture POST is unprotected (non-production warn-and-allow)
+
+stderr | tests/cost-ledger.test.js > /api/cost-hours > GET returns hours list
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/chat.test.js > chat — add_negative_keyword channel-gate bypass closed (S07e) > add_negative_keyword with channel missing entirely AND missing keyword_text still lands requires_review
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/autonomy.test.js > POST /api/autonomy-posture > returns 400 when action_class is missing
+[SECURITY] EXECUTE_SECRET not set — /api/autonomy-posture POST is unprotected (non-production warn-and-allow)
+
+stderr | tests/cost-ledger.test.js > /api/cost-hours > POST creates a hours entry
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/chat.test.js > chat — add_negative_keyword channel-gate bypass closed (S07e) > add_negative_keyword with channel "other" AND missing keyword_text still lands requires_review
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/cost-ledger.test.js > /api/cost-hours > POST returns 400 for invalid category
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/chat.test.js > chat — add_negative_keyword_batch expands into N action rows (S07e) > inserts one action row per term, each with populated keyword_text and the real campaign_id resolved from fetched data
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/cost-ledger.test.js > /api/cost-hours > POST returns 400 when hours is missing
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/chat.test.js > chat — add_negative_keyword_batch expands into N action rows (S07e) > lands every expanded item as requires_review when campaign_name matches no fetched campaign
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/cost-ledger.test.js > /api/cost-hours > POST returns 400 for negative hours
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/chat.test.js > chat — add_negative_keyword_batch expands into N action rows (S07e) > caps a batch at 25 terms and mentions the dropped count in the reply
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+ ✓ tests/cost-ledger.test.js (30 tests) 3137ms
+   ✓ computeAnthropicCost > Sonnet 4 — 10K in + 5K out = $0.105 351ms
+   ✓ computeMonthlyRollup > aggregates Anthropic tokens and costs 316ms
+   ✓ GET /api/cost-rollup > returns success with a rollup for valid month 1411ms
+   ✓ /api/cost-subscriptions > GET returns subscription list 312ms
+   ✓ /api/cost-hours > GET returns hours list 617ms
+stderr | tests/chat.test.js > chat — add_negative_keyword_batch expands into N action rows (S07e) > returns actionPayload: null and actionId: null for a batch turn, with a summary sentence in the reply
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/chat.test.js > chat — multi-term negation stages one concrete term per turn (S07c) > first turn: model lists several junk terms in prose but stages only the first as the ACTION, keyword_text populated
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/chat.test.js > chat — multi-term negation stages one concrete term per turn (S07c) > follow-up turn ("next"): model stages the second concrete term independently, keyword_text populated
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/chat.test.js > chat — waste-question trigger fetches search terms (S07b) > calls fetchSearchTerms when the message matches WASTE_QUESTION_RE and a google connection exists
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/chat.test.js > chat — waste-question trigger fetches search terms (S07b) > does NOT call fetchSearchTerms when the message does not match WASTE_QUESTION_RE
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+ ✓ tests/accounts-helper.test.js (15 tests) 26ms
+ ✓ tests/google-ads.test.js (15 tests) 29ms
+stderr | tests/chat.test.js > chat — staging-turn auto-fetch and trusted-input boundary (S07f) > a staging-intent message ("negate all") short-circuits straight to the fetching round-trip without calling the Haiku intent classifier
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/chat.test.js > chat — staging-turn auto-fetch and trusted-input boundary (S07f) > does NOT short-circuit the intent classifier for action requests unrelated to negatives (regression guard)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/chat.test.js > chat — staging-turn auto-fetch and trusted-input boundary (S07f) > two-turn flow: an analysis turn followed by "negate all" stages N clean actions without re-asking for data
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/chat.test.js > chat — staging-turn auto-fetch and trusted-input boundary (S07f) > user-explicit-list single turn: "negate <list> from <campaign>" stages clean without a prior analysis turn
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/chat.test.js > chat — staging-turn auto-fetch and trusted-input boundary (S07f) > a single-word term the user typed, not present in fetched search-term data, stages as requires_review — never auto-approved
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/chat.test.js > chat — staging-turn auto-fetch and trusted-input boundary (S07f) > a bare stopword typed as part of the staging instruction ("all", "the") is never staged, even though it is a literal substring of the message
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/chat.test.js > chat — staging-turn auto-fetch and trusted-input boundary (S07f) > a multi-word phrase where every token is a stopword ("the all") is never staged, even though the user typed it verbatim
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/autonomy.test.js > GET /api/autonomy-holdout-classes > returns the holdout class list
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+ ✓ tests/verify-safety.test.js (9 tests) 16ms
+stderr | tests/chat.test.js > chat — staging-turn auto-fetch and trusted-input boundary (S07f) > a model-invented term (not in fetched search-term data, not typed by the user) is silently not staged
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+ ✓ tests/autonomy.test.js (38 tests) 2955ms
+   ✓ GET /api/autonomy-posture > returns posture rows scoped to account with graduation_readiness 2343ms
+   ✓ GET /api/autonomy-holdout-classes > returns the holdout class list 572ms
+stderr | tests/account-budget.test.js > account-budget — account resolution > GET with no account header defaults to FPB and returns budget data
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+ ✓ tests/chat.test.js (58 tests) 92ms
+stderr | tests/account-budget.test.js > account-budget — account resolution > GET ?account=fpb scopes the campaign_daily_stats SELECT to FPB.id
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/account-budget.test.js > account-budget — account resolution > GET ?account=nonexistent returns 400 INVALID_ACCOUNT and does NOT query campaign_daily_stats
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/account-budget.test.js > account-budget — account resolution > GET for an archived account still returns budget data (reads allowed)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/account-budget.test.js > account-budget — method gating > POST returns 405 METHOD_NOT_ALLOWED and does NOT query the DB
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/account-budget.test.js > account-budget — MTD aggregation > aggregates 5 rows across 2 platforms into per-platform sums and grand total
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/account-budget.test.js > account-budget — MTD aggregation > returns zero total and empty by_platform when no rows exist for the month
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/account-budget.test.js > account-budget — MTD aggregation > returns 500 BUDGET_FETCH_FAILED when supabase returns an error
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+ ✓ tests/account-budget.test.js (8 tests) 13ms
+stderr | tests/accounts-api.test.js > GET /api/accounts > returns 200 with an array of accounts
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/accounts-api.test.js > GET /api/accounts > response includes exactly the whitelisted fields and no others
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/accounts-api.test.js > GET /api/accounts > SECURITY: response does not leak token references, env: refs, resolved_* values, or any ad_platform_connections data
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/accounts-api.test.js > GET /api/accounts > orders results by created_at ascending
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/accounts-api.test.js > non-GET methods on /api/accounts > POST returns 405 with Allow: GET
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/accounts-api.test.js > non-GET methods on /api/accounts > PATCH returns 405 with Allow: GET
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/accounts-api.test.js > non-GET methods on /api/accounts > DELETE returns 405 with Allow: GET
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+ ✓ tests/accounts-api.test.js (7 tests) 22ms
+ ✓ tests/evaluate-outcomes.test.js (7 tests) 24ms
+ ✓ tests/action-states.test.js (29 tests) 18ms
+ ✓ tests/attribution.test.js (24 tests) 22ms
+ ✓ tests/campaign-stats.test.js (15 tests) 25ms
+stdout | tests/cron-analyze.test.js > cron-analyze — auth > accepts Authorization: Bearer CRON_SECRET as alternate auth
+[cron-analyze] single-account mode: FPB only
+
+stderr | tests/account-isolation.test.js > approve-action — account isolation > cross-route lifecycle: action with account_id=fpb cannot be approved when caller is Weld
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stdout | tests/cron-analyze.test.js > cron-analyze — ENABLE_MULTI_ACCOUNT_CRON feature flag > with flag unset (default), processes only FPB even when other accounts are active
+[cron-analyze] single-account mode: FPB only
+
+stderr | tests/account-isolation.test.js > approve-action — account isolation > action owned by FPB approved by FPB caller delegates to acquireLockAndExecute with proper context
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stdout | tests/cron-analyze.test.js > cron-analyze — ENABLE_MULTI_ACCOUNT_CRON feature flag > with flag = true, loops over every active account
+[cron-analyze] multi-account mode: 2 active accounts
+
+stderr | tests/account-isolation.test.js > approve-action — account isolation > manual action types skip connection resolution but still verify ownership
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stdout | tests/cron-analyze.test.js > cron-analyze — connection skip > skips an account missing google_ads connection (warn, no analysis call)
+[cron-analyze] multi-account mode: 2 active accounts
+
+stderr | tests/account-isolation.test.js > google-ads handler — account scoping > GET with no account header defaults to FPB and uses the FPB google_ads connection
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stdout | tests/cron-analyze.test.js > cron-analyze — connection skip > skips an account missing meta_ads connection (warn, no analysis call)
+[cron-analyze] multi-account mode: 2 active accounts
+
+stderr | tests/account-isolation.test.js > google-ads handler — account scoping > GET ?account=weld with no Weld google_ads connection returns 404 CONNECTION_NOT_FOUND
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/cron-analyze.test.js > cron-analyze — connection skip > skips an account missing meta_ads connection (warn, no analysis call)
+[cron-analyze] account=weld skipped: missing meta_ads connection
+
+stderr | tests/account-isolation.test.js > google-ads handler — account scoping > GET with connection missing resolved_refresh_token returns 503 CONNECTION_INCOMPLETE
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+ ✓ tests/normalize-channel.test.js (35 tests) 14ms
+stdout | tests/cron-analyze.test.js > cron-analyze — per-account error isolation > one account failing does not prevent others from being processed
+[cron-analyze] multi-account mode: 2 active accounts
+
+stderr | tests/account-isolation.test.js > facebook-ads handler — account scoping > GET with no account header defaults to FPB and uses the FPB meta_ads connection
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/cron-analyze.test.js > cron-analyze — per-account error isolation > one account failing does not prevent others from being processed
+[cron-analyze] account=fpb failed: FPB analysis blew up
+
+stderr | tests/account-isolation.test.js > facebook-ads handler — account scoping > GET ?account=weld with no Weld meta_ads connection returns 404 CONNECTION_NOT_FOUND
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+ ✓ tests/cron-analyze.test.js (7 tests) 33ms
+stderr | tests/account-isolation.test.js > facebook-ads handler — account scoping > GET with connection missing resolved_access_token returns 503 CONNECTION_INCOMPLETE
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/account-isolation.test.js > automation-log handler — account scoping > GET with no account header scopes SELECT to FPB.id
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/account-isolation.test.js > automation-log handler — account scoping > GET ?account=weld scopes SELECT to Weld.id
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/account-isolation.test.js > automation-log handler — account scoping > GET with unknown slug returns 400 INVALID_ACCOUNT
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/account-isolation.test.js > performance-snapshots handler — account scoping > GET with no account header scopes SELECT to FPB.id
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/account-isolation.test.js > performance-snapshots handler — account scoping > GET ?account=weld&history=true scopes SELECT to Weld.id
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/account-isolation.test.js > action-outcomes handler — account scoping > GET with no account header scopes SELECT to FPB.id
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/account-isolation.test.js > action-outcomes handler — account scoping > GET ?account=weld scopes SELECT to Weld.id
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/account-isolation.test.js > meta-creative handler — account scoping > POST with no meta_ads connection returns 404 CONNECTION_NOT_FOUND
+[SECURITY] EXECUTE_SECRET not set — /api/meta-creative is unprotected (non-production warn-and-allow)
+
+stderr | tests/account-isolation.test.js > meta-creative handler — account scoping > POST with meta_ads connection missing resolved_access_token returns 503 CONNECTION_INCOMPLETE
+[SECURITY] EXECUTE_SECRET not set — /api/meta-creative is unprotected (non-production warn-and-allow)
+
+stderr | tests/account-isolation.test.js > meta-creative handler — account scoping > POST when account is inactive returns 403 ACCOUNT_INACTIVE (no Meta API call)
+[SECURITY] EXECUTE_SECRET not set — /api/meta-creative is unprotected (non-production warn-and-allow)
+
+stderr | tests/account-isolation.test.js > meta-creative handler — account scoping > POST when account is archived returns 403 ACCOUNT_ARCHIVED (no Meta API call)
+[SECURITY] EXECUTE_SECRET not set — /api/meta-creative is unprotected (non-production warn-and-allow)
+
+stderr | tests/account-isolation.test.js > create-facebook-campaign handler — account scoping > POST with no meta_ads connection returns 404 CONNECTION_NOT_FOUND
+[SECURITY] EXECUTE_SECRET not set — /api/create-facebook-campaign is unprotected (non-production warn-and-allow)
+
+stderr | tests/account-isolation.test.js > create-facebook-campaign handler — account scoping > POST with meta_ads connection missing resolved_account_id_external returns 503 CONNECTION_INCOMPLETE
+[SECURITY] EXECUTE_SECRET not set — /api/create-facebook-campaign is unprotected (non-production warn-and-allow)
+
+stderr | tests/account-isolation.test.js > create-facebook-campaign handler — account scoping > POST when account is inactive returns 403 ACCOUNT_INACTIVE
+[SECURITY] EXECUTE_SECRET not set — /api/create-facebook-campaign is unprotected (non-production warn-and-allow)
+
+stderr | tests/account-isolation.test.js > create-google-campaign handler — account scoping > POST with no google_ads connection returns 404 CONNECTION_NOT_FOUND
+[SECURITY] EXECUTE_SECRET not set — /api/create-google-campaign is unprotected (non-production warn-and-allow)
+
+stderr | tests/account-isolation.test.js > create-google-campaign handler — account scoping > POST with google_ads connection missing resolved_refresh_token returns 503 CONNECTION_INCOMPLETE
+[SECURITY] EXECUTE_SECRET not set — /api/create-google-campaign is unprotected (non-production warn-and-allow)
+
+stderr | tests/account-isolation.test.js > create-google-campaign handler — account scoping > POST when account is archived returns 403 ACCOUNT_ARCHIVED
+[SECURITY] EXECUTE_SECRET not set — /api/create-google-campaign is unprotected (non-production warn-and-allow)
+
+ ✓ tests/account-isolation.test.js (26 tests) 52ms
+stderr | tests/approve-action.test.js > approve-action — input validation > returns 400 when actionId is missing from request body
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+ ✓ tests/cors.test.js (13 tests) 12ms
+stderr | tests/approve-action.test.js > approve-action — action lookup > returns 404 "Action not found" when row does not exist in DB
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/approve-action.test.js > approve-action — action lookup > returns 500 when Supabase returns a real database error (not a row-not-found)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+[approve-action] action fetch failed: {"code":"42501","message":"permission denied for table actions","details":null,"hint":null}
+
+stderr | tests/approve-action.test.js > approve-action — account isolation > returns 403 ACCOUNT_MISMATCH when actionId belongs to a different account
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/approve-action.test.js > approve-action — state validation > returns 409 when action is already in a final execution state
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/approve-action.test.js > approve-action — successful execution > delegates to acquireLockAndExecute for an executable action type (pause_campaign)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/approve-action.test.js > approve-action — successful execution > returns 200 requires_manual for a manual action type (adjust_budget)
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+ ✓ tests/approve-action.test.js (7 tests) 21ms
+ ✓ tests/rate-limit.test.js (7 tests) 6ms
+stderr | tests/require-admin.test.js > requireAdmin — missing env vars in production > returns false and sends 503 when ADMIN_PASSWORD is unset in production
+[SECURITY] ADMIN_PASSWORD is not set in production — admin auth is refusing all requests (fail-closed)
+
+stderr | tests/image-process.test.js > image-process — auth gate > returns 503 when the secret is unset in production (fail-closed)
+[SECURITY] IMAGE_PROCESS_SECRET is not set in production — /api/image-process is refusing requests (fail-closed)
+
+stderr | tests/require-admin.test.js > requireAdmin — missing env vars in production > returns false and sends 503 when AUTH_SECRET is unset in production
+[SECURITY] AUTH_SECRET is not set in production — admin auth is refusing all requests (fail-closed)
+
+stderr | tests/image-process.test.js > image-process — auth gate > warns and proceeds when the secret is unset in development
+[SECURITY] IMAGE_PROCESS_SECRET not set — /api/image-process is unprotected (non-production warn-and-allow)
+
+stderr | tests/require-admin.test.js > requireAdmin — missing env vars in non-production > returns true without checking cookie when secrets unset in non-production
+[SECURITY] ADMIN_PASSWORD or AUTH_SECRET not set — admin gate unprotected (non-production warn-and-allow)
+
+stderr | tests/image-process.test.js > image-process — payload size limit > rejects a Base64 payload larger than 10MB with 413
+[SECURITY] IMAGE_PROCESS_SECRET not set — /api/image-process is unprotected (non-production warn-and-allow)
+
+ ✓ tests/require-admin.test.js (10 tests) 16ms
+stderr | tests/image-process.test.js > image-process — payload size limit > accepts a Base64 payload exactly at the 10MB boundary
+[SECURITY] IMAGE_PROCESS_SECRET not set — /api/image-process is unprotected (non-production warn-and-allow)
+
+stderr | tests/image-process.test.js > image-process — payload size limit > returns 400 when imageData.base64 is missing
+[SECURITY] IMAGE_PROCESS_SECRET not set — /api/image-process is unprotected (non-production warn-and-allow)
+
+ ✓ tests/image-process.test.js (7 tests) 18ms
+stderr | tests/require-secret.test.js > require-secret — secret unset, production (fail-closed) > returns 503 SECRET_NOT_CONFIGURED
+[SECURITY] TEST_SECRET is not set in production — /api/test is refusing requests (fail-closed)
+
+stderr | tests/require-secret.test.js > require-secret — secret unset, non-production (warn-and-allow) > allows the request in development
+[SECURITY] TEST_SECRET not set — /api/test is unprotected (non-production warn-and-allow)
+
+stderr | tests/require-secret.test.js > require-secret — secret unset, non-production (warn-and-allow) > allows the request under NODE_ENV=test
+[SECURITY] TEST_SECRET not set — /api/test is unprotected (non-production warn-and-allow)
+
+ ✓ tests/require-secret.test.js (6 tests) 7ms
+ ✓ tests/chat-image-utils.test.js (5 tests) 5ms
+ ✓ tests/auth.test.js (7 tests) 11ms
+
+ Test Files  34 passed (34)
+      Tests  838 passed (838)
+   Start at  15:00:56
+   Duration  14.73s (transform 17.26s, setup 0ms, collect 54.64s, tests 7.70s, environment 14ms, prepare 23.42s)
+
+--- passed: tests ---
+
+=== CHECK: test-floor ===
+>> node scripts/check-test-floor.mjs "C:\Python\FPB Marketing Bot\harness\evidence\S-HARNESS-P1-verify-2026-07-28_1500.log"
+TEST FLOOR: PASS — 838 tests passed, floor 838 (exactly at floor).
+--- passed: test-floor ---
+
+=== CHECK: build ===
+>> npm run build
+
+> fpb-marketing-bot@1.0.0 build
+> vite build
+
+[33mThe CJS build of Vite's Node API is deprecated. See https://vite.dev/guide/troubleshooting.html#vite-cjs-node-api-deprecated for more details.[39m
+vite v5.4.21 building for production...
+transforming...
+
+warn - The `content` option in your Tailwind CSS configuration is missing or empty.
+warn - Configure your content sources or your generated CSS will be missing styles.
+warn - https://tailwindcss.com/docs/content-configuration
+✓ 1746 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                 10.80 kB │ gzip:  2.69 kB
+dist/assets/index-DdXesLAS.js  303.95 kB │ gzip: 81.92 kB
+✓ built in 3.53s
+--- passed: build ---
+
+================================================
+RESULT: ALL CHECKS PASSED (4/4).
