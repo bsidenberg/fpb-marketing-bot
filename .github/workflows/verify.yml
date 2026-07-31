@@ -1,6 +1,7 @@
 # CI mirror of scripts/verify.ps1 — same gates, runs on every push/PR.
-# For FPB repos that auto-deploy on push, this is the last line of defense:
-# a red X here means the deploy shipped something unverified — treat as incident.
+# This repo auto-deploys to production ONLY on push to main (Vercel branch tracking).
+# All other branches are previews; production is otherwise reached by manual promote.
+# A red X here means something unverified is one merge away from production — treat as incident.
 name: verify
 
 on:
