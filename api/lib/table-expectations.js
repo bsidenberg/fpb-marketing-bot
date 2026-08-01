@@ -61,22 +61,45 @@ export const TABLE_EXPECTATIONS = Object.freeze({
     alertRule: 'Same disclosure mechanism as cost_hours — api/lib/cost-rollup.js data_completeness.',
   },
   automation_log: {
+    // Deliberately KEPT at BROKEN, not downgraded: evaluateTableExpectation()
+    // only alerts-forever for BROKEN — EXPECTED_EMPTY/_DISCLOSED both return
+    // 'ok' at 0 rows (see the function below), which would silently drop the
+    // alert while production is still, in fact, broken (nothing this session
+    // built has been deployed). A fix exists but was BLOCKED by cold review
+    // — see the reason field. Only S-AUTOLOG-1.2 landing AND being deployed
+    // should move this off BROKEN.
     expectation: EXPECTATION.BROKEN,
-    reason: 'S-OBS-1 investigation (2026-07-30): every write-path call site in the ' +
-      'codebase (api/lib/execute-action-logic.js writeLog(), api/cron-analyze.js, ' +
+    reason: 'STILL BROKEN IN PRODUCTION (S-AUTOLOG-1, 2026-07-31 — see ' +
+      'DECISIONS.md; this entry was briefly changed to EXPECTED_EMPTY during ' +
+      'this session, then corrected back after cold review found that ' +
+      'premature — see the note above). S-OBS-1 (2026-07-30) found every ' +
+      'write-path call site ' +
+      '(api/lib/execute-action-logic.js writeLog(), api/cron-analyze.js, ' +
       'api/cron-daily-stats.js, api/cron-crm-sync.js, api/analyze-ads.js, ' +
-      'api/meta-creative.js) passes an event_type value that VIOLATES the table\'s ' +
-      'own CHECK constraint (only data_pull/analysis/recommendation/action_executed/ ' +
-      'action_failed/alert/report/system are allowed; every call site passes something ' +
-      'else, e.g. the raw actions.action_type value like "pause_campaign"). No call ' +
-      'site checks the returned error, so every insert has always failed silently. ' +
-      'This is NOT "nothing logged yet" — it is a live, universal write-path defect. ' +
-      'See DECISIONS.md S-OBS-1 for the full finding and recommended fix (new session, ' +
-      'not built tonight — one call site lives in a protected money-path file).',
+      'api/meta-creative.js) passed an event_type (and, at one call site, also ' +
+      'a status) value that VIOLATED the table\'s own CHECK constraints, and no ' +
+      'call site checked the returned error — every insert had always failed ' +
+      'silently since the feature was built. A fix exists in the working tree ' +
+      '(all six call sites import valid values from ' +
+      'api/lib/automation-log-schema.js and check + log their returned error ' +
+      'loudly) but is NOT DEPLOYED (nothing is committed/pushed this session — ' +
+      'CLAUDE.md) and cold review (2026-07-31) BLOCKED it: the fix, once ' +
+      'deployed, activates a terminal `block` verdict in ' +
+      'autonomy-coordinator.js\'s checkCap that has never once fired (0 rows, ' +
+      'always) and that miscounts non-executions as executed actions — see ' +
+      'DECISIONS.md S-AUTOLOG-1, "not fixed this session, new session ' +
+      'assigned: S-AUTOLOG-1.2." Until S-AUTOLOG-1.2 lands and is reviewed, ' +
+      'this table\'s emptiness is genuinely uninformative either way: it does ' +
+      'NOT mean "healthy," and deploying the current fix as-is would NOT make ' +
+      'it mean "healthy" either — it would silently start freezing accounts. ' +
+      'The disclosure every reader must carry: automation_log tells you ' +
+      'nothing about whether Prime is running correctly until S-AUTOLOG-1.2 ' +
+      'closes.',
     stalenessBoundDays: null,
-    alertRule: 'Cannot self-heal — the defect must be fixed in code (new session). ' +
-      'Any monitoring built against this table before the fix lands would alert ' +
-      'forever, which is correct: the alert IS the finding until it is fixed.',
+    alertRule: 'Cannot self-heal — S-AUTOLOG-1.2 must land and pass cold ' +
+      'review before this table\'s state can be read as meaningful again. ' +
+      'Any monitoring built against this table before then would alert ' +
+      'forever, which is correct until it is fixed.',
   },
   performance_snapshots: {
     expectation: EXPECTATION.BROKEN,

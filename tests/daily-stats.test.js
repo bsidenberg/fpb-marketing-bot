@@ -71,6 +71,7 @@ import {
   fetchGoogleDailyStats,
 } from '../api/lib/daily-stats.js';
 import handler from '../api/cron-daily-stats.js';
+import { AUTOMATION_LOG_EVENT_TYPES, AUTOMATION_LOG_STATUSES } from '../api/lib/automation-log-schema.js';
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
 const FPB  = { id: 'fpb-uuid',  slug: 'fpb',  status: 'active' };
@@ -426,10 +427,41 @@ describe('cron-daily-stats — behavior', () => {
     await handler(req, res);
 
     expect(insertsByTable['automation_log']).toHaveLength(1);
+    // S-AUTOLOG-1 (2026-07-31): was 'cron_daily_stats', which violated the
+    // live automation_log CHECK constraint — every insert on this path had
+    // always failed, silently, since the feature was built. Fixed to
+    // 'data_pull'; the original literal now lives in metadata.source_event.
     expect(insertsByTable['automation_log'][0]).toMatchObject({
-      event_type: 'cron_daily_stats',
+      event_type: 'data_pull',
       status:     'complete',
     });
+    expect(insertsByTable['automation_log'][0].metadata.source_event).toBe('cron_daily_stats');
     expect(insertsByTable['automation_log'][0].metadata.results).toEqual(res._body.results);
+  });
+
+  it('S-AUTOLOG-1: the automation_log row stays within the live CHECK constraint on a run with a failure', async () => {
+    // AUTOMATION_LOG_EVENT_TYPES / _STATUSES is a HAND-MAINTAINED mirror of
+    // automation_log's live CHECK constraint (read directly via Supabase MCP
+    // list_tables against project olpyqfuphiwdongzmazi on 2026-07-31 — see
+    // api/lib/automation-log-schema.js and harness/DECISIONS.md S-AUTOLOG-1),
+    // not a live drift detector. Reuses the same broken-token failure fixture
+    // as the "isolates per-account failures" test above so status flips to
+    // 'error' — the branch most likely to regress independently of the
+    // all-succeeded path already covered above.
+    process.env.ENABLE_MULTI_ACCOUNT_CRON = 'true';
+    mockAccountsList = [FPB, WELD];
+    mockConnections = {
+      [`${FPB.id}::google_ads`]:  { ...GOOGLE_CONN_FPB, resolved_refresh_token: 'fpb-refresh-broken' },
+      [`${WELD.id}::google_ads`]: GOOGLE_CONN_WELD,
+    };
+
+    const req = makeReq();
+    const res = makeRes();
+    await handler(req, res);
+
+    const row = insertsByTable['automation_log'][0];
+    expect(row.status).toBe('error');
+    expect(AUTOMATION_LOG_EVENT_TYPES).toContain(row.event_type);
+    expect(AUTOMATION_LOG_STATUSES).toContain(row.status);
   });
 });

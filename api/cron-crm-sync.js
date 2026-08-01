@@ -19,6 +19,7 @@
 
 import supabase from './lib/supabase.js';
 import { createCrmClient, runCrmSync } from './lib/crm-bridge.js';
+import { AUTOMATION_LOG_EVENT_TYPE, AUTOMATION_LOG_STATUS } from './lib/automation-log-schema.js';
 
 export default async function handler(req, res) {
   // ── Auth (mirrors cron-daily-stats.js) ────────────────────────────────────
@@ -43,18 +44,26 @@ export default async function handler(req, res) {
     const crm    = createCrmClient();
     const counts = await runCrmSync({ crm, prime: supabase });
 
+    // S-AUTOLOG-1 (2026-07-31): TWO CHECK-constraint violations here, both
+    // now fixed — 'crm_sync' was not a valid event_type, AND 'success' was
+    // not a valid status (automation_log only allows running/complete/error;
+    // this second violation was undiscovered before this session, found by
+    // reading the live constraint directly rather than inferring it from
+    // code — SDR-2). This insert has always failed silently. The original
+    // event_type literal is preserved in metadata.source_event.
     try {
-      await supabase.from('automation_log').insert({
+      const { error: logErr } = await supabase.from('automation_log').insert({
         // account_id intentionally NULL: CRM sync spans all leads, not one account
         account_id:  null,
-        event_type:  'crm_sync',
-        status:      'success',
+        event_type:  AUTOMATION_LOG_EVENT_TYPE.DATA_PULL,
+        status:      AUTOMATION_LOG_STATUS.COMPLETE,
         description: `CRM sync: ${counts.matched} matched, ${counts.booked} booked, $${counts.revenue_total} revenue`,
-        metadata:    counts,
+        metadata:    { ...counts, source_event: 'crm_sync' },
         created_at:  startedAt,
       });
+      if (logErr) console.error('[cron-crm-sync] automation_log insert failed (CHECK/DB error):', logErr.code, logErr.message);
     } catch (logErr) {
-      console.error('[cron-crm-sync] automation_log insert failed:', logErr.message);
+      console.error('[cron-crm-sync] automation_log insert failed (thrown):', logErr.message);
     }
 
     return res.status(200).json({ success: true, ...counts });
@@ -62,16 +71,17 @@ export default async function handler(req, res) {
     console.error('[cron-crm-sync] failed:', err.message);
 
     try {
-      await supabase.from('automation_log').insert({
+      const { error: logErr } = await supabase.from('automation_log').insert({
         account_id:  null,
-        event_type:  'crm_sync',
-        status:      'error',
+        event_type:  AUTOMATION_LOG_EVENT_TYPE.DATA_PULL,
+        status:      AUTOMATION_LOG_STATUS.ERROR,
         description: `CRM sync failed: ${err.message}`,
-        metadata:    { error: err.message },
+        metadata:    { error: err.message, source_event: 'crm_sync' },
         created_at:  startedAt,
       });
+      if (logErr) console.error('[cron-crm-sync] error automation_log insert failed (CHECK/DB error):', logErr.code, logErr.message);
     } catch (logErr) {
-      console.error('[cron-crm-sync] error automation_log insert failed:', logErr.message);
+      console.error('[cron-crm-sync] error automation_log insert failed (thrown):', logErr.message);
     }
 
     return res.status(500).json({ success: false, error: err.message });

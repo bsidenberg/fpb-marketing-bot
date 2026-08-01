@@ -28,12 +28,21 @@ describe('TABLE_EXPECTATIONS registry', () => {
     }
   });
 
-  it('flags automation_log and performance_snapshots as BROKEN, not merely unassigned', () => {
+  it('flags performance_snapshots as BROKEN, not merely unassigned', () => {
     // These were the two tables HARNESS.md flagged as "NO STATED EXPECTATION —
-    // new finding." S-OBS-1's investigation found both write paths are
+    // new finding." S-OBS-1's investigation found both write paths were
     // genuinely broken (schema/constraint mismatches), not just quiet.
-    expect(TABLE_EXPECTATIONS.automation_log.expectation).toBe(EXPECTATION.BROKEN);
+    // performance_snapshots' fix is S-SNAPSHOT-1's job, not yet done.
     expect(TABLE_EXPECTATIONS.performance_snapshots.expectation).toBe(EXPECTATION.BROKEN);
+  });
+
+  it('automation_log stays BROKEN — a built-but-BLOCKED, undeployed fix does not change live production state', () => {
+    // S-AUTOLOG-1 (2026-07-31) built a fix; cold review BLOCKED it (see
+    // DECISIONS.md) pending a second session (S-AUTOLOG-1.2) — production
+    // is unchanged, still broken. Stays BROKEN rather than being downgraded
+    // early: EXPECTED_EMPTY/_DISCLOSED both read as 'ok' at 0 rows, which
+    // would silently drop the alert while the defect is still live.
+    expect(TABLE_EXPECTATIONS.automation_log.expectation).toBe(EXPECTATION.BROKEN);
   });
 
   it('flags cost_hours and cost_subscriptions as expected-empty-but-disclosed', () => {
@@ -50,9 +59,18 @@ describe('evaluateTableExpectation', () => {
   });
 
   it('BROKEN tables alert even at 0 rows — zero is not evidence of health', () => {
-    const result = evaluateTableExpectation('automation_log', { rowCount: 0 });
+    const result = evaluateTableExpectation('performance_snapshots', { rowCount: 0 });
     expect(result.status).toBe('alert');
     expect(result.detail).toMatch(/not evidence of health/);
+  });
+
+  it('automation_log still alerts at 0 rows — a built-but-BLOCKED, undeployed fix does not change live production state', () => {
+    // S-AUTOLOG-1 (2026-07-31) built a fix; cold review BLOCKED it (see
+    // DECISIONS.md) because deploying it as-is would activate a terminal
+    // block verdict in autonomy-coordinator.js's checkCap. Nothing is
+    // deployed this session, so production is unchanged — still broken.
+    const result = evaluateTableExpectation('automation_log', { rowCount: 0 });
+    expect(result.status).toBe('alert');
   });
 
   it('BROKEN tables still alert (with a different note) if rows unexpectedly appear', () => {

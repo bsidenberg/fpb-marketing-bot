@@ -189,6 +189,7 @@ function defaultFetchHandler(url) {
 // Import AFTER all mocks
 import { runAnalysisForAccount } from '../api/analyze-ads.js';
 import handler from '../api/analyze-ads.js';
+import { AUTOMATION_LOG_EVENT_TYPES, AUTOMATION_LOG_STATUSES } from '../api/lib/automation-log-schema.js';
 
 // ── Test helpers ─────────────────────────────────────────────────────────────
 function makeReq(overrides = {}) {
@@ -334,6 +335,22 @@ describe('runAnalysisForAccount — happy path', () => {
     expect(insertsByTable['performance_snapshots'][0].account_id).toBe('fpb-uuid');
   });
 
+  it('S-AUTOLOG-1: the success-path automation_log row is within the live CHECK constraint', async () => {
+    // AUTOMATION_LOG_EVENT_TYPES/_STATUSES is a HAND-MAINTAINED mirror of
+    // automation_log's live CHECK constraint (Supabase MCP list_tables
+    // against olpyqfuphiwdongzmazi, 2026-07-31 — see
+    // api/lib/automation-log-schema.js), not a live drift detector. The
+    // event_type here was 'analysis_run' before this session — invalid, and
+    // every insert on this path had always failed silently.
+    queueAiRunInsertSuccess();
+    await runAnalysisForAccount(FPB, { baseUrl: 'https://test.local' });
+
+    const row = insertsByTable['automation_log'][0];
+    expect(AUTOMATION_LOG_EVENT_TYPES).toContain(row.event_type);
+    expect(AUTOMATION_LOG_STATUSES).toContain(row.status);
+    expect(row.metadata.source_event).toBe('analysis_run');
+  });
+
   it('calls fetchGoogleAdsData and fetchMetaAdsData with the correct account and connection objects', async () => {
     queueAiRunInsertSuccess();
     const weldAccount = { id: 'weld-uuid', slug: 'weld', status: 'active' };
@@ -374,6 +391,10 @@ describe('runAnalysisForAccount — Anthropic failure', () => {
     // automation_log still records the failure
     expect(insertsByTable['automation_log']).toHaveLength(1);
     expect(insertsByTable['automation_log'][0].status).toBe('error');
+    // S-AUTOLOG-1: the error-path row also stays within the live CHECK
+    // constraint — see the success-path test above for the full rationale.
+    expect(AUTOMATION_LOG_EVENT_TYPES).toContain(insertsByTable['automation_log'][0].event_type);
+    expect(insertsByTable['automation_log'][0].metadata.source_event).toBe('analysis_run');
   });
 
 });

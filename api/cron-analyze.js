@@ -28,6 +28,7 @@ import {
   getConnectionForAccount,
   FPB_DEFAULT_SLUG,
 } from './lib/accounts.js';
+import { AUTOMATION_LOG_EVENT_TYPE } from './lib/automation-log-schema.js';
 
 // Read flag inside handler so tests can flip it per-test
 function isMultiAccountCronEnabled() {
@@ -110,17 +111,22 @@ export default async function handler(req, res) {
   const failedCount    = results.filter(r => r.status === 'failed').length;
   const skippedCount   = results.filter(r => r.status === 'skipped').length;
 
+  // S-AUTOLOG-1 (2026-07-31): 'cron_analysis' violated the live CHECK
+  // constraint (automation-log-schema.js) — this insert has always failed
+  // silently. Fixed to the valid 'analysis' event_type; the original literal
+  // is preserved in metadata.source_event.
   try {
-    await supabase.from('automation_log').insert({
+    const { error: logErr } = await supabase.from('automation_log').insert({
       // account_id intentionally NULL: this row spans multiple accounts
-      event_type:  'cron_analysis',
+      event_type:  AUTOMATION_LOG_EVENT_TYPE.ANALYSIS,
       status:      failedCount > 0 ? 'error' : 'complete',
       description: `Cron analysis: ${succeededCount} succeeded, ${failedCount} failed, ${skippedCount} skipped`,
-      metadata:    { results, multi_account: multiAccount },
+      metadata:    { results, multi_account: multiAccount, source_event: 'cron_analysis' },
       created_at:  startedAt,
     });
+    if (logErr) console.error('[cron-analyze] aggregate automation_log insert failed (CHECK/DB error):', logErr.code, logErr.message);
   } catch (err) {
-    console.error('[cron-analyze] aggregate automation_log insert failed:', err.message);
+    console.error('[cron-analyze] aggregate automation_log insert failed (thrown):', err.message);
   }
 
   return res.status(200).json({

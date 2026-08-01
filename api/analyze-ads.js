@@ -32,6 +32,7 @@ import { recordAnthropicCost } from './lib/anthropic-cost.js';
 import { requireAdmin } from './lib/require-admin.js';
 import { fetchGoogleAdsData } from './google-ads.js';
 import { fetchMetaAdsData } from './facebook-ads.js';
+import { AUTOMATION_LOG_EVENT_TYPE } from './lib/automation-log-schema.js';
 
 async function callClaude(performanceData) {
   const systemPrompt = getFpbSystemPrompt();
@@ -214,15 +215,23 @@ export async function runAnalysisForAccount(account, { baseUrl, triggeredBy = 'm
       latency_ms,
     });
     // Mirror the failure into automation_log for backward-compat dashboards
+    // S-AUTOLOG-1 (2026-07-31): 'analysis_run' violated the live CHECK
+    // constraint (automation-log-schema.js) — this insert has always failed
+    // silently. Fixed to the valid 'analysis' event_type; the original
+    // literal is preserved in metadata.source_event, and the returned error
+    // is now checked and logged loudly instead of swallowed.
     try {
-      await supabase.from('automation_log').insert({
+      const { error: logErr } = await supabase.from('automation_log').insert({
         account_id:  account.id,
-        event_type:  'analysis_run',
+        event_type:  AUTOMATION_LOG_EVENT_TYPE.ANALYSIS,
         description: `Analysis failed: ${aiError.message}`,
         status:      'error',
-        metadata:    { error: aiError.message, triggered_by: triggeredBy },
+        metadata:    { error: aiError.message, triggered_by: triggeredBy, source_event: 'analysis_run' },
       });
-    } catch { /* best effort */ }
+      if (logErr) console.error('[automation_log] write failed (analyze-ads, error path):', logErr.code, logErr.message);
+    } catch (e) {
+      console.error('[automation_log] write failed (analyze-ads, error path, thrown):', e.message);
+    }
     return { success: false, error: aiError.message };
   }
 
@@ -283,20 +292,26 @@ export async function runAnalysisForAccount(account, { baseUrl, triggeredBy = 'm
   }
 
   // ── 6. Audit log ──────────────────────────────────────────────────────────
-  await supabase.from('automation_log').insert({
-    account_id:  account.id,
-    event_type:  'analysis_run',
-    description: `Analyzed ${Object.keys(performanceData).join(', ')}. Created ${insertedCount} recommended actions.`,
-    status:      'complete',
-    metadata: {
-      google_available: !!googleData,
-      meta_available:   !!metaData,
-      total:            totalCount,
-      inserted:         insertedCount,
-      skipped:          skippedCount,
-      triggered_by:     triggeredBy,
-    },
-  });
+  // S-AUTOLOG-1 (2026-07-31): same 'analysis_run' CHECK-constraint violation
+  // as the error path above — see that comment.
+  {
+    const { error: logErr } = await supabase.from('automation_log').insert({
+      account_id:  account.id,
+      event_type:  AUTOMATION_LOG_EVENT_TYPE.ANALYSIS,
+      description: `Analyzed ${Object.keys(performanceData).join(', ')}. Created ${insertedCount} recommended actions.`,
+      status:      'complete',
+      metadata: {
+        google_available: !!googleData,
+        meta_available:   !!metaData,
+        total:            totalCount,
+        inserted:         insertedCount,
+        skipped:          skippedCount,
+        triggered_by:     triggeredBy,
+        source_event:     'analysis_run',
+      },
+    });
+    if (logErr) console.error('[automation_log] write failed (analyze-ads, success path):', logErr.code, logErr.message);
+  }
 
   // ── 7. Performance snapshot (kept for backwards-compatible dashboard reads) ─
   await supabase.from('performance_snapshots').insert({

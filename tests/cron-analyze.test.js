@@ -51,6 +51,7 @@ vi.mock('../api/lib/supabase.js', () => ({
 }));
 
 import handler from '../api/cron-analyze.js';
+import { AUTOMATION_LOG_EVENT_TYPES, AUTOMATION_LOG_STATUSES } from '../api/lib/automation-log-schema.js';
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
 const FPB  = { id: 'fpb-uuid',  slug: 'fpb',  status: 'active' };
@@ -222,5 +223,15 @@ describe('cron-analyze — per-account error isolation', () => {
     expect(insertsByTable['automation_log']).toHaveLength(1);
     expect(insertsByTable['automation_log'][0].status).toBe('error');
     expect(insertsByTable['automation_log'][0].account_id).toBeUndefined(); // cron-level row spans accounts
+
+    // S-AUTOLOG-1 (2026-07-31): 'cron_analysis' violated the live
+    // automation_log CHECK constraint — every insert on this path had always
+    // failed silently. AUTOMATION_LOG_EVENT_TYPES/_STATUSES is a
+    // HAND-MAINTAINED mirror of the live constraint (Supabase MCP
+    // list_tables against olpyqfuphiwdongzmazi, 2026-07-31 — see
+    // api/lib/automation-log-schema.js), not a live drift detector.
+    expect(AUTOMATION_LOG_EVENT_TYPES).toContain(insertsByTable['automation_log'][0].event_type);
+    expect(AUTOMATION_LOG_STATUSES).toContain(insertsByTable['automation_log'][0].status);
+    expect(insertsByTable['automation_log'][0].metadata.source_event).toBe('cron_analysis');
   });
 });

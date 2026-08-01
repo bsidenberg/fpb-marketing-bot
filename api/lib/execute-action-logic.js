@@ -38,6 +38,7 @@ import {
 import { recordApiCall } from './api-cost.js';
 import { recordActionOutcome } from './autonomy-coordinator.js';
 import { runBudgetGuardsForExecution } from './budget-guards.js';
+import { AUTOMATION_LOG_EVENT_TYPE } from './automation-log-schema.js';
 
 // ── Execution audit (SESSION-06B) ────────────────────────────────────────────
 // A dry-run finalizes the row with this non-null result, which action-states
@@ -53,22 +54,40 @@ export function normalizePlatform(platform) {
 }
 
 // ── Audit log helper ─────────────────────────────────────────────────────────
+// S-AUTOLOG-1 (2026-07-31): `event_type` was `actionType` verbatim (e.g.
+// 'pause_campaign', 'adjust_budget') — none of which are in automation_log's
+// own CHECK constraint (see automation-log-schema.js). Every insert on this
+// path has therefore always failed, silently, since the feature was built —
+// `.insert()` resolves { error } on a CHECK violation, it does not throw, so
+// the surrounding try/catch never saw it. Fixed: event_type now derives from
+// `status` (the only two values ever passed here are 'complete'/'error' —
+// both valid automation_log statuses already); the actual action_type moves
+// into metadata, where it was always readable via `description` anyway, so
+// no information is lost, only the invalid literal is no longer written to
+// the constrained column. The returned error is now checked and logged
+// loudly on both the thrown-exception path and the resolved-with-error path.
 async function writeLog({ actionId, accountId, actionType, platform, status, description, metadata, now }) {
   try {
-    await supabase.from('automation_log').insert({
+    const { error } = await supabase.from('automation_log').insert({
       account_id: accountId,
-      event_type: actionType,
+      event_type: status === 'error'
+        ? AUTOMATION_LOG_EVENT_TYPE.ACTION_FAILED
+        : AUTOMATION_LOG_EVENT_TYPE.ACTION_EXECUTED,
       platform,
       status,
       description,
       metadata: {
-        action_id: actionId || null,
+        action_id:   actionId || null,
+        action_type: actionType,
         ...metadata,
       },
       created_at: now || new Date().toISOString(),
     });
+    if (error) {
+      console.error('[automation_log] write failed (CHECK/DB error):', error.code, error.message);
+    }
   } catch (e) {
-    console.error('[automation_log] write failed:', e.message);
+    console.error('[automation_log] write failed (thrown):', e.message);
   }
 }
 

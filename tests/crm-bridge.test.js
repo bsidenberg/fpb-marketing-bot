@@ -88,6 +88,7 @@ import {
   runCrmSync,
 } from '../api/lib/crm-bridge.js';
 import handler from '../api/cron-crm-sync.js';
+import { AUTOMATION_LOG_EVENT_TYPES, AUTOMATION_LOG_STATUSES } from '../api/lib/automation-log-schema.js';
 
 // ── mockPrime — the same chain, usable directly by runCrmSync() calls ──────
 const mockPrime = { from: (table) => primeChain(table) };
@@ -845,10 +846,18 @@ describe('cron-crm-sync handler', () => {
     await handler(req, res);
 
     expect(primeInsertsByTable['automation_log']).toHaveLength(1);
+    // S-AUTOLOG-1 (2026-07-31): was event_type 'crm_sync' + status 'success'
+    // — NEITHER a member of automation_log's live CHECK constraints (read
+    // directly via Supabase MCP against olpyqfuphiwdongzmazi — see
+    // api/lib/automation-log-schema.js). Both inserts on this path had
+    // always failed, silently, since the feature was built.
     expect(primeInsertsByTable['automation_log'][0]).toMatchObject({
-      event_type: 'crm_sync',
-      status:     'success',
+      event_type: 'data_pull',
+      status:     'complete',
     });
+    expect(AUTOMATION_LOG_EVENT_TYPES).toContain(primeInsertsByTable['automation_log'][0].event_type);
+    expect(AUTOMATION_LOG_STATUSES).toContain(primeInsertsByTable['automation_log'][0].status);
+    expect(primeInsertsByTable['automation_log'][0].metadata.source_event).toBe('crm_sync');
     expect(primeInsertsByTable['automation_log'][0].metadata).toHaveProperty('matched');
   });
 });

@@ -16,15 +16,26 @@ import { STATUS, EXEC_RESULT } from '../api/lib/action-states.js';
 // Non-.single() terminal calls (update without select) resolve silently.
 
 const singleQueue = [];
+// S-AUTOLOG-1 (2026-07-31): captures rows passed to .insert() per table, so
+// automation_log's payload (event_type/status/metadata) is inspectable —
+// previously this mock resolved every insert silently via the generic
+// .then() fallback with no way to see what was actually written, which is
+// part of why the CHECK-constraint violation on this exact money-path writer
+// went untested. Does not change existing .single()/.maybeSingle() queue
+// behavior for any other test in this file.
+const insertsByTable = {};
 
-function makeChain() {
+function makeChain(table) {
   const chain = {
-    select:  () => makeChain(),
-    eq:      () => makeChain(),
-    in:      () => makeChain(),
-    is:      () => makeChain(),
-    update:  () => makeChain(),
-    insert:  () => makeChain(),
+    select:  () => makeChain(table),
+    eq:      () => makeChain(table),
+    in:      () => makeChain(table),
+    is:      () => makeChain(table),
+    update:  () => makeChain(table),
+    insert:  (row) => {
+      (insertsByTable[table] = insertsByTable[table] || []).push(row);
+      return makeChain(table);
+    },
     single:      async () => singleQueue.shift() ?? { data: null, error: null },
     maybeSingle: async () => singleQueue.shift() ?? { data: null, error: null },
     // Awaiting the chain directly (no .single()) — resolves silently
@@ -34,7 +45,7 @@ function makeChain() {
 }
 
 vi.mock('../api/lib/supabase.js', () => ({
-  default: { from: () => makeChain() },
+  default: { from: (table) => makeChain(table) },
 }));
 
 // ── Mock fetch ────────────────────────────────────────────────────────────────
@@ -59,6 +70,7 @@ import {
   executeCreateMetaCampaign,
 } from '../api/lib/execute-action-logic.js';
 import { runBudgetGuardsForExecution } from '../api/lib/budget-guards.js';
+import { AUTOMATION_LOG_EVENT_TYPES, AUTOMATION_LOG_STATUSES } from '../api/lib/automation-log-schema.js';
 
 // ── Account + connection fixtures ─────────────────────────────────────────────
 const FPB_ACCOUNT = { id: 'fpb-uuid', slug: 'fpb', status: 'active' };
@@ -106,6 +118,7 @@ function queueResults(...results) {
 beforeEach(() => {
   vi.clearAllMocks();
   singleQueue.length = 0;
+  for (const key of Object.keys(insertsByTable)) delete insertsByTable[key];
 
   // Budget guards default to 'allow' — individual tests override per verdict
   runBudgetGuardsForExecution.mockReset();
@@ -623,6 +636,78 @@ describe('acquireLockAndExecute', () => {
     // Verify the OAuth refresh token came from the connection, not env
     const oauthBody = mockFetch.mock.calls[0][1].body.toString();
     expect(oauthBody).toContain('refresh_token=test-google-refresh-token');
+  });
+
+  it('S-AUTOLOG-1: writeLog\'s automation_log row is within the live CHECK constraint on a successful execution — money-path writer, protected file', async () => {
+    // execute-action-logic.js is a PROTECTED money-path file. Before this
+    // session, event_type was the raw action_type ('pause_campaign', etc.)
+    // verbatim — not a member of automation_log's live CHECK constraint —
+    // so this writer's insert had always failed silently since the feature
+    // was built (Supabase .insert() resolves { error }, it does not throw,
+    // so the surrounding try/catch never saw a CHECK violation). Fixed:
+    // event_type now derives from status ('action_executed'/'action_failed');
+    // the real action_type moves into metadata, where it is not lost.
+    // AUTOMATION_LOG_EVENT_TYPES/_STATUSES is a HAND-MAINTAINED mirror of the
+    // live constraint (Supabase MCP list_tables against
+    // olpyqfuphiwdongzmazi, 2026-07-31 — see api/lib/automation-log-schema.js
+    // and harness/DECISIONS.md S-AUTOLOG-1), not a live drift detector.
+    const action = makeAction({
+      action_type:    'pause_campaign',
+      channel:        'google',
+      execution_data: { campaign_id: 'gads-camp-1' },
+    });
+    const lockedRow = {
+      account_id:     FPB_ACCOUNT.id,
+      action_type:    'pause_campaign',
+      channel:        'google',
+      execution_data: { campaign_id: 'gads-camp-1' },
+    };
+    queueResults(
+      { data: action,    error: null },
+      { data: lockedRow, error: null },
+    );
+    mockFetch
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ access_token: 'gads-access-token' }) })
+      .mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify({ results: [{ campaign: { status: 'ENABLED' } }] }) })
+      .mockResolvedValueOnce({ ok: true, text: async () => '{"results":[]}' });
+
+    await acquireLockAndExecute('action-123', { account: FPB_ACCOUNT, connection: GOOGLE_CONN });
+
+    expect(insertsByTable['automation_log']).toHaveLength(1);
+    const row = insertsByTable['automation_log'][0];
+    expect(AUTOMATION_LOG_EVENT_TYPES).toContain(row.event_type);
+    expect(AUTOMATION_LOG_STATUSES).toContain(row.status);
+    expect(row.event_type).toBe('action_executed');
+    expect(row.status).toBe('complete');
+    expect(row.metadata.action_type).toBe('pause_campaign'); // preserved, just moved off the constrained column
+  });
+
+  it('S-AUTOLOG-1: writeLog\'s automation_log row is within the live CHECK constraint on a BLOCKED (failed) execution', async () => {
+    const action = makeAction({
+      action_type:    'pause_campaign',
+      channel:        'google',
+      execution_data: { campaign_id: 'gads-camp-1' },
+    });
+    const lockedRow = {
+      account_id:     FPB_ACCOUNT.id,
+      action_type:    'pause_campaign',
+      channel:        'google',
+      execution_data: { campaign_id: 'gads-camp-1' },
+    };
+    queueResults(
+      { data: action,    error: null },
+      { data: lockedRow, error: null },
+    );
+    runBudgetGuardsForExecution.mockResolvedValue({ verdict: 'block', reason: 'daily cap exceeded', triggered: ['daily_cap'] });
+
+    await acquireLockAndExecute('action-123', { account: FPB_ACCOUNT, connection: GOOGLE_CONN });
+
+    expect(insertsByTable['automation_log']).toHaveLength(1);
+    const row = insertsByTable['automation_log'][0];
+    expect(AUTOMATION_LOG_EVENT_TYPES).toContain(row.event_type);
+    expect(AUTOMATION_LOG_STATUSES).toContain(row.status);
+    expect(row.event_type).toBe('action_failed');
+    expect(row.status).toBe('error');
   });
 
   it('calls Meta image upload + creative create for publish_creative action', async () => {

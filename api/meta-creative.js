@@ -27,6 +27,7 @@ import {
 import { setCorsHeaders } from './lib/cors.js';
 import { requireSecret } from './lib/require-secret.js';
 import { recordApiCall } from './lib/api-cost.js';
+import { AUTOMATION_LOG_EVENT_TYPE } from './lib/automation-log-schema.js';
 
 export default async function handler(req, res) {
   setCorsHeaders(req, res, { methods: 'POST, OPTIONS', headers: 'Content-Type, x-execute-secret, x-account-slug' });
@@ -176,16 +177,25 @@ export default async function handler(req, res) {
   await recordApiCall('meta_ads', 'creative_upload', account.id, { creativeId, format });
 
   // ── STEP 4: Log to automation_log (account-scoped) ────────────────────────
+  // S-AUTOLOG-1 (2026-07-31): 'creative_uploaded' violated the live CHECK
+  // constraint (automation-log-schema.js) — this insert has always failed
+  // silently, and the empty catch block swallowed even a thrown exception,
+  // so nothing was ever visible. Fixed to the valid 'action_executed' event
+  // type; the original literal is preserved in metadata.source_event, and
+  // the returned error is now checked and logged loudly.
   try {
-    await supabase.from('automation_log').insert({
+    const { error: logErr } = await supabase.from('automation_log').insert({
       account_id:  account.id,
-      event_type:  'creative_uploaded',
+      event_type:  AUTOMATION_LOG_EVENT_TYPE.ACTION_EXECUTED,
       platform:    'meta_ads',
       status:      'complete',
       description: `Ad creative "${adName}" uploaded to Meta`,
-      metadata:    { creativeId, imageHash, format },
+      metadata:    { creativeId, imageHash, format, source_event: 'creative_uploaded' },
     });
-  } catch { /* swallow log errors — don't fail the whole request */ }
+    if (logErr) console.error('[automation_log] write failed (meta-creative):', logErr.code, logErr.message);
+  } catch (e) {
+    console.error('[automation_log] write failed (meta-creative, thrown):', e.message);
+  }
 
   return res.status(200).json({
     success:    true,
