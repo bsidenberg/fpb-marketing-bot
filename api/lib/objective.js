@@ -575,16 +575,23 @@ export function evaluateObjective(before = {}, after = {}, cfg = DEFAULTS) {
  * The fix turns on PROVENANCE, because the cap is only needed for a number the
  * caller can lie about:
  *
- *   removed.spendVerified === true  — the spend is a MEASUREMENT, taken by server
- *     code from the fetched search-term report (api/google-ads.js builds these rows
- *     as { searchTerm, clicks, cost, conversions } with cost = costMicros / 1e6).
- *     It is not caller-controlled, so no coherence cap applies. This is the same
- *     trust boundary as booked/lost, and the same one S07f established for terms:
- *     trust flows from server-fetched data, never from model output.
+ *   removed.spendVerified === true  — the spend's MEMBERSHIP is independently
+ *     verified: the SET of rows summed into it is known-complete and
+ *     known-correct, not merely built from real fetched numbers. No coherence
+ *     cap applies once this holds.
  *
- *     08B CONTRACT: set this flag ONLY from a fetched search-term row's own cost.
- *     NEVER copy it (or the spend) out of an LLM proposal. A model that can set
- *     spendVerified can re-open this hole.
+ *     D-11 (re-affirmed 2026-07-31), correcting this comment's own prior
+ *     claim: "every number is server-fetched" is NOT the same thing as "the
+ *     set of rows summed is the right set" (SDR-7 — a true defence against
+ *     row-VALUE fabrication was being read as coverage for row-MEMBERSHIP
+ *     inflation, which it was never built to answer). The rows-derived
+ *     'waste_removal' path in expectedDeltaProfitableLeads therefore NEVER
+ *     sets this flag — see its comment at the removed-cohort construction
+ *     site. It defaults to false until a real membership-provenance signal
+ *     (the persisted, unspoofable fetchId — S-07f.1) exists at the caller
+ *     boundary and is wired through to this function. No caller today may
+ *     set this true; a future one may, only from that signal, never by
+ *     copying it off an LLM proposal or inferring it from row contents alone.
  *
  *   otherwise — the spend is a CLAIM, and is clamped to
  *       W x (removedQualified / hostQualified) x hostSpend
@@ -592,13 +599,22 @@ export function evaluateObjective(before = {}, after = {}, cfg = DEFAULTS) {
  *     W > 1 because real waste IS disproportionate; W bounded because unbounded is
  *     the exploit.
  *
- * WHY THIS DOES NOT RE-BREAK E1: the ideal negative keyword is a term with ZERO
- * qualified leads (pure waste, nothing forgone) — exactly the rows google-ads.js
- * already filters as `conversions === 0 && cost > 0`. Its lead share is 0, so a
- * lead-share cap ALONE would clamp it to $0 and eval E1 could never fire again.
- * Provenance is what carries that case: a zero-lead term with verified cost is
- * uncapped and scores positive; a zero-lead term with an ASSERTED cost gets zero
- * credit, which is just A11 ("no value claim without evidence") applied to spend.
+ * E1 IS ELIMINATED, NOT MERELY UNDER-CREDITED, UNTIL MEMBERSHIP PROVENANCE
+ * EXISTS, AND THIS IS DELIBERATE (D-11, re-affirmed 2026-07-31; corrected by
+ * cold re-review, 2026-07-31 — the first pass understated this cost as
+ * generic "under-crediting"). A zero-conversion term (the exact shape
+ * api/google-ads.js's own topWaste filter selects: `conversions === 0 &&
+ * cost > 0` — every candidate this surface can ever produce) has lead share
+ * EXACTLY 0. With spendVerified now defaulting to false, its reclaimable
+ * spend clamps to W x 0 x hostSpend = $0 exactly — not reduced, ELIMINATED.
+ * Measured: score -0.3, does not queue, full stop. A term with real tracked
+ * conversions that simply never converted to a booked/lost outcome (e.g. a
+ * 0-for-20 cohort) is unaffected and still queues identically to before —
+ * only the true zero-platform-conversions class is zeroed. Accepted
+ * explicitly: under-crediting (or here, full elimination) is safe,
+ * over-crediting is the attack, and this module cannot itself supply the
+ * membership signal that would restore E1 without re-opening the hole
+ * (see the removed-cohort comment above for why).
  *
  * Both sold rates arrive DERIVED (see expectedDeltaProfitableLeads). In
  * particular an unmeasured removed cohort is priced at the PRIOR, not at zero
@@ -742,17 +758,31 @@ export function evaluateReallocation({ removed = {}, host = {} } = {}, cfg = DEF
 //      combined platformConversions is refused as incoherent — the same
 //      "subset, not independent" principle as A10, applied one level deeper.
 //
-// D-11 (Brian): the reallocation_max_waste_multiple (W) cap in
-// evaluateReallocation is RETAINED, not deleted, as defence in depth — the
-// deletion instruction was formally withdrawn after this exact contract's
-// first draft was found to permit A15. This module marks a row-derived
-// cohort's spend as spendVerified (it is a measurement now, never a caller
-// claim), which is what lets it skip the W-cap on the NEW path — but the cap
-// itself remains fully live in evaluateReallocation for any caller reaching
-// it directly with an unverified scalar (which is exactly what the extensive
-// A14 test suite in tests/objective.test.js already covers, unchanged by this
-// session). Belt and braces: the cap costs nothing, and this derivation path
-// is new code that has never run in production.
+// D-11 (Brian, re-affirmed 2026-07-31 after cold review): the
+// reallocation_max_waste_multiple (W) cap in evaluateReallocation is
+// RETAINED, not deleted, as defence in depth — the deletion instruction was
+// formally withdrawn after this exact contract's first draft was found to
+// permit A15.
+//
+// CORRECTION to this comment's original claim (left visible rather than
+// erased, per this project's own SDR-2 standard applied to itself): this
+// module does NOT mark a row-derived cohort's spend as spendVerified. The
+// first draft did, unconditionally, which made the cap's else branch
+// structurally unreachable from this — the sanctioned — entry point: every
+// candidate that could reach evaluateReallocation did so already flagged
+// exempt. That is the original A14 defect repeated one layer up (an
+// attacker-settable opt-out replaced by an unconditional one), and cold
+// review (harness/REVIEW-D11-2026-07-31.md) found it. Root cause: row-VALUE
+// provenance ("every number here came from a real fetch") was conflated with
+// cohort-MEMBERSHIP provenance ("the set of rows summed is the right set") —
+// SDR-7. This module cannot verify membership itself (pure, zero-I/O); until
+// an unspoofable membership signal exists at the caller boundary (S-07f.1),
+// spendVerified is never set here, so the W-cap now applies to EVERY
+// rows-derived claim on this path too — not just to a caller reaching
+// evaluateReallocation directly with an unverified scalar (which is what the
+// extensive A14 test suite in tests/objective.test.js already covered, and
+// still does, unchanged by this session). Belt and braces, now actually
+// live on both paths.
 //
 // Fixture-only tonight (2026-07-30): no live caller of expectedDeltaProfitableLeads
 // exists anywhere in api/ yet (S-08B, the daily loop, is not built — see
@@ -1042,7 +1072,27 @@ export function expectedDeltaProfitableLeads(candidate = {}, cfg = DEFAULTS) {
           spend: removedCohort.spend,
           qualifiedLeads: removedCohort.qualifiedLeads,
           soldRate: removedEst.rate,
-          spendVerified: true, // a measurement derived from fetched rows, never a claim
+          // D-11 (re-affirmed 2026-07-31): NOT spendVerified, and nothing in
+          // this module may assert it. Row-VALUE provenance (every number
+          // here is a real fetched measurement) is not cohort-MEMBERSHIP
+          // provenance (that the SET of rows summed is the correct set) —
+          // SDR-7, a true defence read as coverage for a threat it was never
+          // built to answer. This module is pure/zero-I/O and cannot verify
+          // membership itself; that requires the persisted, unspoofable
+          // fetchId at the caller boundary (S-07f.1), which does not exist
+          // yet. Until it does, spendVerified defaults to false (by simply
+          // never being set here) and the W-multiple bound below applies to
+          // every rows-derived claim, exactly as it applies to the retired
+          // scalar shape. Accepted cost, corrected by cold re-review
+          // (2026-07-31 — an earlier draft of this comment understated it
+          // as generic "under-crediting"): a cohort with ZERO platform
+          // conversions (lead share exactly 0 — the exact shape
+          // api/google-ads.js's topWaste filter selects) is not merely
+          // under-credited, its reclaimable spend clamps to exactly $0 and
+          // it cannot queue at all until real membership provenance exists.
+          // A cohort with real tracked conversions that simply never booked
+          // is unaffected. Under-crediting/elimination is safe here;
+          // over-crediting is the attack.
         },
         host: {
           spend: hostCohort.spend,

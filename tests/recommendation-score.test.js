@@ -805,14 +805,19 @@ describe('recommendation-score — S-08A.1a rows contract (A15 membership inflat
     expect(r.explain.objective.removedCohort.spend).toBe(2000);
   });
 
-  it('E1-PRESERVED: a zero-lead pure-waste term with derived (server-verified) cost still queues', () => {
-    // The ideal negative keyword: a search term with platformConversions=0
-    // and cost>0. Its qualified-lead share is 0, so a lead-share cap alone
-    // would zero it out and E1 could never fire. In the S-08A.1a contract,
-    // ALL removed-cohort spend is server-derived (never a caller claim), so
-    // the W-multiple cap never engages on this path at all — see
-    // DECISIONS.md S-08A.1a for the belt-and-braces note on why the cap
-    // remains live in evaluateReallocation's lower-level, direct-scalar path.
+  it('E1 REGRESSES UNTIL S-07f.1 LANDS (D-11, re-affirmed 2026-07-31) — a zero-lead pure-waste term now gets ZERO credit, deliberately', () => {
+    // Renamed from "E1-PRESERVED": cold review (REVIEW-D11-2026-07-31.md)
+    // found the claim this test's old name made was exactly the D-11
+    // defect — objective.js hard-coded spendVerified: true for every
+    // rows-derived cohort, which is row-VALUE provenance ("this cost came
+    // from a real fetch") standing in for cohort-MEMBERSHIP provenance
+    // ("this is the right set of rows"), SDR-7. Fixed: spendVerified now
+    // defaults to false on this path until S-07f.1's unspoofable fetchId
+    // exists. A zero-lead term's leadShare is 0, so the W-cap now clamps its
+    // reclaimable spend to $0 too — E1 is ACCEPTED to regress in the
+    // interim (harness/DECISIONS.md D-11: "under-crediting is safe,
+    // over-crediting is the attack"). This test now documents the accepted
+    // cost, not a preserved property.
     const pureWaste = wasteRemovalCandidate({
       id: 'pure-waste',
       removedCost: 400, removedConversions: 0, removedBooked: 0, removedLost: 0,
@@ -820,11 +825,13 @@ describe('recommendation-score — S-08A.1a rows contract (A15 membership inflat
       hostBooked: 20, hostLost: 80,
     });
     const r = scoreRecommendation(pureWaste, CFG);
-    expect(r.explain.objective.spendClamped).toBe(false);
-    expect(r.expectedDeltaProfitableLeads).toBeGreaterThan(0);
-    expect(r.score).toBeGreaterThan(0);
+    expect(r.explain.objective.spendClamped).toBe(true);
+    expect(r.explain.objective.reclaimableSpend).toBe(0);
+    expect(r.expectedDeltaProfitableLeads).toBe(0);
+    expect(r.score).toBeLessThanOrEqual(0);
 
-    expect(scoreAndSelect([pureWaste], CFG).queued.map((q) => q.id)).toEqual(['pure-waste']);
+    // Does not queue — the disclosed, deliberate regression, not a bug.
+    expect(scoreAndSelect([pureWaste], CFG).queued).toHaveLength(0);
   });
 
   it('A17 REJECTED: claiming more terminal leads than the cohort\'s own platform conversions show is refused, not scored as zero-credit', () => {

@@ -526,6 +526,149 @@ describe('objective — A14: removed.spend cannot be inflated past the cohort it
   });
 });
 
+// ── D-11 (re-affirmed 2026-07-31, S-08A.1a.2a) ────────────────────────────────
+// Cold review (harness/REVIEW-D11-2026-07-31.md) found the A14 cap's ~10 tests
+// above all pass while exercising evaluateReallocation DIRECTLY — none of them
+// go through the rows contract's sanctioned entry point
+// (expectedDeltaProfitableLeads), where objective.js:1045 used to hard-code
+// spendVerified: true unconditionally. That made the cap's else branch
+// (the W-multiple clamp) structurally UNREACHABLE from the only path a real
+// caller uses: every rows-derived candidate arrived pre-exempted. These tests
+// exercise the cap THROUGH expectedDeltaProfitableLeads, not by calling
+// evaluateReallocation directly, per the queue's explicit instruction that the
+// existing ~10 tests are "the anti-pattern".
+describe('objective — D-11: spendVerified defaults to FALSE for every rows-derived cohort (reachability)', () => {
+  // Two candidates, both 100% real fetched rows (no scalar assertion anywhere):
+  // identical removed-side lead evidence (10 real terminal leads out of the
+  // host's 100), identical host totals ($2000 spend, 100 leads) — the ONLY
+  // difference is which real row in the campaign actually cost what. This is
+  // the rows-contract analogue of the original A14 fixture (host: spend 2000,
+  // qualifiedLeads 100; cohort: qualifiedLeads 10) — same leadShare (0.1),
+  // same W (3), same $600 cap — reconstructed from rows instead of asserted.
+  const makeCandidate = (removedCost, otherCost) => ({
+    shape: 'waste_removal',
+    accountSoldRatePrior: 0.2,
+    rows: [
+      { rowId: 'row-removed', campaignId: 'camp-1', searchTerm: 'junk term', cost: removedCost, conversions: 10 },
+      { rowId: 'row-other', campaignId: 'camp-1', searchTerm: 'other term', cost: otherCost, conversions: 90 },
+    ],
+    hostCampaignId: 'camp-1',
+    expectedSearchTerms: ['junk term'],
+    fetchId: 'fetch-1',
+    window: { startDate: '2026-07-01', endDate: '2026-07-30' },
+    removedBooked: 2, removedLost: 8,   // terminal 10 = platformConversions 10 (coherent)
+    hostBooked: 20, hostLost: 80,       // terminal 100 = platformConversions 100 (coherent)
+  });
+
+  it('REACHABILITY: a real removed-row cost that exceeds W x its own lead share is now CLAMPED through the sanctioned entry point', () => {
+    // The removed term's OWN real fetched cost ($1800) is disproportionate to
+    // its 10-of-100 lead share (cap = 3 x 0.1 x $2000 = $600) — not a
+    // fabrication, just a genuinely lopsided real term. Total host spend is
+    // identical ($2000) in both candidates below; only which row carries the
+    // cost differs.
+    const disproportionate = expectedDeltaProfitableLeads(makeCandidate(1800, 200), CFG);
+    expect(disproportionate.spendClamped).toBe(true);
+    expect(disproportionate.reclaimableSpend).toBe(600);
+    expect(disproportionate.reasons).toContain('removed_spend_clamped_to_waste_multiple');
+  });
+
+  it('BOUND PROPERTY (A14 reproduced through the rows contract, W x honest): a disproportionate real cohort scores NO MORE than an honest, proportionate one with identical lead evidence', () => {
+    // Cold review (2026-07-31 re-review) correctly flagged this test's
+    // original name — "ACCEPTANCE (REVIEW-D11 §3)" — as overclaiming: it
+    // does NOT implement §3's literal fixture (an honest host row set vs. a
+    // subset dropping every conversions>0 row). It reproduces the A14
+    // "inflated vs honest, same lead share" bound instead, through the rows
+    // contract's own entry point. See the test below for §3's literal
+    // fixture, and why it does not discriminate pre/post this session's fix.
+    const honest = expectedDeltaProfitableLeads(makeCandidate(600, 1400), CFG);
+    const disproportionate = expectedDeltaProfitableLeads(makeCandidate(1800, 200), CFG);
+
+    expect(honest.spendClamped).toBe(false);       // $600 is exactly what the lead share supports — untouched
+    expect(honest.reclaimableSpend).toBe(600);
+
+    // The bound: disproportionate <= W x honest, OR refused.
+    const bound = CFG.reallocation_max_waste_multiple * honest.delta;
+    expect(disproportionate.delta === null || disproportionate.delta <= bound).toBe(true);
+
+    // The KILL property (same shape as A14's "buys EXACTLY NOTHING", now
+    // proven through the rows contract): once both are held to the SAME real
+    // 10-of-100 lead share, the $1800 term and the $600 term score
+    // IDENTICALLY — the extra $1200 of real spend the disproportionate term
+    // actually incurred buys it nothing over what its lead share supports.
+    expect(disproportionate.reclaimableSpend).toBe(honest.reclaimableSpend);
+    expect(disproportionate.delta).toBe(honest.delta);
+  });
+
+  it('REVIEW-D11 §3, literal fixture (host row subset dropping every conversions>0 row) — recorded as NON-DISCRIMINATING, per cold re-review', () => {
+    // Built exactly as §3 specifies: an honest full host row set, and a
+    // second `rows` array that is a strict subset dropping every row with
+    // conversions > 0, keeping only the removed term's own row plus
+    // whatever zero-conversion host rows remain. Cold review (2026-07-31
+    // re-review) found — and this test now confirms — that this EXACT
+    // fixture passes both BEFORE and AFTER this session's fix: dropping the
+    // converting host rows collapses the host's own derived qualifiedLeads
+    // (deriveHostFromRows caps host terminal at the host's own
+    // platformConversions, which the narrowed rows array can no longer
+    // support), which collapses hostRate independently of spendVerified.
+    // So this specific fixture shape does not exercise the D-11 fix at all
+    // — it is caught by a DIFFERENT, pre-existing coherence check
+    // (S-08A.1a's terminal-vs-platformConversions guard). Kept as a
+    // regression test (the bound must still hold), but NOT relied on as
+    // proof this session's fix does anything — see the BOUND PROPERTY test
+    // above for that proof, and DECISIONS.md's S-08A.1a.2a entry.
+    const honestFullHost = {
+      shape: 'waste_removal',
+      accountSoldRatePrior: 0.2,
+      rows: [
+        { rowId: 'row-removed', campaignId: 'camp-1', searchTerm: 'junk term', cost: 200, conversions: 20 },
+        { rowId: 'row-good-1', campaignId: 'camp-1', searchTerm: 'good term 1', cost: 400, conversions: 30 },
+        { rowId: 'row-good-2', campaignId: 'camp-1', searchTerm: 'good term 2', cost: 400, conversions: 20 },
+      ],
+      hostCampaignId: 'camp-1',
+      expectedSearchTerms: ['junk term'],
+      fetchId: 'fetch-1',
+      window: { startDate: '2026-07-01', endDate: '2026-07-30' },
+      removedBooked: 0, removedLost: 20,
+      hostBooked: 20, hostLost: 50, // terminal 70 = platformConversions 20+30+20=70 (coherent)
+    };
+    const subsetDropsConvertingRows = {
+      ...honestFullHost,
+      rows: [
+        { rowId: 'row-removed', campaignId: 'camp-1', searchTerm: 'junk term', cost: 200, conversions: 20 },
+      ],
+      // hostBooked/hostLost intentionally UNCHANGED — still asserting the
+      // full campaign's real terminal counts against a narrowed row set.
+    };
+
+    const honest = expectedDeltaProfitableLeads(honestFullHost, CFG);
+    const subset = expectedDeltaProfitableLeads(subsetDropsConvertingRows, CFG);
+    const bound = CFG.reallocation_max_waste_multiple * honest.delta;
+    expect(subset.delta === null || subset.delta <= bound).toBe(true);
+    // Confirming WHY it passes: refused by the pre-existing terminal
+    // coherence check, not by this session's W-cap fix.
+    expect(subset.delta).toBeNull();
+    expect(subset.reasons).toContain('host_terminal_leads_exceed_platform_conversions');
+  });
+
+  it('BEFORE/AFTER CONTRAST (documents what D-11 fixed, not itself the acceptance test): pre-fix this same disproportionate candidate scored 10.6, unbounded — see harness/DECISIONS.md D-11', () => {
+    // Guards against the exact regression D-11 re-affirmed against: if
+    // spendVerified is ever hard-coded true again on this path, this
+    // assertion is what breaks.
+    const honest = expectedDeltaProfitableLeads(makeCandidate(600, 1400), CFG);
+    const disproportionate = expectedDeltaProfitableLeads(makeCandidate(1800, 200), CFG);
+    expect(disproportionate.delta).not.toBeGreaterThan(honest.delta);
+  });
+
+  it('an UNVERIFIED rows-derived claim never reaches evaluateReallocation carrying spendVerified: true — this module asserts nothing', () => {
+    const r = expectedDeltaProfitableLeads(makeCandidate(1800, 200), CFG);
+    // If the module ever set spendVerified: true again, the cap could not
+    // have fired above; this is the direct, non-numeric version of the same
+    // proof — the reason string only appears when the cap actually ran.
+    expect(r.reasons).toContain('removed_spend_clamped_to_waste_multiple');
+    expect(r.reasons).not.toContain('removed_spend_server_verified');
+  });
+});
+
 // ── The entry point: rates are DERIVED, never asserted ───────────────────────
 describe('objective — expectedDeltaProfitableLeads derives every sold rate', () => {
   const base = {

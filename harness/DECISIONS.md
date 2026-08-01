@@ -82,7 +82,8 @@ are the only two resolved; the other five are genuinely open and gate S-08B / S-
 | R-008 | 2026-07-28 | **Every guard on the chat surface today is a prose instruction in `api/lib/prompts/fpb.js`, and all of them failed.** `:193` (no markdown in the channel field), `:201` (never invent a term), `:207` (never reconstruct a campaign name from memory), `:210` (max 25 per batch — enforced nowhere in code), `:211` (single-line JSON, no line breaks). `:191` ("use data provided earlier without re-requesting it") **directly contradicts** `:201`/`:207` on any staging turn, because fetched rows are not carried forward — making fabrication the compliant answer. | High — this is the mechanism of the field failure | Occurred | S-07f.1 makes `:191` true by persisting rows; S-07g deletes the prose contract and replaces it with tool schemas + server-side enforcement. **No prose-only guard may be counted as a control in any future session.** | **OPEN — closed by S-07f.1 + S-07g** |
 | R-009 | 2026-07-28 | The brief for this session asserted the model "invented a constraint ('25 terms, max per batch') with no source". **It did not** — `fpb.js:210` states that limit verbatim. Repeating the claim would have written a false root cause into the harness and pointed remediation at the wrong layer. | Low (caught before it landed) | Occurred | Corrected in `HARNESS-CHAT-SURFACE.md` §1 and root cause 6. General mitigation: **verify every field-evidence claim against code before it enters a harness document** — the same "derive, don't assert" standard the amendment imposes on the agent applies to the people writing it. | CLOSED |
 | R-007 | 2026-07-28 | ~~Four artifacts at the repo root are malformed shell output~~ **CLOSED by S-CLEAN-1** — provenance established and all four removed 2026-07-28. See "S-CLEAN-1" below. | Low | Occurred | Removed after Brian's authorisation; each was verified superseded before deletion. | **CLOSED** |
-| R-007-orig | 2026-07-28 | Four artifacts at the repo root are malformed shell output, not source: two 78KB files literally named `C:UsersBRIANS~1AppData...scratchpadtest-output.txt`, an empty `CLAUDE.mdcd`, and a 5.6KB file named `pend-magnitude budget guards - execution + staging, terminal block (630 tests)"`. All predate this session (Jul 3–6). | Low (noise; risk of one being committed) | Occurred | Listed for Brian's cleanup decision. **Not deleted** — deletion is Brian's call, and one may contain useful test output. | OPEN |
+| R-007-orig | 2026-07-28 | Four artifacts at the repo root are malformed shell output, not source: two 78KB files literally named `C:UsersBRIANS~1AppData...scratchpadtest-output.txt`, an empty `CLAUDE.mdcd`, and a 5.6KB file named `pend-magnitude budget guards - execution + staging, terminal block (630 tests)"`. All predate this session (Jul 3–6). | Low (noise; risk of one being committed) | Occurred | Listed for Brian's cleanup decision. **Not deleted** — deletion is Brian's call, and one may contain useful test order. | OPEN |
+| **R-017** | 2026-07-31 | **`autonomy-coordinator.js`'s `checkCap`/`getActiveCount` count EVERY account-scoped `automation_log` row with `status='complete'` toward a terminal, absolute `block` verdict on all future actions in that pillar — no `event_type` filter at all.** Discovered by cold review of S-AUTOLOG-1: because `automation_log` writes have always silently failed (D-11-adjacent finding — see S-AUTOLOG-1), this cap has NEVER fired in production. Deploying S-AUTOLOG-1's write-path fix as-is makes every `complete` row real for the first time — including analysis runs, creative uploads, manual-gate approvals, and budget-guard deferrals, none of which are executed actions — so an account could hit a `cap_per_window` on non-action noise and freeze silently. Fail-closed direction (blocks more, not less) — not an overspend risk, but a self-inflicted, unoverridable outage presented as a logging fix. | High (silent product outage, hard to diagnose — looks like "the coordinator is just blocking everything" with no obvious cause) | Conditional — depends on whether any live `autonomy_posture` row has a non-null `cap_per_window` (could not verify; no `execute_sql` access in this environment) | **BLOCKS S-AUTOLOG-1's deploy.** Filter `getActiveCount`/`checkCap` to `event_type='action_executed'` AND fix the two `writeLog` call sites that mislabel non-executions as executed (S-AUTOLOG-1.2, fresh cold review required — both files protected). | **OPEN — blocks S-AUTOLOG-1.2 acceptance, and S-AUTOLOG-1's fix must not be deployed until this closes** |
 
 ---
 
@@ -1224,5 +1225,544 @@ This test FAILS today.
 ACCEPTED COST: legitimate large waste-removal actions are under-credited
 until real provenance lands. Under-crediting is safe; over-crediting is the
 attack.
+
+## S-08A.1a.2a — discharge D-11 (2026-07-31)
+
+**ACCEPTED.** Cold `safety-reviewer` verdict: **APPROVE WITH NOTES** (full text
+below). Two of the reviewer's warn-level findings were corrected in this same
+entry before acceptance; neither required a second cold review because
+neither touched the security-critical logic itself (both were documentation/
+test-labeling accuracy corrections). Per this harness's own rule, that is the
+correct order of operations — a reviewer who has SEEN a logic fix cannot
+re-review it cold, but a reviewer's finding that a comment or test label
+overclaims is not a logic fix and does not taint the review that found it.
+
+**Built** (`api/lib/objective.js`):
+- Removed the hard-coded `spendVerified: true` at the (former) line 1045 —
+  the `removed:` object built inside `expectedDeltaProfitableLeads`'s
+  `waste_removal` branch no longer sets this key at all. `spendVerified`
+  therefore defaults to `false` (the strict `=== true` check in
+  `evaluateReallocation` treats absence as false), and the W-multiple cap now
+  applies to every rows-derived candidate, exactly as it applies to the
+  retired scalar shape. Nothing else in `objective.js` sets this flag.
+- Corrected two doc-comment blocks (the A14/D-11 comment above
+  `evaluateReallocation`, and the S-08A.1a header comment) that described the
+  OLD, incorrect rationale ("spendVerified === true means server-fetched, so
+  no cap applies") — left visible with an explicit correction rather than
+  silently rewritten, per this project's own SDR-2 standard.
+- **Form change only** (DI-3): `reallocation_max_waste_multiple` (W) stays at
+  3. No level was touched.
+
+**Not built** (correctly out of scope per the queue's scope-discipline
+paragraph, confirmed clean by the reviewer): A15 host-side membership
+binding, A17 (the `qualifiedLeadsForScoring` discontinuity), A19
+(`accountSoldRatePrior` still caller-scalar), the `conversions`-as-favorable-
+zero finding, and S-07f.1 (the persisted `fetchId`) — none attempted, none
+touched. These remain S-08A.1a.2's to close.
+
+**Tests:** 5 new in `tests/objective.test.js` (a `describe('objective — D-11:
+spendVerified defaults to FALSE...')` block): a direct reachability proof
+(disproportionate rows-derived cost gets clamped through the sanctioned
+`expectedDeltaProfitableLeads` entry point, not by calling
+`evaluateReallocation` directly), a bound-property test reproducing A14's
+"buys EXACTLY NOTHING" invariant through the rows contract, a before/after
+regression guard (verified against the pre-fix code via `git stash`: the
+disproportionate candidate scored **10.6, unbounded** before this fix; **2.2,
+clamped to the honest baseline** after), a direct proof the module never
+asserts `spendVerified: true`, and REVIEW-D11 §3's literal fixture (see
+"Reviewer finding 1" below for why it is recorded separately and is
+non-discriminating). One existing test renamed and its expectations
+corrected (`tests/recommendation-score.test.js`, was `'E1-PRESERVED...'`, now
+`'E1 REGRESSES UNTIL S-07f.1 LANDS...'`) to assert the new, deliberately
+regressed behavior instead of the old, now-incorrect one.
+
+**893/893 total, floor raised 888 → 893** (`harness/TEST_FLOOR`). Zero tests
+deleted; one renamed with its assertions changed to match the new contract
+(disclosed here, not silently absorbed — see R-006/S-08A.1a's own precedent
+on why a floor rising does not by itself certify nothing regressed).
+Evidence: `evidence/S-08A.1a.2a-verify-2026-07-31_1848.log` (4/4).
+
+**Reachability, stated per the queue's requirement:** proved by mutation —
+`objective.js` was reverted to the pre-fix hard-coded `spendVerified: true`
+via `git stash`, the new tests' exact assertions were re-run against it, and
+all four numeric assertions failed on the old code (confirmed independently
+by the cold reviewer, who performed the same mutation test themselves rather
+than trusting the claim).
+
+### Cold review verdict, verbatim (2026-07-31, second attempt — the first
+attempt stalled with no verdict after 600s and was discarded, not counted as
+either an approval or a block)
+
+> ## VERDICT: APPROVE WITH NOTES
+>
+> The fix is real, correctly scoped, and I verified it by execution and
+> mutation testing rather than by reading the tests' claims. Two notes below
+> are required corrections before this is reported ACCEPTED; neither is
+> exploitable.
+>
+> **Verification performed**
+> - `objective.js:1066-1082` — the `removed:` literal now has no
+>   `spendVerified` key at all. Grep confirms zero assignments of
+>   `spendVerified` anywhere under `api/`. `evaluateReallocation:655` uses
+>   strict `removed.spendVerified === true`, so absence → false. No default
+>   param, no `??`, no alternate branch. The scalar shape is refused at
+>   `objective.js:983-988`. No escape path found.
+> - I copied `objective.js`, re-inserted `spendVerified: true`, and re-ran
+>   all four new assertions: all four fail on pre-fix code. Pre-fix returns
+>   `reclaim=1800, delta=10.6, reason removed_spend_server_verified`;
+>   post-fix `reclaim=600, delta=2.2, clamped=true`. No tautologies.
+> - `npx vitest run` myself: 35 files, 892 passed, 0 failed — matches
+>   `harness/TEST_FLOOR` [at the time of review; raised to 893 after the two
+>   corrections below added one more test].
+> - Scope clean: only `objective.js`, the two test files, `TEST_FLOOR`. No
+>   money-path file touched. W untouched at 3 (DI-3 satisfied). Zero live
+>   callers of `expectedDeltaProfitableLeads`/`scoreRecommendation` exist
+>   under `api/`, so production blast radius today is nil.
+
+**Findings and resolutions:**
+
+1. **warn — the test labeled `ACCEPTANCE (REVIEW-D11 §3)` does not implement
+   §3's fixture.** §3 specifies an honest full host row set vs. a strict
+   subset dropping every `conversions > 0` row; the delivered test instead
+   redistributed cost between two rows (the A14-reproduction shape). The
+   reviewer built §3's literal fixture and found it passes on BOTH pre- and
+   post-fix code (`0.88` vs `-0.52` post-fix; `2.75` vs `-0.52` pre-fix) —
+   non-discriminating, because `deriveHostFromRows` already caps host
+   terminal at host `platformConversions`, which collapses `hostRate`
+   independently of `spendVerified`. **Resolved:** the mislabeled test was
+   renamed to `BOUND PROPERTY (A14 reproduced through the rows contract...)`
+   and no longer claims to be §3's acceptance test; §3's literal fixture was
+   added as its own test, explicitly labeled non-discriminating with the
+   reviewer's own explanation recorded in its comment, asserting the refusal
+   reason (`host_terminal_leads_exceed_platform_conversions`) rather than
+   implying the W-cap fired.
+2. **warn — the accepted-cost comments understated the regression.**
+   `api/google-ads.js`'s `topWaste` filter (`conversions === 0 && cost > 0`)
+   means every candidate that surface can produce has lead share EXACTLY 0,
+   so post-fix its reclaimable spend clamps to exactly $0 — full elimination
+   of that class, not generic "under-crediting." The rec-score test already
+   asserted `queued: []`, so the behavior wasn't hidden, but the prose
+   undersold it. **Resolved:** both comment blocks in `objective.js`
+   corrected to state the elimination precisely, and to state what survives
+   unaffected (a cohort with real tracked conversions that never booked,
+   e.g. a 0-for-20 shape, still queues identically to before).
+3. **nit, not fixed — recorded as a new risk.** The `spendVerified` bypass in
+   `evaluateReallocation` is still a plain boolean on an exported function;
+   nothing machine-enforces "no caller may set this true today." A future
+   S-07f.1 session could reopen the exact hole this session closed with a
+   one-line literal, same as the original defect. The `if (spendVerified)`
+   branch is now dead code on every live path, untested by a live-path test
+   (only by the pre-existing direct-call A14 suite). **Not fixed here** —
+   would mean designing the actual membership-provenance mechanism, which is
+   S-07f.1's job, not this session's. Logged as **R-016** below.
+4. **noted, correctly out of scope.** The cap's ceiling is
+   `W × (removedQ/hostQ) × hostSpend`; both host terms come from
+   `deriveHostFromRows`, bound only by `campaignId`. This session bounds the
+   removed-spend axis only — A15-host still sets the cap's own ceiling and
+   is unclosed. Confirms REVIEW-D11 §4's own "necessary but not sufficient"
+   framing. Belongs to S-08A.1a.2, not reopened here.
+5. **nit — untracked root-level duplicate files.** `PRIME-BUILD-QUEUE-V2.md`
+   and `PRIME-COLD-REVIEW-D11.md` at the repo root duplicate
+   `harness/BUILD-QUEUE-2026-08-V2.md` and `harness/REVIEW-D11-2026-07-31.md`
+   (the latter is actually the REVIEWER'S PROMPT, not the review output —
+   verified by diff, they are different documents, not identical copies).
+   Source-of-truth drift risk. **Not deleted** — same disposition as the
+   prior R-007 finding: deletion is Brian's call. Flagged for him in the
+   session report.
+
+### R-016 (new) — the spendVerified bypass has no structural enforcement
+
+| ID | Date | Risk | Impact | Likelihood | Mitigation | Status |
+|----|------|------|--------|-----------|------------|--------|
+| R-016 | 2026-07-31 | `removed.spendVerified === true` in `evaluateReallocation` is a plain boolean any future caller/session could set, with nothing machine-enforcing "only S-07f.1's real provenance signal may set this true." The exact shape of the original D-11 defect (a one-line hard-coded `true`) could recur in a future session that doesn't read this history. | High if recurred (re-opens the W-cap bypass exactly as before) | Low today (only S-07f.1 is positioned to touch this) but the mechanism that would prevent it does not exist | Flagged by cold review, not fixed this session (would require designing S-07f.1's actual provenance token, out of this session's scope). S-07f.1's session contract should require either a structured, non-boolean membership token, or a code-level comment/guard proportional to the harm of getting it wrong again. | **OPEN — assign to S-07f.1's acceptance criteria** |
+
+## S-REACH-1 — what else is green on a dead path? (2026-07-31)
+
+**Investigation session, per the queue's own instruction: read-only, no code
+changed, findings get new session IDs rather than being fixed here.**
+Generalizes the D-11 shape (a guard whose own dedicated tests pass, unreachable
+from the entry point a real caller uses) across `api/`. Two passes were run —
+the first produced no real tool calls and was discarded entirely (not counted
+as a finding either way, per the same "an incomplete run is not a verdict"
+principle applied to the stalled first cold-review attempt in S-08A.1a.2a);
+the second did the actual sweep and is what follows.
+
+### Confirmed REACHABLE (call-graph traced, file:line)
+
+| Guard | Defined at | Reached via | Verdict |
+|---|---|---|---|
+| `runBudgetGuardsForExecution` | `api/lib/budget-guards.js:443` | `acquireLockAndExecute` (`execute-action-logic.js:874`) ← `api/execute-action.js:111` and `api/approve-action.js:141` | REACHABLE |
+| `runBudgetGuardsForStaging` | `budget-guards.js:505` | `checkPostureForAction` (`autonomy-coordinator.js:80`) ← `api/actions.js:157` and `api/chat.js:375-379`, both of which populate `execution_data` (the condition the check is gated on) | REACHABLE — initially suspected of being D-11-shaped (conditional bypass), confirmed NOT: both live callers satisfy the condition |
+| `guardNegativeKeywordExecutionData` | `api/lib/negative-keyword-guard.js:15` | `api/actions.js:178`, `api/chat.js:418`, immediately before each respective insert | REACHABLE and functioning as documented. R-005 (no dedicated test file) is a coverage gap, not a reachability defect — not re-flagged as new |
+| `validateStatusPatch` | `api/lib/action-states.js:135` | `api/actions.js:70`, inside the `PATCH` branch, before every status update on THAT path | REACHABLE on the PATCH path — see the new finding below for the path it does NOT cover |
+| `canExecute` | `action-states.js:106` | `api/approve-action.js:100`, `api/execute-action.js:75`, `execute-action-logic.js:825` (inside the already-reachable `acquireLockAndExecute`) | REACHABLE on all three real execution-adjacent paths |
+
+### NEW FINDING — S-ACTIONS-LEGACY-1: a live, reachable path sets `status='executed'` while bypassing every guard that transition is supposed to go through
+
+**This is the mirror image of D-11** — not a guard nothing reaches, but a real,
+reachable write path that reaches the protected `actions.status` field while
+routing AROUND the guards. Verified directly (not taken on the investigating
+fork's word alone — re-read `api/actions.js:205-255` myself):
+
+`POST /api/actions` with body `{ action: 'execute', id }` (routes here because
+the earlier `action_type`-based POST branch at `:91` requires
+`req.body?.action_type && !req.body?.action` — the two branches are mutually
+exclusive by body shape, so this is not dead code by construction) does, after
+`requireAdmin` and an account-ownership check:
+
+```
+supabase.from('actions').update({ status: 'executed', executed_at: ... })
+```
+
+**No `canExecute()` check. No `validateStatusPatch()`. No
+`runBudgetGuardsForExecution`. No `guardNegativeKeywordExecutionData`. No call
+into `acquireLockAndExecute` or any `executeGoogle*`/`executeMeta*` function —
+no platform mutation occurs at all.** The code's own comment
+(`api/actions.js:206-208`) already discloses this: *"legacy path sets
+status='executed' which bypasses validateStatusPatch. Stage B1 keeps this
+behavior (per 'no auth gap fixes' constraint) but adds an ownership check."*
+Also confirmed: no `existing.status` check before the transition, so this can
+re-stamp an action that is already `rejected` or already `executed`.
+
+**Context that changes how this should be read, checked directly rather than
+assumed (SDR-2):**
+- This predates Stage B1 (the multi-account retrofit, `c57acc5`) and was a
+  **known, disclosed, deliberate carry-over**, not a defect this project
+  introduced or missed — Stage B1's own scope discipline was "no auth gap
+  fixes," and this was explicitly named as one such gap left alone.
+- Grepped `marketing-bot-dashboard.jsx` for every current client call to
+  `/api/actions`: all of them use either the `action_type`-based POST branch
+  (creates a new `pending` action) or PATCH (`validateStatusPatch`-gated).
+  **No current UI client calls this legacy `{action:'execute', id}` shape.**
+  It is reachable by anyone with valid admin auth via a direct HTTP call
+  (curl, a stale cached client bundle, a future client that reintroduces the
+  shape) — not currently driven by the live dashboard.
+- Not itself an ad-spend risk — no platform mutation occurs on this path.
+  The risk is **audit-integrity**: anything downstream that trusts
+  `status='executed'` as "this really happened" (the S-08B/S-09 ledger work,
+  `evaluate-outcomes.js`, any future dashboard "what did Prime actually do"
+  view — see D-3's own reasoning on why the ledger's authority depends on
+  the queue/DB being the single source of truth) would read a fabricated
+  record if this path is ever exercised.
+- Could not determine whether a DB-level CHECK constraint on `actions.status`
+  would itself reject or flag this — no `CREATE TABLE actions` found under
+  `sql/` (the table predates this repo's SQL-file convention) and no live
+  Supabase MCP query was run for this investigation. Stated as a limit, not
+  guessed.
+
+**Recommendation, not actioned:** a new session, **S-ACTIONS-LEGACY-1** —
+either delete the legacy `{action:'execute'}` branch (if confirmed genuinely
+unused by any client, including the archived pre-Stage-B1 one) or route it
+through `acquireLockAndExecute` like every other execution-adjacent path.
+Given it concerns the same `actions.status` field the money-path execution
+pipeline depends on for its own state machine, a future session on this
+should get a **safety-reviewer** pass even though `api/actions.js` is not on
+CLAUDE.md's literal protected-file list — the reviewer should decide, not
+this document, per the same standing instruction D-11 was held to.
+
+### Confirmed absent, not a defect
+
+**Kill-switch (D-5).** Grepped `api/` for kill-switch/`KILL_SWITCH`/
+`killSwitch` — zero matches. Expected: S-09A is `READY`/not started per
+`SESSIONS.md`, not a reachability defect on a guard that exists.
+
+### Not reached (stated plainly, not padded — no silent caps)
+
+`api/verify-safety.js`; `api/lib/autonomy-escalation.js`'s
+`detectAnomaly`/`detectNovelty`/`detectConflict` internals;
+`api/lib/table-expectations.js`; a systematic grep sweep of every
+`*guard*`/`validate*`/`check*`/`refuse*`-named function beyond the candidate
+list this session's directive named. Time-boxed to that list plus the one
+bypass discovered while tracing it. A future S-REACH-2 could pick these up
+if Brian wants the sweep continued.
+
+## S-AUTOLOG-1 — the flight recorder has never worked (2026-07-31)
+
+**Built.** All six `automation_log` writer call sites fixed. Per the queue's
+explicit instruction, the CHECK constraint was read **from the live
+database**, not inferred from code: Supabase MCP `list_tables` (verbose)
+against project `olpyqfuphiwdongzmazi` returned, verbatim:
+
+```
+event_type: CHECK event_type = ANY (ARRAY['data_pull','analysis',
+  'recommendation','action_executed','action_failed','alert','report','system'])
+status:     CHECK status = ANY (ARRAY['running','complete','error'])
+```
+
+`automation_log` is confirmed **0 rows live** (unchanged — no backfill
+performed, explicitly out of scope).
+
+### What was wrong, confirmed at each of the six sites
+
+| File | Old `event_type` (invalid) | Old `status` | New `event_type` | New `status` |
+|---|---|---|---|---|
+| `api/lib/execute-action-logic.js` `writeLog()` (**protected, money-path**) | `actionType` verbatim (e.g. `'pause_campaign'`, `'adjust_budget'`) — dynamic, always invalid | `'complete'`/`'error'` (already valid) | `status==='error' ? 'action_failed' : 'action_executed'` | unchanged |
+| `api/analyze-ads.js` (2 sites: success + failure) | `'analysis_run'` | `'complete'`/`'error'` (already valid) | `'analysis'` | unchanged |
+| `api/cron-daily-stats.js` | `'cron_daily_stats'` | `'complete'`/`'error'` (already valid) | `'data_pull'` | unchanged |
+| `api/cron-analyze.js` | `'cron_analysis'` | `'complete'`/`'error'` (already valid) | `'analysis'` | unchanged |
+| `api/cron-crm-sync.js` (2 sites: success + failure) | `'crm_sync'` | success site: **`'success'` — also invalid, a SECOND, previously undiscovered violation, found only by reading the live constraint directly (SDR-2)** | `'data_pull'` | success site: `'complete'` |
+| `api/meta-creative.js` | `'creative_uploaded'` (wrapped in an empty `catch {}` that swallowed even a thrown exception) | `'complete'` (already valid) | `'action_executed'` | unchanged |
+
+**Root cause, confirmed by reading the actual behavior, not assumed:**
+Supabase JS's `.insert()` resolves `{ data, error }` on a CHECK-constraint
+violation — it does **not** throw. Every one of the six sites wrapped its
+insert in a `try/catch` (or, at `meta-creative.js`, an empty catch) that only
+ever catches a *thrown* exception, so a resolved-with-error response was
+silently discarded at every site, every time, since the feature was built.
+This is the exact SDR-1 shape one level deeper than S-OBS-1 (2026-07-30)
+diagnosed it: not just "nobody checks if it ran," but "the checking
+mechanism used (`try/catch`) cannot see the failure mode that actually
+occurs."
+
+### Fix shape, applied uniformly
+
+1. **`api/lib/automation-log-schema.js` (new)** — the live constraint as a
+   single, named-constant source (`AUTOMATION_LOG_EVENT_TYPE`/`_STATUS` maps
+   plus derived arrays), tagged **DERIVED** per HARNESS.md §4.1's convention,
+   with an explicit re-derivation trigger (SDR-6): any live CHECK-violation
+   error in logs, or a schema migration touching this table. Disclosed
+   plainly in its own header as a **hand-maintained mirror, not a live drift
+   detector** — the same honesty standard this document already holds
+   `cost-rates.js` and the S-07f.0 coverage-guard test to.
+2. **Every write site** now imports the shared constants (never a raw
+   literal), and checks `{ error }` from the resolved insert **in addition
+   to** the surrounding `try/catch` (kept, for genuine network-level
+   rejections), logging loudly (`console.error`) on either failure mode.
+3. **The original literal is never discarded** — it moves into
+   `metadata.source_event` (or, for `execute-action-logic.js`,
+   `metadata.action_type`), so no information is lost, only the
+   constraint-violating value is no longer written to the constrained
+   column.
+
+### Tests — reachability proven by real execution, not by trusting the writers
+
+12 new tests, all invoking the **actual writer functions** (not asserting a
+hand-maintained call-site list against a static string — the same anti-pattern
+D-11 called out for the W-cap's tests):
+
+- `tests/automation-log-schema.test.js` (5) — the schema module's own
+  constants match the live-read values exactly; validators agree; both
+  original defect literals (`'creative_uploaded'`, `'success'`) are confirmed
+  invalid.
+- `tests/execute-action.test.js` (+2) — **the protected money-path writer**,
+  invoked via `acquireLockAndExecute` on both a successful execution and a
+  budget-guard BLOCK, asserting the real inserted row's `event_type`/`status`
+  are members of the live constraint. Required upgrading this file's Supabase
+  mock to capture insert payloads per table (previously all inserts resolved
+  silently with no way to inspect what was written — part of why this exact
+  defect went untested on the money path).
+- `tests/analyze-ads.test.js` (+1), `tests/daily-stats.test.js` (+1),
+  `tests/cron-analyze.test.js` (assertions added to an existing test) — same
+  pattern for the three cron/analysis writers.
+- `tests/meta-creative.test.js` (new, 1) and `tests/cron-crm-sync.test.js`
+  (new, 2) — these two files had **no test coverage at all** before this
+  session; minimal handler mocks built to reach the automation_log write
+  specifically (not full flow coverage, which is out of this session's
+  scope). `tests/crm-bridge.test.js`'s existing `cron-crm-sync` test also
+  asserted the old, invalid literals — corrected in place.
+
+**907/907 total, floor raised 893 → 907** (`harness/TEST_FLOOR`; 893 was
+S-08A.1a.2a's ending count). Zero tests deleted. Evidence:
+`evidence/S-AUTOLOG-1-verify-2026-07-31_1959.log` (4/4).
+
+### `api/lib/table-expectations.js` updated to match
+
+`automation_log`'s registry entry changed from `EXPECTATION.BROKEN` to
+`EXPECTATION.EXPECTED_EMPTY`, with the reason field stating plainly:
+**fixed in code, not yet deployed** (this session commits nothing — CLAUDE.md
+Hard rule), no backfill performed, table is still 0 rows live and expected to
+stay that way until deploy + a real write-path invocation. If it is still 0
+rows after that, the expectation is violated and should be re-investigated,
+not re-assumed fixed. `tests/table-expectations.test.js` updated to match
+(the "BROKEN tables alert even at 0 rows" property test now exercises
+`performance_snapshots`, since `automation_log` no longer qualifies —
+`performance_snapshots` remains `BROKEN`, unchanged; its fix is S-SNAPSHOT-1,
+not this session's).
+
+### What the "real Google Ads budget changes proven end-to-end against the
+live API" claim actually rested on — required by the queue, stated plainly
+
+**Not `automation_log`.** Confirmed: 0 rows, always, since the table
+existed — it cannot have contributed any evidence to this claim regardless
+of when the claim was made.
+
+Traced the claim to its origin: **`PRIME-TRIAGE-HANDOFF.md:43`** (June 16,
+2026), which states — quoted in full because the exact wording matters:
+
+> "Real Google Ads budget change executed via chat with no `budget_id` in
+> `execution_data`, forcing the slow path (GET campaign → resolve
+> `campaignBudget` resource → mutate). **Confirmed at $31 in Google Ads UI**,
+> then reverted to $30 via same chat pattern. Both transitions returned
+> `status: 'approved'`, `result: 'success'`. Architecture proven
+> end-to-end."
+
+**What this actually rested on:** a human operator directly reading the
+budget value in the live Google Ads UI after the mutation (a real,
+independent, out-of-band confirmation — not a fabricated or purely
+self-reported success), cross-referenced against the `actions` table's own
+`status`/`result` fields on that specific row (not `automation_log`). The
+claim is **not unsubstantiated in the sense of "never happened"** — this is
+a materially different finding than S-08A.1a's chat-surface fabrication
+incident, where a tool call was narrated but never ran. Here a human
+watched a real number change in a real, live third-party UI.
+
+**But the claim also does not rest on any artifact this repo, this
+environment, or a future auditor can independently check today:**
+- No screenshot of the Google Ads UI confirmation was committed anywhere in
+  this repo (searched; none found).
+- The `actions` table row(s) for campaign `21613067659` from June 16 may or
+  may not still exist (the table holds 71 rows live today, so it is
+  plausible) — **could not verify**, because no query tool (`execute_sql` or
+  equivalent) is available in this environment, only `list_tables`/schema
+  introspection (same limitation D-6's investigation already disclosed).
+  Stated as a limit, not guessed (SDR-2).
+- `automation_log`, the table that WOULD have made this durably queryable
+  and independently auditable without relying on a human's contemporaneous
+  memory written into a handoff doc, has never recorded a single row for
+  this or any other event.
+
+**Verdict, per the queue's own instruction ("if no artifact can be
+identified, mark the claim unsubstantiated — do not soften it"):** the
+underlying EVENT is credible and specifically, concretely described (not a
+vague assertion) — but the CLAIM as currently stated in
+`PRIME-AGENCY-ROADMAP.md` ("Google Ads v23 read + budget-change execution
+(validated live)") and `MARKETING_AGENT_AUDIT.md` ("Budget changes validated
+live in both directions") overstates what is *durably verifiable today* by
+presenting a one-time, human-witnessed, undocumented-by-artifact event as if
+it were a standing, re-checkable fact. **Recommend downgrading both
+documents' phrasing** to something like "budget-change execution was
+manually confirmed live against the Google Ads UI on 2026-06-16 (see
+`PRIME-TRIAGE-HANDOFF.md`); no automated, durable audit trail exists for
+this or any subsequent execution until `automation_log` actually accrues
+rows post-deploy." Not actioned in this session — `PRIME-AGENCY-ROADMAP.md`
+and `MARKETING_AGENT_AUDIT.md` are outside this session's file scope
+(neither was named in the queue) — flagged for Brian instead.
+
+### Cold `safety-reviewer` sign-off — MANDATORY, per the queue
+
+`execute-action-logic.js` is a protected money-path file. Cold review
+dispatched, fresh, no prior context on this session's reasoning.
+
+**Verdict: BLOCK.** This session is **BUILT, NOT ACCEPTED.** Per the queue's
+own stopping rule (§7, "a cold safety-reviewer returns BLOCK on a money-path
+session") and its own precedent from the 2026-07-30 run (S-08A.1a and S-04B,
+neither reworked same-night after a BLOCK), **the queue stops here.**
+S-SNAPSHOT-1 is NOT attempted this run. Independently re-verified the
+blocker's central claim against the code myself before accepting it (SDR-2)
+— confirmed accurate, see below.
+
+### Verdict, verbatim
+
+> **VERDICT: BLOCK.** One blocker. The audit-log fix is well-built and
+> behaviorally neutral *inside* `execute-action-logic.js` — but
+> `automation_log` is a **read** dependency of a terminal money-path gate,
+> and making the writes succeed for the first time changes that gate's
+> behavior on deploy. The session's own analysis does not mention this.
+>
+> I independently re-ran `npx vitest run`: **907 passed / 907, 38 files,
+> exit 0.** Confirmed.
+>
+> **1. BLOCKER — `automation_log` feeds `checkCap`, a terminal `block`
+> verdict.** `api/lib/autonomy-coordinator.js:214-227`:
+> ```js
+> .from('automation_log').select('id')
+>   .eq('account_id', accountId)
+>   .eq('status', 'complete')      // no event_type filter at all
+>   .gte('created_at', since);
+> ```
+> `checkCap` is called from `checkPostureForAction:63`, which is live
+> (`api/actions.js`, `api/chat.js`) and returns `verdict: 'block'` —
+> absolute, per this project's own rule, even for humans. Today the table
+> is empty, so this cap has **never once fired**. Post-deploy it counts
+> every account-scoped `status:'complete'` row, and most of those are not
+> actions: an `analysis`/`complete` row per `cron-analyze` run
+> (`analyze-ads.js:298`), a `creative_uploaded`→`action_executed`/`complete`
+> row per Meta upload, a manual-gate-approval `complete` row (nothing
+> executed), a budget-guard-deferral `complete` row (execution REFUSED,
+> logged complete anyway), and dry runs (still `'complete'`). Constructible
+> failure: `cap_per_window=5, window_days=7`; daily `cron-analyze` alone
+> produces 7 `complete` rows/week; by day 6, `count=6 >= 5` → every action
+> class in that pillar returns `block`, "cadence cap exceeded," with zero
+> actions ever taken. Fail-closed direction (blocks more, not less) — not a
+> money-loss risk, but a silent, self-inflicted, unoverridable product
+> outage from a change presented as log-only. Could not confirm whether any
+> live posture row has a non-null `cap_per_window` (no `execute_sql` in this
+> environment) — the trigger is conditional; stated as a limit, not
+> guessed.
+>
+> **2. WARN — non-executions are labelled `action_executed`.**
+> `execute-action-logic.js:823-830` (manual gate) and `:905-912` (guard
+> deferral) pass `status:'complete'`, so the new
+> `status==='error' ? ACTION_FAILED : ACTION_EXECUTED` derivation records
+> "executed" for two events where nothing executed — including a budget
+> guard *refusing* an auto-execution. The transient guard block at
+> `:1063-1067` correctly uses `'error'` → `action_failed`, so the
+> inconsistency is real. No call site can pass `undefined`/`'running'` — no
+> silent-fallthrough bug, the defect is semantic, and it is what makes
+> finding 1 unfixable by an `event_type` filter alone (an `action_executed`
+> filter would still count the two mislabeled non-executions).
+>
+> **3. WARN — monitoring alert silenced while production is still
+> broken.** `table-expectations.js`'s BROKEN → EXPECTED_EMPTY makes
+> `evaluateTableExpectation` return `status:'ok'` at 0 rows. By the entry's
+> own text the fix is "NOT YET DEPLOYED" — live is still broken,
+> contradicting the prior entry's own rule ("the alert IS the finding until
+> it is fixed"). `EXPECTED_EMPTY_DISCLOSED` is the honest value until
+> deploy is verified.
+>
+> **Verified clean:** the `execute-action-logic.js` diff is entirely inside
+> `writeLog` plus one import — lock acquisition, budget guards, executor
+> dispatch, `finalUpdate`, `recordActionOutcome` are byte-identical; no
+> approval/idempotency/state-machine change. `{ error }` checks are real on
+> all six writers, not decorative. The `execute-action.test.js` mock change
+> (`makeChain(table)` insert-capture) only adds a push side-effect — no
+> existing test weakened, the two new tests drive real code. The
+> "validated live" claim investigation is accurate, neither overstated nor
+> understated. No seventh writer exists.
+>
+> **Nits:** DECISIONS.md's "893 → 907" floor phrasing could be misread
+> against `TEST_FLOOR`'s full history (888 → 907 overall) — addressed by the
+> parenthetical already present, left as-is. The new tests assert
+> membership in the same hand-maintained constant the code imports —
+> tautological against live schema drift, honestly disclosed in the
+> module's own header, not an objection. The working tree also carries
+> S-08A.1a.2a's `objective.js`/test changes — not this session's scope
+> creep, flagged so they aren't staged together blindly.
+
+### Independent re-verification of the blocker before accepting it (SDR-2)
+
+Read `autonomy-coordinator.js:157-232` myself: confirmed `getActiveCount`
+and `checkCap` both filter `automation_log` on `account_id` +
+`status='complete'` + a time window only — **no `event_type` predicate
+anywhere in either query.** Confirmed `checkPostureForAction:62-71` returns
+`verdict:'block'` unconditionally when `capResult.exceeded`, and that this
+function is called from `api/actions.js` and `api/chat.js` (both live
+handlers). The reviewer's finding is accurate as stated, not overstated.
+
+### Disposition — not fixed this session, new session assigned
+
+**S-AUTOLOG-1.2** (candidate ID): filter `getActiveCount` and `checkCap` to
+`event_type = 'action_executed'` (the queue's own instruction against
+"reworking and re-reviewing in the same session" applies here — this needs
+a fresh reviewer, not this session's); additionally fix finding 2 (the
+manual-gate-approval and guard-deferral `writeLog` calls should not claim
+`action_executed` when nothing executed — needs its own event_type or an
+`executed: false` metadata flag, a real design decision, not a one-line
+patch).
+
+**One item reverted now, not deferred:** `table-expectations.js`'s
+`automation_log` entry was changed mid-session to `EXPECTATION.EXPECTED_EMPTY`
+(believing the fix was complete); cold review's finding 3 correctly caught
+that this silences the alert (`evaluateTableExpectation` returns `'ok'` for
+both `EXPECTED_EMPTY` and `EXPECTED_EMPTY_DISCLOSED` at 0 rows — neither
+preserves alert-forever behavior) while production is, in fact, unchanged
+and still broken (nothing deployed). **Reverted to `EXPECTATION.BROKEN`**
+(not merely `EXPECTED_EMPTY_DISCLOSED`, which would have had the same
+alert-silencing problem) — the reason field updated to explain the BLOCK and
+point at S-AUTOLOG-1.2. This is a monitoring-registry-only correction, touches
+no execution logic or protected file, and is defensible as fixing this
+session's own completion-standard violation rather than "fixing the
+blocker" — the actual blocker (the coordinator's missing `event_type`
+filter) is untouched and belongs to S-AUTOLOG-1.2 with its own fresh review.
 
 Owner: Brian. Re-review after S-08A.1a.2a's cold review.
